@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="ip2domain — Reverse IP Lookup и визуализация сетевой топологии.">
+    <title>ip2domain — Network Intelligence</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="app-shell">
+    <aside class="app-sidebar" id="app-sidebar">
+        <div class="sidebar-brand">
+            <div class="logo-badge">ip2domain</div>
+            <span class="header-version">v1.4.0</span>
+            <button class="sidebar-collapse-button" id="sidebar-collapse-button" type="button"
+                    onclick="toggleSidebarCompact()" title="Свернуть боковое меню" aria-label="Свернуть боковое меню">‹</button>
+        </div>
+        <p class="sidebar-caption">Network Intelligence</p>
+
+        <nav class="sidebar-nav" aria-label="Основная навигация">
+            <button class="nav-item active" data-view="graph-view" onclick="switchView('graph-view', this)" title="Сканирование">
+                <span class="nav-icon">⌘</span><span>Сканирование</span>
+            </button>
+            <button class="nav-item" data-view="results-view" onclick="switchView('results-view', this)" title="Результаты">
+                <span class="nav-icon">▦</span><span>Результаты</span>
+            </button>
+            <button class="nav-item" data-view="history-view" onclick="switchView('history-view', this)" title="История сканирований">
+                <span class="nav-icon">◷</span><span>История сканирований</span>
+            </button>
+            <button class="nav-item" data-view="remote-desktop-view" onclick="switchView('remote-desktop-view', this)" title="RDP / VNC">
+                <span class="nav-icon">▣</span><span>RDP / VNC</span>
+            </button>
+            <button class="nav-item" data-view="cameras-view" onclick="switchView('cameras-view', this)" title="Камеры">
+                <span class="nav-icon">◉</span><span>Камеры</span>
+            </button>
+        </nav>
+
+        <div class="sidebar-spacer"></div>
+        <nav class="sidebar-nav sidebar-nav-bottom">
+            <button class="nav-item" data-view="settings-view" onclick="switchView('settings-view', this)" title="Настройки">
+                <span class="nav-icon">⚙</span><span>Настройки</span>
+            </button>
+        </nav>
+        <div class="sidebar-user">
+            <div class="user-avatar" id="user-avatar">U</div>
+            <div class="user-meta">
+                <strong id="current-user">Пользователь</strong>
+                <span>Авторизован</span>
+            </div>
+            <button class="icon-button" type="button" onclick="logoutUser()" title="Выйти">↪</button>
+        </div>
+    </aside>
+
+    <div class="app-content">
+        <header class="topbar">
+            <button class="mobile-menu-button" type="button" onclick="toggleSidebar()" aria-label="Открыть меню">☰</button>
+            <div>
+                <h1 id="view-title">Сканирование и граф</h1>
+                <p id="view-subtitle">Исследование IP, доменов и сетевых связей</p>
+            </div>
+            <div class="topbar-actions">
+                <input type="text" id="graph-search" placeholder="Поиск IP или домена..." oninput="handleSearch(event)">
+            </div>
+        </header>
+
+        <main class="workspace-main">
+            <section class="app-view active" id="graph-view">
+                <section class="glass-card scan-card">
+                    <div class="scan-card-header">
+                        <div class="scan-card-icon">⌁</div>
+                        <div>
+                            <h2>Новый поиск</h2>
+                            <p>Укажите один адрес — найденные связи добавятся к текущему графу.</p>
+                        </div>
+                    </div>
+                    <form id="scan-form" onsubmit="handleScan(event)">
+                        <div class="scan-workflow">
+                            <div class="scan-target-panel">
+                                <label class="scan-step-label" for="target-input"><span>1</span> Что сканируем?</label>
+                                <div class="target-input-shell">
+                                    <span class="target-input-icon">◎</span>
+                                    <input type="text" id="target-input" placeholder="IP, диапазон, CIDR или домен" required autocomplete="off">
+                                </div>
+                                <p class="field-help">Например: <button type="button" onclick="setScanTarget('xeber.ru')">xeber.ru</button> <button type="button" onclick="setScanTarget('194.33.15.13')">194.33.15.13</button> <button type="button" onclick="setScanTarget('194.33.15.0/28')">194.33.15.0/28</button></p>
+                            </div>
+                            <div class="scan-options-panel">
+                                <div class="scan-step-label"><span>2</span> Параметры поиска</div>
+                                <div class="scan-mode-list" role="radiogroup" aria-label="Режим сканирования">
+                                    <label class="scan-mode"><input type="radio" name="scan-mode" value="domains" checked onchange="updateScanModeControls()"><span><strong>Домены и связи</strong><small>Пассивные источники, CT, AXFR и поддомены</small></span></label>
+                                    <label class="scan-mode"><input type="radio" name="scan-mode" value="nmap" onchange="updateScanModeControls()"><span><strong>Только Nmap</strong><small>Только порты, сервисы и версии — без поддоменов</small></span></label>
+                                    <label class="scan-mode"><input type="radio" name="scan-mode" value="combined" onchange="updateScanModeControls()"><span><strong>Домены + Nmap</strong><small>Сначала связи, затем сканирование портов</small></span></label>
+                                </div>
+                                <label class="live-dns-option" id="live-dns-option"><input type="checkbox" id="verify-toggle" checked><span><strong>Live DNS</strong><small>Оставить только домены, которые сейчас указывают на найденный IP</small></span><i></i></label>
+                                <div class="scan-advanced-fields" id="nmap-controls">
+                                    <div class="form-group nmap-only"><label for="nmap-profile">Профиль Nmap</label><select id="nmap-profile" disabled><option value="fast">Быстрый · топ-50</option><option value="normal">Обычный · топ-200</option><option value="full">Все TCP-порты</option><option value="stealth">SYN · медленный</option><option value="udp">UDP · топ-30</option></select></div>
+                                    <div class="form-group nmap-only"><label for="nmap-ports-input">Свои порты</label><input type="text" id="nmap-ports-input" placeholder="например, 22,80,443" pattern="[0-9,\-\s]+" title="Формат: 22,80,443 или 1-1024. Свои порты заменяют набор профиля" disabled></div>
+                                    <div class="form-group"><label for="concurrency-input">Потоки поиска</label><input type="number" id="concurrency-input" value="10" min="1" max="50" title="Для Nmap одновременно запускается не более четырёх процессов"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="scan-actions">
+                            <button type="submit" class="btn scan-button" id="submit-btn"><span class="button-icon">▶</span><span id="btn-text">Запустить сканирование</span><span id="btn-spinner" class="spinner" style="display:none;"></span></button>
+                            <button type="button" class="btn btn-ghost scan-button" id="rescan-graph-btn" onclick="rescanCurrentGraph()" title="Повторно сканировать все IP и корневые домены текущего графа">↻ Пересканировать текущий граф</button>
+                        </div>
+                        <p class="rescan-settings-hint">Повторное сканирование использует выбранные выше Live DNS, Nmap, профиль, порты и потоки.</p>
+                    </form>
+                    <div id="progress-container" class="progress-container" style="display:none;">
+                        <div class="progress-header"><span id="progress-stage">Запуск сканирования...</span><span id="progress-text">0%</span></div>
+                        <div class="progress-track"><div id="progress-fill" class="progress-fill"></div></div>
+                    </div>
+                </section>
+
+                <div class="stats-bar">
+                    <div class="stat-card stat-orange"><div class="stat-label">IP-адреса</div><div class="stat-value" id="stat-ips">0</div></div>
+                    <div class="stat-card stat-green"><div class="stat-label">Apex-домены</div><div class="stat-value" id="stat-apex">0</div></div>
+                    <div class="stat-card stat-purple"><div class="stat-label">Поддомены</div><div class="stat-value" id="stat-subdomains">0</div></div>
+                    <div class="stat-card stat-blue"><div class="stat-label">Связи</div><div class="stat-value" id="stat-edges">0</div></div>
+                </div>
+
+                <section class="glass-card graph-card" id="graph-card">
+                    <div class="graph-toolbar">
+                        <div class="toolbar-primary">
+                            <h3>Интерактивный граф связей</h3>
+                            <button type="button" class="btn btn-ghost btn-small" onclick="clearGraphCanvas()">Очистить</button>
+                            <button type="button" class="btn btn-ghost btn-small" onclick="loadGlobalGraph()">Загрузить из БД</button>
+                            <button type="button" class="btn btn-ghost btn-small" id="graph-fullscreen-button" onclick="toggleGraphFullscreen()" title="Открыть граф на весь экран">⛶ <span>На весь экран</span></button>
+                            <div class="hidden-menu-wrap">
+                                <button type="button" class="btn btn-ghost btn-small" id="btn-hidden-dropdown" onclick="toggleHiddenDropdown()">Скрытые (<span id="hidden-count">0</span>) ▾</button>
+                                <div id="hidden-nodes-dropdown" class="glass-card hidden-dropdown" style="display:none;">
+                                    <div class="hidden-dropdown-head"><strong>Скрытые узлы</strong><button type="button" class="text-button" onclick="unhideAllNodes()">Восстановить всё</button></div>
+                                    <div id="hidden-nodes-list">Скрытых узлов нет</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="filter-toolbar">
+                            <label class="toggle-box"><input type="checkbox" id="filter-ip" checked onchange="applyGraphFilters()"><span class="legend-ip">IP</span></label>
+                            <label class="toggle-box"><input type="checkbox" id="filter-apex" checked onchange="applyGraphFilters()"><span class="legend-apex">Домены</span></label>
+                            <label class="toggle-box"><input type="checkbox" id="filter-subdomains" checked onchange="applyGraphFilters()"><span class="legend-sub">Поддомены</span></label>
+                            <label class="toggle-box"><input type="checkbox" id="cluster-toggle" onchange="toggleClustering()"><span>Группировать</span></label>
+                        </div>
+                    </div>
+                    <div class="graph-stage">
+                        <div id="network-graph"></div>
+                        <aside class="node-details-drawer" id="details-sidebar" aria-hidden="true">
+                            <div class="drawer-header"><div><span class="drawer-kicker">Выбранный объект</span><h3>Детализация узла</h3></div><button type="button" class="drawer-close" onclick="closeNodeDetails()" aria-label="Закрыть">×</button></div>
+                            <div id="node-info-content"></div>
+                        </aside>
+                    </div>
+                </section>
+            </section>
+
+            <section class="app-view" id="results-view">
+                <section class="glass-card page-card">
+                    <div class="section-header"><div><h2>Результаты</h2><p class="section-description">Все IP, домены и открытые порты текущего графа</p></div><div class="button-row"><button class="btn btn-ghost" onclick="exportData('json')">JSON</button><button class="btn btn-ghost" onclick="exportData('csv')">CSV</button></div></div>
+                    <div class="table-wrapper"><table id="results-table"><thead><tr><th>IP-адрес</th><th>Доменов</th><th>Открытые порты</th><th>Домены / Поддомены</th></tr></thead><tbody id="table-body"><tr><td colspan="4" class="empty-state">Данные ещё не загружены</td></tr></tbody></table></div>
+                </section>
+            </section>
+
+            <section class="app-view" id="history-view">
+                <section class="glass-card page-card history-section">
+                    <div class="section-header"><div><h2>История сканирований</h2><p class="section-description">Предыдущие задания и сохранённые результаты</p></div><button class="btn btn-ghost" onclick="loadScanHistory()">Обновить</button></div>
+                    <div class="table-wrapper"><table><thead><tr><th>Дата</th><th>Цель</th><th>IP</th><th>Доменов</th><th>Verify / Nmap</th><th>Статус</th></tr></thead><tbody id="history-body"><tr><td colspan="6" class="empty-state">Загрузка истории...</td></tr></tbody></table></div>
+                </section>
+            </section>
+
+            <section class="app-view" id="remote-desktop-view">
+                <section class="glass-card page-card remote-scan-card">
+                    <div class="section-header"><div><h2>Сканер RDP / VNC</h2><p class="section-description">Обнаружение удалённых рабочих столов и снимки доступных без авторизации VNC-экранов</p></div></div>
+                    <form id="remote-desktop-form" onsubmit="startRemoteDesktopScan(event)">
+                        <div class="remote-form-grid">
+                            <div class="form-group remote-target-field"><label for="remote-target">IP-адреса и диапазоны</label><textarea id="remote-target" rows="7" placeholder="31.135.32.233&#10;31.135.45.0-31.135.45.255&#10;37.22.128.0/23" required></textarea><small>Каждая строка: отдельный IP, CIDR или диапазон начальныйIP-конечныйIP</small><div id="remote-graph-targets"></div></div>
+                            <div class="remote-protocol-options">
+                                <label class="toggle-box"><input type="checkbox" id="remote-rdp" checked><span>RDP</span></label>
+                                <label class="toggle-box"><input type="checkbox" id="remote-vnc" checked><span>VNC + снимок</span></label>
+                            </div>
+                            <div class="form-group"><label for="remote-rdp-ports">Порты RDP</label><input id="remote-rdp-ports" value="3389" placeholder="3389"></div>
+                            <div class="form-group"><label for="remote-vnc-ports">Порты VNC</label><input id="remote-vnc-ports" value="5900-5910" placeholder="5900-5910"></div>
+                        </div>
+                        <div class="remote-security-note">Сканер не подбирает пароли. Снимок создаётся только при доступе VNC без аутентификации.</div>
+                        <button class="btn" id="remote-scan-button" type="submit">▶ Запустить проверку</button>
+                    </form>
+                    <div id="remote-progress" class="progress-container" style="display:none;"></div>
+                </section>
+                <section class="glass-card page-card remote-results-card">
+                    <div class="section-header"><div><h2>Обнаруженные рабочие столы</h2><p class="section-description">Сервисы, сведения протокола и снимки VNC</p></div><button type="button" class="btn btn-ghost btn-small" onclick="clearRemoteDesktopResults()">Очистить результаты</button></div>
+                    <div id="remote-results" class="remote-results"><div class="empty-state">Проверка ещё не запускалась</div></div>
+                </section>
+            </section>
+
+            <section class="app-view" id="cameras-view">
+                <div class="camera-tabs" role="tablist" aria-label="Разделы камер">
+                    <button class="camera-tab active" id="camera-scanner-tab" type="button" role="tab" aria-selected="true" onclick="switchCameraTab('scanner')">Сканер камер</button>
+                    <button class="camera-tab" id="camera-centra-tab" type="button" role="tab" aria-selected="false" onclick="switchCameraTab('centra')">Камеры Centra</button>
+                </div>
+                <div class="camera-tab-panel active" id="camera-scanner-panel" role="tabpanel">
+                <section class="glass-card page-card remote-scan-card">
+                    <div class="section-header"><div><h2>Сканер IP-камер</h2><p class="section-description">Поиск камер и видеорегистраторов по сетевым отпечаткам с оценкой уверенности</p></div></div>
+                    <form id="camera-form" onsubmit="startCameraScan(event)">
+                        <div class="remote-form-grid">
+                            <div class="form-group remote-target-field"><label for="camera-target">IP-адреса и диапазоны</label><textarea id="camera-target" rows="7" placeholder="31.135.32.233&#10;31.135.45.0/24" required></textarea><small>Каждая строка: IP, CIDR или диапазон начальныйIP-конечныйIP</small><div id="camera-graph-targets"></div></div>
+                            <div class="form-group"><label for="camera-ports">Порты камер</label><input id="camera-ports" value="80,443,554,8000,8080,8081,8443,8554,8899,37777"><small>HTTP(S), RTSP и типичные vendor-порты</small></div>
+                        </div>
+                        <div class="remote-security-note">Удалённо проверяются PTR, HTTP/HTML, TLS, RTSP, ONVIF/UPnP и баннеры. DHCP, MAC/OUI, mDNS, WS-Discovery и сетевой трафик требуют запуска внутри локальной сети.</div>
+                        <button class="btn" id="camera-scan-button" type="submit">▶ Запустить проверку</button>
+                    </form>
+                    <div id="camera-progress" class="progress-container" style="display:none;"></div>
+                </section>
+                <section class="glass-card page-card remote-results-card">
+                    <div class="section-header"><div><h2>Обнаруженные камеры</h2><p class="section-description">Найденные признаки, сервисы и итоговая уверенность</p></div><button type="button" class="btn btn-ghost btn-small" onclick="clearCameraResults()">Очистить результаты</button></div>
+                    <div id="camera-results" class="remote-results"><div class="empty-state">Проверка ещё не запускалась</div></div>
+                </section>
+                </div>
+                <div class="camera-tab-panel" id="camera-centra-panel" role="tabpanel">
+                    <section class="glass-card page-card centra-card">
+                        <div class="section-header"><div><h2>Камеры Centra</h2><p class="section-description">Публичные камеры на карте Яндекс</p></div><span class="centra-count" id="centra-count"></span></div>
+                        <form id="centra-discovery-form" class="centra-discovery-form" onsubmit="startCentraDiscovery(event)">
+                            <div class="form-group"><label for="centra-start-id">ID от</label><input id="centra-start-id" type="number" min="1" max="1000000" value="1" required></div>
+                            <div class="form-group"><label for="centra-end-id">ID до</label><input id="centra-end-id" type="number" min="1" max="1000000" value="40000" required></div>
+                            <div class="form-group"><label for="centra-entrances">Подъездов</label><input id="centra-entrances" type="number" min="1" max="20" value="5" required></div>
+                            <div class="form-group"><label for="centra-concurrency">Параллельность</label><input id="centra-concurrency" type="number" min="1" max="50" value="20" required></div>
+                            <button class="btn" id="centra-discovery-button" type="submit">Найти и загрузить</button>
+                        </form>
+                        <div class="remote-security-note">Проверяется <code>media_info.json</code>. Найденные камеры сохраняются в SQLite и остаются после перезапуска.</div>
+                        <div id="centra-discovery-progress" class="progress-container" style="display:none"></div>
+                        <div class="centra-layout">
+                            <div id="centra-map" class="centra-map" aria-label="Карта камер Centra"><div class="empty-state">Загрузка карты...</div></div>
+                            <aside id="centra-camera-list" class="centra-camera-list"></aside>
+                        </div>
+                    </section>
+                </div>
+            </section>
+
+            <section class="app-view" id="settings-view">
+                <section class="settings-grid">
+                    <div class="glass-card settings-card">
+                        <div class="settings-icon">⌁</div><h2>Безопасность аккаунта</h2><p class="section-description">Измените пароль текущего пользователя. Минимальная длина — 12 символов.</p>
+                        <form id="password-form" onsubmit="changePassword(event)">
+                            <div class="form-group"><label for="current-password">Текущий пароль</label><input type="password" id="current-password" autocomplete="current-password" required></div>
+                            <div class="form-group"><label for="new-password">Новый пароль</label><input type="password" id="new-password" minlength="12" autocomplete="new-password" required></div>
+                            <div class="form-group"><label for="confirm-password">Повторите новый пароль</label><input type="password" id="confirm-password" minlength="12" autocomplete="new-password" required></div>
+                            <div id="password-message" class="form-message" role="status"></div>
+                            <button type="submit" class="btn">Изменить пароль</button>
+                        </form>
+                    </div>
+                </section>
+            </section>
+        </main>
+    </div>
+</div>
+
+<script>
+const _nativeFetch = window.fetch.bind(window);
+window.fetch = async function(input, init = {}) {
+    const token = sessionStorage.getItem('ip2domain_api_token') || '';
+    const next = {...init, headers: new Headers(init.headers || {})};
+    if (token) next.headers.set('X-API-Key', token);
+    const response = await _nativeFetch(input, next);
+    if (response.status === 401 && !token) window.location.replace('/login');
+    return response;
+};
+
+const viewMeta = {
+    'graph-view': ['Сканирование и граф', 'Исследование IP, доменов и сетевых связей'],
+    'results-view': ['Результаты', 'Табличное представление текущей топологии'],
+    'history-view': ['История сканирований', 'Управление сохранёнными заданиями'],
+    'remote-desktop-view': ['RDP / VNC', 'Удалённые рабочие столы и снимки VNC'],
+    'cameras-view': ['Камеры', 'Поиск IP-камер и видеорегистраторов'],
+    'settings-view': ['Настройки', 'Профиль и безопасность аккаунта'],
+};
+
+function switchView(viewId, trigger) {
+    document.querySelectorAll('.app-view').forEach((view) => view.classList.toggle('active', view.id === viewId));
+    document.querySelectorAll('.nav-item').forEach((item) => item.classList.toggle('active', item.dataset.view === viewId));
+    const meta = viewMeta[viewId];
+    document.getElementById('view-title').textContent = meta[0];
+    document.getElementById('view-subtitle').textContent = meta[1];
+    document.getElementById('graph-search').style.display = viewId === 'graph-view' ? '' : 'none';
+    document.getElementById('app-sidebar').classList.remove('open');
+    if (viewId === 'history-view') loadScanHistory();
+    if (viewId === 'remote-desktop-view' && window.refreshRemoteTargets) refreshRemoteTargets();
+    if (viewId === 'cameras-view' && window.refreshCameraTargets) refreshCameraTargets();
+    if (viewId === 'cameras-view' && window.resizeCentraMap) setTimeout(window.resizeCentraMap, 80);
+    if (viewId === 'graph-view' && network) setTimeout(() => network.redraw(), 50);
+}
+
+function toggleSidebar() { document.getElementById('app-sidebar').classList.toggle('open'); }
+
+function setScanTarget(value) {
+    const input = document.getElementById('target-input');
+    input.value = value;
+    input.focus();
+}
+
+function getScanMode() {
+    return document.querySelector('input[name="scan-mode"]:checked').value;
+}
+
+function updateScanModeControls() {
+    const mode = getScanMode();
+    const enabled = mode === 'nmap' || mode === 'combined';
+    document.getElementById('nmap-profile').disabled = !enabled;
+    document.getElementById('nmap-ports-input').disabled = !enabled;
+    document.getElementById('nmap-controls').classList.toggle('disabled', !enabled);
+    document.getElementById('live-dns-option').classList.toggle('disabled', mode === 'nmap');
+    document.getElementById('verify-toggle').disabled = mode === 'nmap';
+}
+
+function setSidebarCompact(compact) {
+    document.body.classList.toggle('sidebar-compact', compact);
+    const button = document.getElementById('sidebar-collapse-button');
+    button.textContent = compact ? '›' : '‹';
+    button.title = compact ? 'Развернуть боковое меню' : 'Свернуть боковое меню';
+    button.setAttribute('aria-label', button.title);
+    localStorage.setItem('ip2domain_sidebar_compact', compact ? '1' : '0');
+    setTimeout(() => window.dispatchEvent(new Event('resize')), 240);
+}
+
+function toggleSidebarCompact() {
+    setSidebarCompact(!document.body.classList.contains('sidebar-compact'));
+}
+
+async function toggleGraphFullscreen() {
+    const card = document.getElementById('graph-card');
+    try {
+        if (card.requestFullscreen) {
+            if (!document.fullscreenElement) await card.requestFullscreen();
+            else await document.exitFullscreen();
+            return;
+        }
+        card.classList.toggle('fullscreen-fallback');
+        updateGraphFullscreenButton(card.classList.contains('fullscreen-fallback'));
+        setTimeout(() => window.dispatchEvent(new Event('resize')), 100);
+    } catch (error) {
+        console.error('Не удалось переключить полноэкранный режим:', error);
+    }
+}
+
+function updateGraphFullscreenButton(fullscreen) {
+    const button = document.getElementById('graph-fullscreen-button');
+    button.innerHTML = fullscreen ? '⊙ <span>Выйти из полного экрана</span>' : '⛶ <span>На весь экран</span>';
+    button.title = fullscreen ? 'Выйти из полноэкранного режима' : 'Открыть граф на весь экран';
+    button.setAttribute('aria-label', button.title);
+}
+
+document.addEventListener('fullscreenchange', () => {
+    const fullscreen = document.fullscreenElement === document.getElementById('graph-card');
+    updateGraphFullscreenButton(fullscreen);
+    setTimeout(() => window.dispatchEvent(new Event('resize')), 100);
+});
+
+async function loadCurrentUser() {
+    const response = await fetch('/api/auth/me');
+    if (!response.ok) return;
+    const user = (await response.json()).user || {};
+    document.getElementById('current-user').textContent = user.username || 'Пользователь';
+    document.getElementById('user-avatar').textContent = (user.username || 'U').slice(0, 1).toUpperCase();
+}
+
+async function changePassword(event) {
+    event.preventDefault();
+    const message = document.getElementById('password-message');
+    const current = document.getElementById('current-password').value;
+    const password = document.getElementById('new-password').value;
+    const confirmation = document.getElementById('confirm-password').value;
+    message.className = 'form-message';
+    if (password !== confirmation) { message.textContent = 'Новые пароли не совпадают'; message.classList.add('error'); return; }
+    const response = await fetch('/api/auth/password', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({current_password:current,new_password:password})});
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) { message.textContent = data.detail || 'Не удалось изменить пароль'; message.classList.add('error'); return; }
+    event.target.reset(); message.textContent = 'Пароль успешно изменён'; message.classList.add('success');
+}
+
+async function logoutUser() { await fetch('/api/auth/logout', {method:'POST'}); sessionStorage.removeItem('ip2domain_api_token'); window.location.replace('/login'); }
+loadCurrentUser();
+setSidebarCompact(localStorage.getItem('ip2domain_sidebar_compact') === '1');
+updateScanModeControls();
+</script>
+<script src="/static/graph.js"></script>
+<script src="/static/scan.js"></script>
+<script src="/static/remote_desktop.js"></script>
+<script src="/static/cameras.js"></script>
+</body>
+</html>
