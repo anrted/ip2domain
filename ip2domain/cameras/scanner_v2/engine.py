@@ -418,6 +418,7 @@ async def run_v2_scan_pipeline(
                             pass
 
             job.results = valid_cameras
+            job.found_cameras = len(valid_cameras)
             job.stage3_status = "done"
             verified = len(valid_cameras)
             job.add_log(f"[Stage 3] Завершено: {verified} камер с подтверждённым видео")
@@ -429,6 +430,7 @@ async def run_v2_scan_pipeline(
             f"Сканирование завершено: {len(targets):,} IP, "
             f"найдено {len(job.results)} камер"
         )
+
         job.add_log(
             f"[✓] Готово! Просканировано {len(targets):,} IP, "
             f"обнаружено {len(job.results)} камер за {_format_eta(asyncio.get_event_loop().time() - stage1_start)}"

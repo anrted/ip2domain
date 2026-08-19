@@ -304,6 +304,23 @@ def _format_rtsp_url(ip: str, port: int, path: str, user: str = "", password: st
     return f"rtsp://{ip}:{port}{path}"
 
 
+def _build_digest_header(user: str, password: str, method: str, url: str, www_auth: str) -> str:
+    """Build RFC 2617 RTSP Digest Authorization header from 401 WWW-Authenticate challenge."""
+    realm_m = re.search(r'realm=["\']?([^"\',\r\n]+)["\']?', www_auth, re.IGNORECASE)
+    nonce_m = re.search(r'nonce=["\']?([^"\',\r\n]+)["\']?', www_auth, re.IGNORECASE)
+    if not realm_m or not nonce_m:
+        return ""
+    realm = realm_m.group(1).strip()
+    nonce = nonce_m.group(1).strip()
+    import hashlib
+    def md5(s: str) -> str:
+        return hashlib.md5(s.encode()).hexdigest()
+    ha1 = md5(f"{user}:{realm}:{password}")
+    ha2 = md5(f"{method}:{url}")
+    resp = md5(f"{ha1}:{nonce}:{ha2}")
+    return f'Authorization: Digest username="{user}", realm="{realm}", nonce="{nonce}", uri="{url}", response="{resp}"\r\n'
+
+
 async def probe_rtsp_direct(
     ip: str,
     rtsp_ports: List[int],
@@ -340,7 +357,6 @@ async def probe_rtsp_direct(
             if "RTSP/1.0" not in opts and "Public:" not in opts and "Server:" not in opts:
                 continue
 
-            result["success"] = True
             result["open_port"] = port
 
             brand = _detect_brand_from_rtsp_text(opts)
@@ -381,13 +397,7 @@ async def probe_rtsp_direct(
                 top_db = _get_compiled_db().get("top_rtsp", [])
                 probe_paths = (top_db[:30] if top_db else []) or _GENERIC_PATHS[:30]
 
-            primary_user = "admin"
-            primary_pass = ""
-            if credentials:
-                primary_user, primary_pass = credentials[0]
-
             found_urls: List[str] = []
-            auth_required_paths: List[str] = []
             cseq = 2
 
             for path in probe_paths:
@@ -410,32 +420,34 @@ async def probe_rtsp_direct(
                         break
                     continue
 
-                # If 401 or WWW-Authenticate header, try Basic credentials or mark as auth-required path
+                # If 401 or WWW-Authenticate header, try Digest and Basic credentials
                 if "401" in desc or "WWW-Authenticate" in desc:
-                    auth_required_paths.append(path)
                     authed = False
-                    for user, password in credentials[:3]:
+                    for user, password in (credentials or [("admin", "admin"), ("admin", "12345"), ("admin", "123456"), ("admin", ""), ("root", "root"), ("root", "")])[:5]:
+                        headers_to_try = []
+                        if "digest" in desc.lower():
+                            d_hdr = _build_digest_header(user, password, "DESCRIBE", url, desc)
+                            if d_hdr:
+                                headers_to_try.append(d_hdr)
                         token = base64.b64encode(f"{user}:{password}".encode()).decode()
-                        auth_header = f"Authorization: Basic {token}\r\nAccept: application/sdp\r\n"
-                        desc_auth = await _rtsp_request(reader, writer, "DESCRIBE", url, cseq, auth_header, timeout=0.8)
-                        cseq += 1
-                        if "200 OK" in desc_auth and ("m=video" in desc_auth or "m=audio" in desc_auth or "v=0" in desc_auth):
-                            auth_url = _format_rtsp_url(ip, port, path, user, password)
-                            found_urls.append(auth_url)
-                            result["credentials"] = {"user": user, "password": password}
-                            if not result["sdp_info"]:
-                                result["sdp_info"] = desc_auth
-                            authed = True
+                        headers_to_try.append(f"Authorization: Basic {token}\r\n")
+
+                        for auth_hdr in headers_to_try:
+                            req_extra = f"{auth_hdr}Accept: application/sdp\r\n"
+                            desc_auth = await _rtsp_request(reader, writer, "DESCRIBE", url, cseq, req_extra, timeout=0.8)
+                            cseq += 1
+                            if "200 OK" in desc_auth and ("m=video" in desc_auth or "m=audio" in desc_auth or "v=0" in desc_auth):
+                                auth_url = _format_rtsp_url(ip, port, path, user, password)
+                                found_urls.append(auth_url)
+                                result["credentials"] = {"user": user, "password": password}
+                                if not result["sdp_info"]:
+                                    result["sdp_info"] = desc_auth
+                                authed = True
+                                break
+                        if authed:
                             break
                     if authed and len(found_urls) >= 4:
                         break
-
-            # If unauthenticated probe failed but paths confirmed existing stream with auth requirement (e.g. Digest Auth),
-            # attach candidate URLs for all supplied credentials so Stage 3 (FFmpeg Digest) and go2rtc can verify them
-            if not found_urls and auth_required_paths:
-                for p in auth_required_paths[:4]:
-                    for user, password in (credentials or [("admin", "")]):
-                        found_urls.append(_format_rtsp_url(ip, port, p, user, password))
 
             # Deduplicate preserving order
             seen = set()
@@ -446,8 +458,8 @@ async def probe_rtsp_direct(
                     deduped.append(u)
 
             result["rtsp_urls"] = deduped
-            if not deduped:
-                result["success"] = False
+            result["success"] = len(deduped) > 0
+
 
         finally:
             try:
