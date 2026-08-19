@@ -137,6 +137,11 @@ class ScannerV2StorageMixin:
         with self._get_connection() as conn:
             conn.execute("DELETE FROM v2_results")
 
+    def delete_v2_result(self, ip: str) -> None:
+        """Delete a single v2 result by IP."""
+        with self._get_connection() as conn:
+            conn.execute("DELETE FROM v2_results WHERE ip = ?", (ip,))
+
     def mark_v2_result_go2rtc(self, ip: str, in_go2rtc: bool) -> None:
         with self._get_connection() as conn:
             conn.execute(

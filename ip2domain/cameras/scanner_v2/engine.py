@@ -400,8 +400,26 @@ async def run_v2_scan_pipeline(
                 return_exceptions=True,
             )
 
+            # Filter out cameras that have 0 working streams after verification
+            valid_cameras = []
+            for cam in job.results:
+                if cam.streams and any(s.verified for s in cam.streams):
+                    valid_cameras.append(cam)
+                    if storage:
+                        try:
+                            storage.save_v2_result(cam.to_dict())
+                        except Exception:
+                            pass
+                else:
+                    if storage:
+                        try:
+                            storage.delete_v2_result(cam.ip)
+                        except Exception:
+                            pass
+
+            job.results = valid_cameras
             job.stage3_status = "done"
-            verified = sum(1 for c in job.results if any(s.verified for s in c.streams))
+            verified = len(valid_cameras)
             job.add_log(f"[Stage 3] Завершено: {verified} камер с подтверждённым видео")
 
         # ── Done ───────────────────────────────────────────────────────

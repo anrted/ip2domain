@@ -158,13 +158,13 @@ def test_v2_job_persistence_and_resume():
         "logs": ["[Stage 1] In progress"],
     })
 
-    # Query active job
-    active = sm.get_active_v2_job()
-    assert active is not None
-    assert active["job_id"] == test_jid
-    assert active["status"] == "running"
-    assert active["current_index"] == 50
-    assert active["targets_str"] == "10.0.0.1/24"
+    # Query saved job
+    saved = sm.get_v2_job(test_jid)
+    assert saved is not None
+    assert saved["job_id"] == test_jid
+    assert saved["status"] == "running"
+    assert saved["current_index"] == 50
+    assert saved["targets_str"] == "10.0.0.1/24"
 
     # Update progress index
     sm.update_v2_job_progress(test_jid, current_index=120, progress_pct=48, stage="Sweep [120/254]", found_cameras=2)

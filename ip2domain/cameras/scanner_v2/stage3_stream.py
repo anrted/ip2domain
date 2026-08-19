@@ -134,14 +134,23 @@ async def capture_stream_frame(
 async def verify_camera_streams(
     camera: CameraResult,
     capture_dir: Path,
-    max_streams_to_try: int = 5,
+    max_streams_to_try: int = 6,
 ) -> int:
     """Verify streams for a single CameraResult and capture frames for valid streams.
 
+    Prunes dead / 401 unauthorized streams and keeps only verified working streams.
     Returns the count of verified streams.
     """
-    verified_count = 0
-    streams_to_test = camera.streams[:max_streams_to_try]
+    verified_streams = []
+
+    # 1. Keep already-verified HTTP snapshots / WebRTC / MJPEG streams
+    for stream in camera.streams:
+        if stream.verified and stream.stream_type in ("http_snapshot", "mjpeg", "webrtc", "whep"):
+            verified_streams.append(stream)
+
+    # 2. Test unverified streams (RTSP / RTMP / HLS)
+    unverified_streams = [s for s in camera.streams if not s.verified]
+    streams_to_test = unverified_streams[:max_streams_to_try]
 
     for stream in streams_to_test:
         ok, path, codec, w, h = await capture_stream_frame(
@@ -157,11 +166,14 @@ async def verify_camera_streams(
             stream.width = w
             stream.height = h
             stream.resolution = f"{w}x{h}" if w and h else ""
-            verified_count += 1
-            break  # Found at least one working stream
+            verified_streams.append(stream)
+            # Once we found a confirmed working stream for this camera, stop testing credential variations
+            break
 
-    # Prioritize verified streams at the top of camera.streams
-    if camera.streams:
-        camera.streams.sort(key=lambda s: (not s.verified, not bool(s.screenshot_path)))
+    # 3. Only keep working verified streams in camera.streams (discard all 401 / dead candidates)
+    if verified_streams:
+        camera.streams = verified_streams
+    else:
+        camera.streams = []
 
-    return verified_count
+    return len(verified_streams)
