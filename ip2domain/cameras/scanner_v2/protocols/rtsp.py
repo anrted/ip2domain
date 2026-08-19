@@ -398,6 +398,7 @@ async def probe_rtsp_direct(
                 probe_paths = (top_db[:30] if top_db else []) or _GENERIC_PATHS[:30]
 
             found_urls: List[str] = []
+            failed_auth_paths = 0
             cseq = 2
 
             for path in probe_paths:
@@ -423,7 +424,7 @@ async def probe_rtsp_direct(
                 # If 401 or WWW-Authenticate header, try Digest and Basic credentials
                 if "401" in desc or "WWW-Authenticate" in desc:
                     authed = False
-                    for user, password in (credentials or [("admin", "admin"), ("admin", "12345"), ("admin", "123456"), ("admin", ""), ("root", "root"), ("root", "")])[:5]:
+                    for user, password in (credentials or [("admin", "admin"), ("admin", "12345"), ("admin", "123456"), ("admin", ""), ("root", "root"), ("root", "")])[:4]:
                         headers_to_try = []
                         if "digest" in desc.lower():
                             d_hdr = _build_digest_header(user, password, "DESCRIBE", url, desc)
@@ -446,8 +447,16 @@ async def probe_rtsp_direct(
                                 break
                         if authed:
                             break
-                    if authed and len(found_urls) >= 4:
-                        break
+
+                    if authed:
+                        if len(found_urls) >= 4:
+                            break
+                    else:
+                        failed_auth_paths += 1
+                        if failed_auth_paths >= 3:
+                            # 3 paths failed authentication with all given credentials -> camera locked
+                            break
+
 
             # Deduplicate preserving order
             seen = set()
