@@ -86,9 +86,10 @@ def test_check_tools():
     assert "is_root" in tools
 
 
-def test_storage_v2():
+def test_storage_v2(tmp_path):
     """Test StorageManager v2 methods."""
-    sm = StorageManager()
+    db_file = str(tmp_path / "test_v2.db")
+    sm = StorageManager(db_path=db_file)
     sm.clear_v2_results()
 
     cam_data = {
@@ -119,6 +120,7 @@ def test_storage_v2():
 
     sm.clear_v2_results()
     assert len(sm.get_v2_results()) == 0
+
 
 
 def test_api_v2_tools():

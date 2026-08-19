@@ -430,14 +430,19 @@ async function v2LoadStoredResults() {
         const resp = await fetch('/api/v2/results?limit=500');
         if (!resp.ok) return;
         const data = await resp.json();
-        if (data.results && data.results.length) {
-            V2State.results = data.results;
-            v2UpdateResultsCount();
-            v2RenderResults();
-            document.getElementById('v2-results-card').classList.add('visible');
+        const results = data.results || [];
+        V2State.results = results;
+        v2UpdateResultsCount();
+        v2RenderResults();
+        const card = document.getElementById('v2-results-card');
+        if (card) {
+            card.classList.add('visible');
         }
-    } catch (e) {}
+    } catch (e) {
+        console.error('[v2] Error loading stored results:', e);
+    }
 }
+
 
 function v2RenderResults() {
     const grid = document.getElementById('v2-camera-grid');
@@ -941,14 +946,18 @@ function _esc(str) {
 // Init on page load (restore version preference)
 // ─────────────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
+    v2LoadTools();
+    v2RenderCredentials();
+    v2LoadStoredResults();
+
     const savedVersion = localStorage.getItem('ip2domain_cam_version');
     if (savedVersion === 'v2') {
         setTimeout(() => {
             const v2Btn = document.getElementById('cam-ver-btn-v2');
-            if (v2Btn && document.getElementById('cameras-view')?.classList.contains('active')) {
+            if (v2Btn) {
                 switchCameraVersion('v2');
             }
-        }, 100);
+        }, 50);
     }
 });
 
@@ -956,5 +965,8 @@ function v2CheckVersionOnTabOpen() {
     const savedVersion = localStorage.getItem('ip2domain_cam_version');
     if (savedVersion === 'v2') {
         switchCameraVersion('v2');
+    } else {
+        v2LoadStoredResults();
     }
 }
+

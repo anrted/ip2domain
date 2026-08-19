@@ -93,9 +93,88 @@ class ScannerV2StorageMixin:
                 ),
             )
 
+    def _sync_from_strix_if_needed(self, conn) -> None:
+        """If v2_results is empty, import existing discovered cameras from strix_results."""
+        try:
+            cnt = conn.execute("SELECT COUNT(*) FROM v2_results").fetchone()[0]
+            if cnt > 0:
+                return
+            strix_tables = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='strix_results'"
+            ).fetchall()
+            if not strix_tables:
+                return
+            strix_rows = conn.execute(
+                "SELECT * FROM strix_results WHERE is_garbage = 0"
+            ).fetchall()
+            for r in strix_rows:
+                ip = r["ip"]
+                probe = json.loads(r["probe_json"] or "{}") if "probe_json" in r.keys() else {}
+                streams_raw = json.loads(r["streams_json"] or "[]") if "streams_json" in r.keys() else []
+                if not streams_raw:
+                    continue
+                brand = probe.get("brand") or probe.get("vendor") or ""
+                model = probe.get("model") or ""
+                streams = []
+                for s in streams_raw:
+                    url = s.get("source") or s.get("url") or ""
+                    if url:
+                        streams.append({
+                            "url": url,
+                            "type": "rtsp" if "rtsp://" in url else ("hls" if ".m3u8" in url else "http_snapshot"),
+                            "verified": bool(s.get("screenshot") or s.get("codecs")),
+                            "screenshot_path": s.get("screenshot") or "",
+                            "codec": (s.get("codecs") or [""])[0] if isinstance(s.get("codecs"), list) else "",
+                            "resolution": f"{s.get('width', '')}x{s.get('height', '')}" if s.get("width") else "",
+                        })
+                if not streams:
+                    continue
+                if not brand:
+                    for s in streams:
+                        if "Streaming/Channels" in s["url"]:
+                            brand = "Hikvision"
+                            break
+                        elif "cam/realmonitor" in s["url"]:
+                            brand = "Dahua"
+                            break
+                        elif "axis" in s["url"]:
+                            brand = "Axis"
+                            break
+                    if not brand:
+                        brand = "Generic Camera"
+                cam_dict = {
+                    "ip": ip,
+                    "brand": brand,
+                    "model": model,
+                    "protocols": ["rtsp_direct"] if any(s["type"] == "rtsp" for s in streams) else ["http_snapshot"],
+                    "streams": streams,
+                    "open_ports": [554] if any(s["type"] == "rtsp" for s in streams) else [80],
+                    "in_go2rtc": False,
+                }
+                conn.execute(
+                    """
+                    INSERT INTO v2_results (ip, brand, model, serial, protocols, streams_json, result_json, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(ip) DO NOTHING
+                    """,
+                    (
+                        ip,
+                        brand,
+                        model,
+                        "",
+                        json.dumps(cam_dict["protocols"], ensure_ascii=False),
+                        json.dumps(cam_dict["streams"], ensure_ascii=False),
+                        json.dumps(cam_dict, ensure_ascii=False),
+                    ),
+                )
+            conn.commit()
+        except Exception as exc:
+            logger.debug("[v2 Storage] Error syncing from strix: %s", exc)
+
     def get_v2_results(self, limit: int = 1000, brand: str = "", protocol: str = "") -> List[Dict]:
         """Retrieve v2 scanner results, optionally filtered."""
         with self._get_connection() as conn:
+            self._sync_from_strix_if_needed(conn)
             query = "SELECT result_json, in_go2rtc FROM v2_results WHERE is_garbage = 0"
             params = []
             if brand:
@@ -116,6 +195,7 @@ class ScannerV2StorageMixin:
                 except Exception:
                     pass
             return results
+
 
     def get_v2_result(self, ip: str) -> Optional[Dict]:
         """Get a single v2 result by IP."""
