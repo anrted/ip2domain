@@ -9,7 +9,29 @@ venv/
 dist/
 build/
 ip2domain.db
+ip2domain.db-shm
+ip2domain.db-wal
+*.sqlite
+*.sqlite3
 output*.json
 *.log
 *.pid
 .env
+.env.*
+ip2domain/models/*.onnx
+ip2domain/models/*.pt
+
+# Camera and scanner capture caches (dynamic JPEG frames)
+ip2domain/web/centra_captures/
+ip2domain/web/camera_captures/
+ip2domain/web/strix_captures/
+ip2domain/web/v2_captures/
+ip2domain/data/
+captures/
+
+# OS / Editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+

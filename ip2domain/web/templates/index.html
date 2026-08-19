@@ -9,7 +9,8 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style.css?v=20260813-7">
+    <link rel="stylesheet" href="/static/style_v2.css?v=20260819-v2-1">
 </head>
 <body>
 <div class="app-shell">
@@ -194,45 +195,438 @@
 
             <section class="app-view" id="cameras-view">
                 <div class="camera-tabs" role="tablist" aria-label="Разделы камер">
-                    <button class="camera-tab active" id="camera-scanner-tab" type="button" role="tab" aria-selected="true" onclick="switchCameraTab('scanner')">Сканер камер</button>
+                    <button class="camera-tab active" id="camera-go2rtc-tab" type="button" role="tab" aria-selected="true" onclick="switchCameraTab('go2rtc')">Камеры go2rtc</button>
+                    <button class="camera-tab" id="camera-strix-tab" type="button" role="tab" aria-selected="false" onclick="switchCameraTab('strix')">Strix Сканер</button>
+                    <button class="camera-tab" id="camera-scanner-tab" type="button" role="tab" aria-selected="false" onclick="switchCameraTab('scanner')">Сканер камер</button>
+                    <button class="camera-tab" id="camera-catalog-tab" type="button" role="tab" aria-selected="false" onclick="switchCameraTab('catalog')">Каталог провайдеров</button>
                     <button class="camera-tab" id="camera-centra-tab" type="button" role="tab" aria-selected="false" onclick="switchCameraTab('centra')">Камеры Centra</button>
+                    <button class="camera-tab" id="camera-screens-tab" type="button" role="tab" aria-selected="false" onclick="switchCameraTab('screens')">Скрины с камер</button>
+                    <!-- v1/v2 switcher -->
+                    <div class="camera-version-switcher" style="margin-left:auto;">
+                        <button class="camera-version-btn active" id="cam-ver-btn-v1" onclick="switchCameraVersion('v1')" title="Классический интерфейс">v1</button>
+                        <button class="camera-version-btn" id="cam-ver-btn-v2" onclick="switchCameraVersion('v2')" title="Scanner v2 — максимальное покрытие протоколов">v2</button>
+                    </div>
                 </div>
-                <div class="camera-tab-panel active" id="camera-scanner-panel" role="tabpanel">
+                <div class="camera-tab-panel active" id="camera-go2rtc-panel" role="tabpanel">
+                    <section class="glass-card page-card">
+                        <div class="section-header">
+                            <div>
+                                <h2>Камеры go2rtc (Живой просмотр)</h2>
+                                <p class="section-description">Потоки в реальном времени с минимальной задержкой через WebRTC / MSE</p>
+                            </div>
+                            <div class="camera-card-actions" style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+                                <div class="btn-group" style="display: inline-flex; background: rgba(0,0,0,0.3); border-radius: 6px; padding: 2px; border: 1px solid rgba(255,255,255,0.1);">
+                                    <button type="button" class="btn btn-ghost btn-small active" id="go2rtc-view-groups-btn" onclick="setGo2rtcViewMode('groups')" style="font-size: 0.75rem; padding: 0.2rem 0.55rem;">📍 По объектам</button>
+                                    <button type="button" class="btn btn-ghost btn-small" id="go2rtc-view-grid-btn" onclick="setGo2rtcViewMode('flat')" style="font-size: 0.75rem; padding: 0.2rem 0.55rem;">🔲 Все камеры</button>
+                                </div>
+                                <a class="btn btn-ghost btn-small" href="http://2.26.231.129:1984" target="_blank" rel="noopener noreferrer">Панель go2rtc ↗</a>
+                                <button type="button" class="btn btn-small" onclick="loadGo2rtcStreams()">🔄 Обновить</button>
+                            </div>
+                        </div>
+                        
+                        <!-- Search & Tag Filter Pills Bar -->
+                        <div style="display: flex; gap: 0.75rem; align-items: center; justify-content: space-between; flex-wrap: wrap; margin-bottom: 1rem; background: rgba(15,23,42,0.6); padding: 0.6rem 0.85rem; border-radius: 8px; border: 1px solid rgba(255,255,255,0.06);">
+                            <div style="flex: 1; min-width: 200px; max-width: 380px; position: relative;">
+                                <input type="text" id="go2rtc-search-input" placeholder="🔍 Поиск по названию, тегу, IP или порту..." oninput="onGo2rtcSearchChange(this.value)" style="width: 100%; padding: 0.4rem 0.65rem; font-size: 0.8rem; background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.12); border-radius: 6px; color: #fff;">
+                            </div>
+                            <div id="go2rtc-tag-pills" style="display: flex; gap: 0.4rem; flex-wrap: wrap; align-items: center;">
+                                <!-- Tag pills injected dynamically -->
+                            </div>
+                        </div>
+
+                        <!-- Add stream form -->
+                        <details style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.07); border-radius: 8px; margin-bottom: 1.25rem; padding: 0.5rem 0.75rem;">
+                            <summary style="cursor: pointer; font-size: 0.82rem; font-weight: 600; color: #a5b4fc; padding: 0.2rem 0;">+ Добавить новую камеру вручную</summary>
+                            <div style="padding-top: 0.75rem;">
+                                <form id="go2rtc-add-form" onsubmit="addGo2rtcStream(event)" style="display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: flex-end;">
+                                    <div style="flex: 1; min-width: 150px;">
+                                        <label style="font-size: 0.75rem; color: #a1a1aa; display: block; margin-bottom: 0.25rem;">Имя камеры / ID</label>
+                                        <input type="text" id="go2rtc-stream-name" placeholder="напр. pvez_kassa_1" required style="width: 100%; padding: 0.45rem 0.65rem; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.15); border-radius: 6px; color: #fff; font-size: 0.82rem;">
+                                    </div>
+                                    <div style="flex: 2.5; min-width: 240px;">
+                                        <label style="font-size: 0.75rem; color: #a1a1aa; display: block; margin-bottom: 0.25rem;">RTSP URL камеры</label>
+                                        <input type="text" id="go2rtc-stream-url" placeholder="rtsp://admin:pass@IP:554/ch0_0" required style="width: 100%; padding: 0.45rem 0.65rem; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.15); border-radius: 6px; color: #fff; font-size: 0.82rem;">
+                                    </div>
+                                    <div style="flex: 1; min-width: 140px;">
+                                        <label style="font-size: 0.75rem; color: #a1a1aa; display: block; margin-bottom: 0.25rem;">Тег объекта</label>
+                                        <select id="go2rtc-stream-tag" style="width: 100%; padding: 0.45rem 0.65rem; background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.15); border-radius: 6px; color: #fff; font-size: 0.82rem;">
+                                            <option value="">Без тега</option>
+                                            <option value="ПВЗ">🏬 ПВЗ</option>
+                                            <option value="Магазин">🛒 Магазин</option>
+                                            <option value="Офис">🏢 Офис</option>
+                                            <option value="Склад">🏭 Склад</option>
+                                            <option value="Дом">🏠 Дом</option>
+                                            <option value="Парковка">🚗 Парковка</option>
+                                        </select>
+                                    </div>
+                                    <button type="submit" class="btn btn-small" id="go2rtc-add-btn">+ Добавить поток</button>
+                                </form>
+                                <div id="go2rtc-add-status" style="font-size: 0.82rem; margin-top: 0.4rem;"></div>
+                            </div>
+                        </details>
+
+                        <div id="go2rtc-streams-container" style="width: 100%;">
+                            <div class="empty-state"><span class="spinner"></span> Загрузка камер go2rtc...</div>
+                        </div>
+                    </section>
+                </div>
+                <div class="camera-tab-panel" id="camera-strix-panel" role="tabpanel">
+                    <section class="glass-card page-card remote-scan-card">
+                        <div class="section-header">
+                            <div>
+                                <h2>Strix Сканер (Последовательный перебор IP)</h2>
+                                <p class="section-description">Автоматическое обнаружение ONVIF/HomeKit, подбор RTSP/HTTP стримов и захват скриншотов через Strix (порт 4567)</p>
+                            </div>
+                            <div class="camera-card-actions">
+                                <a class="btn btn-ghost btn-small" href="http://127.0.0.1:4567" target="_blank" rel="noopener noreferrer">Панель Strix ↗</a>
+                            </div>
+                        </div>
+                        <form id="strix-form" onsubmit="startStrixScan(event)">
+                            <div class="remote-form-grid" style="grid-template-columns: minmax(240px, 1.4fr) minmax(160px, 1fr) minmax(120px, 0.7fr) minmax(120px, 0.7fr) minmax(100px, 0.6fr);">
+                                <div class="form-group remote-target-field">
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.25rem;">
+                                        <label for="strix-target" style="margin-bottom:0;">IP-адреса и диапазоны</label>
+                                        <div style="display: flex; gap: 0.35rem; align-items: center;">
+                                            <input id="strix-asn-input" type="text" placeholder="AS12958" style="font-size: 0.72rem; padding: 0.15rem 0.45rem; width: 85px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.15); border-radius: 4px; color: #fff;">
+                                            <button type="button" id="strix-asn-btn" class="btn btn-ghost btn-small" style="font-size: 0.7rem; padding: 0.15rem 0.45rem;" onclick="loadAsnPrefixesForStrix()">По ASN</button>
+                                        </div>
+                                    </div>
+                                    <div style="display: flex; gap: 0.35rem; flex-wrap: wrap; margin-bottom: 0.35rem; align-items: center;">
+                                        <button type="button" class="btn btn-ghost btn-small" style="font-size: 0.7rem; padding: 0.18rem 0.45rem; background: rgba(99,102,241,0.2); border: 1px solid rgba(99,102,241,0.4); color: #c7d2fe; font-weight: 500;" onclick="insertStrixDbTargets('not_in_go2rtc')" id="btn-insert-not-go2rtc" title="Подставить только те IP камер из базы, которых еще нет в go2rtc">
+                                            ⚡ Не в go2rtc (<span id="count-not-go2rtc">...</span>)
+                                        </button>
+                                        <button type="button" class="btn btn-ghost btn-small" style="font-size: 0.7rem; padding: 0.18rem 0.45rem; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); color: #e2e8f0;" onclick="insertStrixDbTargets('all')" id="btn-insert-all-db" title="Подставить все найденные и сохраненные IP камер из базы">
+                                            📋 Все из базы (<span id="count-all-db">...</span>)
+                                        </button>
+                                        <button type="button" class="btn btn-ghost btn-small" style="font-size: 0.7rem; padding: 0.18rem 0.45rem; color: #fca5a5; background: rgba(239,68,68,0.1);" onclick="document.getElementById('strix-target').value=''; updateStrixDbCounts();" title="Очистить поле ввода">
+                                            ✕ Очистить
+                                        </button>
+                                    </div>
+                                    <textarea id="strix-target" rows="7" placeholder="192.168.1.1&#10;192.168.1.10-192.168.1.50&#10;10.0.0.0/24" required></textarea>
+                                    <div id="strix-asn-status" style="font-size: 0.72rem; margin-top: 0.25rem;"></div>
+                                    <small>Каждая строка: IP, CIDR или диапазон.</small>
+                                    <div id="strix-graph-targets" style="display:flex; flex-wrap:wrap; gap:4px; margin-top:5px;"></div>
+                                </div>
+                                <div class="form-group">
+                                    <label for="strix-preset">Пресет шаблонов / Бренды</label>
+                                    <select id="strix-preset">
+                                        <option value="p:top-150" selected>Top 150 Stream Patterns (Быстрый)</option>
+                                        <option value="p:top-1000">Top 1000 Stream Patterns (Стандартный)</option>
+                                        <option value="p:top-5000">Top 5000 Stream Patterns (Полный)</option>
+                                    </select>
+                                    <small>Паттерны путей стримов для подбора</small>
+                                </div>
+                                <div class="form-group">
+                                    <label for="strix-user">Логин (по умолчанию admin)</label>
+                                    <input id="strix-user" type="text" value="admin" placeholder="admin">
+                                    <small>Для авторизации на камерах</small>
+                                </div>
+                                <div class="form-group">
+                                    <label for="strix-pass">Пароль (опционально)</label>
+                                    <input id="strix-pass" type="password" placeholder="admin">
+                                    <small>Пароль доступа к потоку</small>
+                                </div>
+                                <div class="form-group">
+                                    <label for="strix-concurrency">Параллельность IP</label>
+                                    <input id="strix-concurrency" type="number" min="1" max="50" value="10">
+                                    <small>Потоков проверки (1-50)</small>
+                                </div>
+                            </div>
+                            <div class="remote-security-note">
+                                ⚡ Включен <strong>Fast Port-Probe</strong> (0.5 сек на хост) и <strong>асинхронная параллельная обработка</strong>: пустые IP пропускаются моментально, а живые хосты сканируются через Strix.
+                            </div>
+                            <div style="display: flex; gap: 1.25rem; flex-wrap: wrap; margin-bottom: 1rem;">
+                                <label class="centra-skip-existing" style="display: inline-flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                                    <input id="strix-strict-video" type="checkbox" checked>
+                                    <strong>Только проверенные видеопотоки</strong>
+                                    <span class="help-tooltip" tabindex="0" data-tooltip="Автоматически отсеивать сотни фантомных RTSP-путей у NVR/DVR и сохранять только реальные рабочие каналы с подтвержденным видео." aria-label="Подсказка о фильтрации фантомных потоков">?</span>
+                                </label>
+                                <label class="centra-skip-existing" style="display: inline-flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                                    <input id="strix-skip-existing" type="checkbox">
+                                    <strong>Пропускать уже сохранённые IP</strong>
+                                    <span class="help-tooltip" tabindex="0" data-tooltip="Если этот IP уже был успешно просканирован и сохранен в результатах Strix, он будет пропущен." aria-label="Подсказка о пропуске сохраненных IP">?</span>
+                                </label>
+                                <label class="centra-skip-existing" style="display: inline-flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                                    <input id="strix-skip-cidrs" type="checkbox" checked>
+                                    <strong>Не сканировать повторно CIDR</strong>
+                                    <span class="help-tooltip" tabindex="0" data-tooltip="Автоматически пропускать целые подсети / CIDR диапазоны, которые уже были полностью отсканированы ранее и сохранены в базе." aria-label="Подсказка о пропуске отсканированных CIDR">?</span>
+                                </label>
+                            </div>
+                            <div class="centra-discovery-actions">
+                                <button class="btn" id="strix-scan-button" type="submit">▶ Запустить проверку Strix</button>
+                                <button class="btn btn-ghost" id="strix-cancel-button" type="button" onclick="cancelStrixScan()" style="display:none">■ Остановить</button>
+                            </div>
+                        </form>
+                        <div id="strix-progress" class="progress-container" style="display:none; margin-top: 1rem;">
+                            <div class="progress-header">
+                                <span id="strix-progress-stage">Подготовка...</span>
+                                <span id="strix-progress-pct">0%</span>
+                            </div>
+                            <div class="progress-track"><div id="strix-progress-fill" class="progress-fill"></div></div>
+                            <div id="strix-log-box" style="margin-top: 0.5rem; max-height: 120px; overflow-y: auto; font-family: monospace; font-size: 0.72rem; color: #a1a1aa; background: rgba(0,0,0,0.3); padding: 0.5rem; border-radius: 6px; border: 1px solid rgba(255,255,255,0.05);"></div>
+                        </div>
+                    </section>
+                    <section class="glass-card page-card remote-results-card">
+                        <div class="section-header">
+                            <div>
+                                <h2>Обнаруженные камеры и потоки Strix</h2>
+                                <p class="section-description">Активные RTSP/HTTP потоки, снимки кадра и метаданные</p>
+                            </div>
+                        </div>
+                        <div id="strix-results" class="remote-results">
+                            <div class="empty-state">Проверка Strix ещё не запускалась</div>
+                        </div>
+                    </section>
+                </div>
+                <div class="camera-tab-panel" id="camera-scanner-panel" role="tabpanel">
                 <section class="glass-card page-card remote-scan-card">
                     <div class="section-header"><div><h2>Сканер IP-камер</h2><p class="section-description">Поиск камер и видеорегистраторов по сетевым отпечаткам с оценкой уверенности</p></div></div>
                     <form id="camera-form" onsubmit="startCameraScan(event)">
                         <div class="remote-form-grid">
-                            <div class="form-group remote-target-field"><label for="camera-target">IP-адреса и диапазоны</label><textarea id="camera-target" rows="7" placeholder="31.135.32.233&#10;31.135.45.0/24" required></textarea><small>Каждая строка: IP, CIDR или диапазон начальныйIP-конечныйIP</small><div id="camera-graph-targets"></div></div>
-                            <div class="form-group"><label for="camera-ports">Порты камер</label><input id="camera-ports" value="80,443,554,8000,8080,8081,8443,8554,8899,37777"><small>HTTP(S), RTSP и типичные vendor-порты</small></div>
+                            <div class="form-group remote-target-field">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.25rem;">
+                                    <label for="camera-target" style="margin-bottom:0;">IP-адреса и диапазоны</label>
+                                    <div style="display: flex; gap: 0.35rem; align-items: center;">
+                                        <input id="camera-asn-input" type="text" placeholder="AS12958" style="font-size: 0.72rem; padding: 0.15rem 0.45rem; width: 85px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.15); border-radius: 4px; color: #fff;">
+                                        <button type="button" id="camera-asn-btn" class="btn btn-ghost btn-small" style="font-size: 0.7rem; padding: 0.15rem 0.45rem;" onclick="loadAsnPrefixesForScanner()">Загрузить по ASN</button>
+                                    </div>
+                                </div>
+                                <textarea id="camera-target" rows="7" placeholder="31.135.32.233&#10;31.135.45.0/24" required></textarea>
+                                <div id="camera-asn-status" style="font-size: 0.72rem; margin-top: 0.25rem;"></div>
+                                <small>Каждая строка: IP, CIDR или диапазон начальныйIP-конечныйIP</small>
+                                <div id="camera-graph-targets"></div>
+                            </div>
+                            <div class="form-group"><label for="camera-ports">Порты камер</label><input id="camera-ports" value="80,443,554,8000,8080,8081,8443,8554,8899,10554,37777"><small>HTTP(S), RTSP и типичные vendor-порты</small></div>
+                            <div class="form-group"><label for="camera-concurrency">Nmap-процессы</label><input id="camera-concurrency" type="number" min="0" max="32" value="0"><small>0 — автоматически по CPU и свободной RAM; ручное значение ограничивается безопасным максимумом</small></div>
                         </div>
                         <div class="remote-security-note">Удалённо проверяются PTR, HTTP/HTML, TLS, RTSP, ONVIF/UPnP и баннеры. DHCP, MAC/OUI, mDNS, WS-Discovery и сетевой трафик требуют запуска внутри локальной сети.</div>
-                        <button class="btn" id="camera-scan-button" type="submit">▶ Запустить проверку</button>
+                        <div class="centra-discovery-actions"><button class="btn" id="camera-scan-button" type="submit">▶ Запустить проверку</button><button class="btn btn-ghost" id="camera-cancel-button" type="button" onclick="cancelCameraScan()" style="display:none">■ Остановить</button></div>
                     </form>
                     <div id="camera-progress" class="progress-container" style="display:none;"></div>
                 </section>
                 <section class="glass-card page-card remote-results-card">
-                    <div class="section-header"><div><h2>Обнаруженные камеры</h2><p class="section-description">Найденные признаки, сервисы и итоговая уверенность</p></div><button type="button" class="btn btn-ghost btn-small" onclick="clearCameraResults()">Очистить результаты</button></div>
+                    <div class="section-header"><div><h2>Обнаруженные камеры</h2><p class="section-description">Найденные признаки, сервисы и итоговая уверенность</p></div><div class="camera-card-actions"><a class="btn btn-ghost btn-small" href="/api/cameras/results/export.csv" download>Экспорт CSV</a><button type="button" class="btn btn-ghost btn-small" onclick="clearCameraResults()">Очистить результаты</button></div></div>
+                    <div class="camera-result-toolbar" id="camera-connection-filters" aria-label="Фильтр по подключению"><button type="button" class="active" data-camera-filter="all" onclick="setCameraConnectionFilter('all')">Все</button><button type="button" data-camera-filter="rtsp" onclick="setCameraConnectionFilter('rtsp')">RTSP</button><button type="button" data-camera-filter="http" onclick="setCameraConnectionFilter('http')">HTTP / HTTPS</button><button type="button" data-camera-filter="onvif" onclick="setCameraConnectionFilter('onvif')">ONVIF</button><button type="button" data-camera-filter="other" onclick="setCameraConnectionFilter('other')">Другие</button></div>
                     <div id="camera-results" class="remote-results"><div class="empty-state">Проверка ещё не запускалась</div></div>
                 </section>
+                </div>
+                <div class="camera-tab-panel" id="camera-catalog-panel" role="tabpanel">
+                    <section class="glass-card page-card remote-results-card">
+                        <div class="section-header"><div><h2>Общий каталог камер</h2><p class="section-description">Centra и подключаемые IP/HLS/RTSP-провайдеры с единой идентичностью</p></div><span class="centra-count" id="camera-catalog-count"></span></div>
+                        <div class="centra-screen-toolbar"><label for="camera-catalog-provider">Провайдер</label><select id="camera-catalog-provider" onchange="loadCameraCatalog()"><option value="">Все провайдеры</option></select><label class="centra-screen-search"><span>Поиск</span><input id="camera-catalog-search" type="search" maxlength="200" placeholder="Название, адрес или ID" oninput="scheduleCameraCatalogSearch()"></label></div>
+                        <div id="camera-catalog-results" class="remote-results"><div class="empty-state">Каталог ещё не загружен</div></div>
+                    </section>
                 </div>
                 <div class="camera-tab-panel" id="camera-centra-panel" role="tabpanel">
                     <section class="glass-card page-card centra-card">
                         <div class="section-header"><div><h2>Камеры Centra</h2><p class="section-description">Публичные камеры на карте Яндекс</p></div><span class="centra-count" id="centra-count"></span></div>
                         <form id="centra-discovery-form" class="centra-discovery-form" onsubmit="startCentraDiscovery(event)">
-                            <div class="form-group"><label for="centra-start-id">ID от</label><input id="centra-start-id" type="number" min="1" max="1000000" value="1" required></div>
-                            <div class="form-group"><label for="centra-end-id">ID до</label><input id="centra-end-id" type="number" min="1" max="1000000" value="40000" required></div>
-                            <div class="form-group"><label for="centra-entrances">Подъездов</label><input id="centra-entrances" type="number" min="1" max="20" value="5" required></div>
-                            <div class="form-group"><label for="centra-concurrency">Параллельность</label><input id="centra-concurrency" type="number" min="1" max="50" value="20" required></div>
-                            <button class="btn" id="centra-discovery-button" type="submit">Найти и загрузить</button>
+                            <div class="form-group"><label for="centra-camera-type">Тип камеры <span class="help-tooltip" tabindex="0" data-tooltip="I — домофоны, G — городские, H и P — камеры на домах и в подъездах. Для остальных префиксов выберите «Другой тип»." aria-label="Подсказка о типе камеры">?</span></label><select id="centra-camera-type" onchange="updateCentraTypeFields()"><option value="I">I · Домофоны</option><option value="G">G · Городские камеры</option><option value="H">H · Камеры на домах</option><option value="P">P · Камеры на домах</option><option value="custom">Другой тип</option></select></div>
+                            <div class="form-group" id="centra-custom-type-group" style="display:none"><label for="centra-custom-type">Типы камер <span class="help-tooltip" tabindex="0" data-tooltip="Буквы через запятую (H,P) или диапазон A-Z. Зарезервированные I и G автоматически исключаются." aria-label="Подсказка о пользовательских типах">?</span></label><input id="centra-custom-type" maxlength="100" pattern="[A-Za-z, -]+" placeholder="H,P или A-Z" oninput="updateCentraTypeFields()"><small>I и G задаются отдельными пунктами списка</small></div>
+                            <div class="form-group"><label for="centra-base-url">Сервер <span class="help-tooltip" tabindex="0" data-tooltip="Пусто — автоматический перебор. Ручной формат: полный HTTPS URL без пути, например https://flus6.mycentra.ru" aria-label="Подсказка о сервере">?</span></label><input id="centra-base-url" type="url" inputmode="url" autocomplete="off" pattern="https://[A-Za-z0-9-]+\.mycentra\.ru" placeholder="https://flus6.mycentra.ru" title="Введите полный адрес вида https://flus6.mycentra.ru без пути"><small>Формат: <code>https://flus6.mycentra.ru</code> или оставьте пустым</small></div>
+                            <div class="form-group"><label for="centra-pin-color">Цвет пина <span class="help-tooltip" tabindex="0" data-tooltip="I всегда красный, G всегда синий. Цвет найденного пользовательского типа закрепляется за ним навсегда." aria-label="Подсказка о цвете пина">?</span></label><select id="centra-pin-color"><option value="violet">Фиолетовый</option><option value="blue">Синий</option><option value="red" selected>Красный</option><option value="green">Зелёный</option><option value="orange">Оранжевый</option><option value="yellow">Жёлтый</option><option value="pink">Розовый</option><option value="gray">Серый</option></select></div>
+                            <div class="form-group"><label for="centra-start-id">ID от <span class="help-tooltip" tabindex="0" data-tooltip="Первый номер объекта в шаблоне I-{ID}-{подъезд}." aria-label="Подсказка о начальном ID">?</span></label><input id="centra-start-id" type="number" min="1" max="1000000" value="1" required></div>
+                            <div class="form-group"><label for="centra-end-id">ID до <span class="help-tooltip" tabindex="0" data-tooltip="Последний номер объекта включительно. Максимальный ID — 1 000 000." aria-label="Подсказка о конечном ID">?</span></label><input id="centra-end-id" type="number" min="1" max="1000000" value="40000" required></div>
+                            <div class="form-group"><label for="centra-entrance-start">Подъезд от <span class="help-tooltip" tabindex="0" data-tooltip="Первый проверяемый номер подъезда или камеры после второго дефиса." aria-label="Подсказка о начальном подъезде">?</span></label><input id="centra-entrance-start" type="number" min="1" max="100" value="1" required></div>
+                            <div class="form-group"><label for="centra-entrance-end">Подъезд до <span class="help-tooltip" tabindex="0" data-tooltip="Последний номер подъезда включительно. Например 6–11 создаёт шесть проверок на каждый ID." aria-label="Подсказка о конечном подъезде">?</span></label><input id="centra-entrance-end" type="number" min="1" max="100" value="5" required></div>
+                            <div class="form-group"><label for="centra-concurrency">Параллельность <span class="help-tooltip" tabindex="0" data-tooltip="Количество одновременных сетевых запросов. Большое значение ускоряет поиск, но увеличивает нагрузку." aria-label="Подсказка о параллельности">?</span></label><input id="centra-concurrency" type="number" min="1" max="50" value="20" required></div>
+                            <label class="centra-skip-existing"><input id="centra-skip-existing" type="checkbox"><strong>Пропускать проверенные</strong><span class="help-tooltip" tabindex="0" data-tooltip="Пропускает найденные камеры и ID с подтверждённым Not found на всех автоматических серверах. Ручные и незавершённые сетевые проверки не пропускаются." aria-label="Подсказка о пропуске камер">?</span></label>
+                            <div class="centra-discovery-actions"><button class="btn" id="centra-discovery-button" type="submit">Найти и загрузить</button><button class="btn btn-ghost" id="centra-cancel-button" type="button" onclick="cancelCentraDiscovery()" style="display:none">■ Остановить</button></div>
                         </form>
-                        <div class="remote-security-note">Проверяется <code>media_info.json</code>. Найденные камеры сохраняются в SQLite и остаются после перезапуска.</div>
+                        <div class="remote-security-note">Для любого типа автоматический режим проверяет <code>flus.mycentra.ru</code> и серверы <code>flus1</code>–<code>flus6</code>. Ручной URL ограничивает поиск одним сервером.</div>
                         <div id="centra-discovery-progress" class="progress-container" style="display:none"></div>
                         <div class="centra-layout">
                             <div id="centra-map" class="centra-map" aria-label="Карта камер Centra"><div class="empty-state">Загрузка карты...</div></div>
-                            <aside id="centra-camera-list" class="centra-camera-list"></aside>
+                            <aside class="centra-camera-sidebar">
+                                <div class="centra-list-filters" id="centra-list-filters" aria-label="Фильтр камер"></div>
+                                <div id="centra-camera-list" class="centra-camera-list"></div>
+                            </aside>
                         </div>
                     </section>
                 </div>
+                <div class="camera-tab-panel" id="camera-screens-panel" role="tabpanel">
+                    <section class="glass-card page-card centra-screens-card">
+                        <div class="section-header"><div><h2>Скрины с камер</h2><p class="section-description">Свежие кадры со всех камер Centra в базе</p></div><span class="centra-count" id="centra-screens-count"></span></div>
+                        <div class="centra-screen-toolbar"><label for="centra-screen-type">Тип камеры</label><select id="centra-screen-type" onchange="resetCentraScreens()"><option value="">Все типы</option></select><label class="centra-screen-search"><span>Поиск</span><input id="centra-screen-search" type="search" maxlength="200" placeholder="Название, адрес или ID" autocomplete="off" oninput="scheduleCentraScreensSearch()"></label><div class="centra-screen-mode"><button class="btn btn-ghost btn-small active" id="centra-screens-all-button" type="button" onclick="showAllCentraScreens()">Все камеры</button><button class="btn btn-ghost btn-small" id="centra-people-saved-button" type="button" onclick="showSavedCentraPeople()">С людьми: 0</button></div><button class="btn btn-small" id="centra-people-button" type="button" onclick="analyzeCentraScreenPeople(false)">Найти на 100</button><button class="btn btn-small" id="centra-people-all-button" type="button" onclick="analyzeCentraScreenPeople(true)">Найти на всех</button><button class="btn btn-danger btn-small" id="centra-people-cancel" type="button" onclick="cancelCentraPeopleAnalysis()" style="display:none">Остановить</button><div id="centra-people-filters" class="centra-people-filters" style="display:none"><button class="btn btn-ghost btn-small active" type="button" data-people-filter="all" onclick="filterCentraScreensByPeople('all')">Все с людьми</button><button class="btn btn-ghost btn-small" type="button" data-people-filter="1+" onclick="filterCentraScreensByPeople('1+')">1 и более</button><button class="btn btn-ghost btn-small" type="button" data-people-filter="2-4" onclick="filterCentraScreensByPeople('2-4')">2–4</button><button class="btn btn-ghost btn-small" type="button" data-people-filter="5+" onclick="filterCentraScreensByPeople('5+')">5 и более</button><button class="btn btn-ghost btn-small" type="button" onclick="resetCentraPersonIdentities()">Сбросить временные ID</button></div><span id="centra-screen-status"></span></div>
+                        <div id="centra-people-progress" class="centra-people-progress" style="display:none"></div>
+                        <div id="centra-screens-grid" class="centra-screens-grid"></div>
+                        <div id="centra-screens-sentinel" class="centra-screens-sentinel"><span class="spinner"></span> Загрузка...</div>
+                    </section>
+                </div>
+                <!-- ══════════════════════════════════════════════════
+                     Camera Scanner v2 Panel
+                     ══════════════════════════════════════════════════ -->
+                <div id="camera-v2-panel" style="padding:0;">
+
+                    <!-- Header Card -->
+                    <div class="v2-header-card">
+                        <div class="v2-header-title">
+                            <div class="v2-header-icon">🔍</div>
+                            <div class="v2-header-text">
+                                <h2>Camera Scanner v2</h2>
+                                <p>Максимальное покрытие: ONVIF · Hikvision ISAPI · Dahua CGI · Axis · RTSP direct · HLS · RTMP · masscan</p>
+                            </div>
+                        </div>
+                        <div class="v2-tools-status" id="v2-tools-status">
+                            <span class="v2-tool-badge">Загрузка...</span>
+                        </div>
+                    </div>
+
+                    <!-- Config Card -->
+                    <div class="v2-config-card" style="margin-top:1rem;">
+                        <form id="v2-scan-form" onsubmit="v2StartScan(event)">
+                            <div class="v2-config-grid">
+
+                                <!-- Targets -->
+                                <div>
+                                    <p class="v2-section-label">Цели сканирования</p>
+                                    <textarea id="v2-targets" class="v2-targets-area"
+                                        placeholder="192.168.1.0/24&#10;10.0.0.1-10.0.0.255&#10;172.16.5.100"
+                                        rows="6"></textarea>
+                                    <div class="v2-targets-actions">
+                                        <button type="button" class="v2-btn-small" onclick="document.getElementById('v2-targets').value=''">✕ Очистить</button>
+                                        <input id="v2-asn-input" type="text" placeholder="AS12345" style="font-size:0.72rem;padding:0.18rem 0.5rem;width:80px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.12);border-radius:4px;color:#fff;">
+                                        <button type="button" class="v2-btn-small" onclick="loadAsnPrefixesForV2()">По ASN</button>
+                                    </div>
+                                </div>
+
+                                <!-- Engine -->
+                                <div>
+                                    <p class="v2-section-label">Движок Stage 1</p>
+                                    <div class="v2-radio-group">
+                                        <label class="v2-radio-item">
+                                            <input type="radio" name="v2-engine" value="auto" id="v2-engine-auto" checked>
+                                            <div><strong>Авто</strong><small>masscan если root, иначе asyncio</small></div>
+                                        </label>
+                                        <label class="v2-radio-item">
+                                            <input type="radio" name="v2-engine" value="masscan" id="v2-engine-masscan">
+                                            <div><strong>masscan</strong><small>SYN-сканирование ×200 быстрее</small></div>
+                                        </label>
+                                        <label class="v2-radio-item">
+                                            <input type="radio" name="v2-engine" value="nmap_syn" id="v2-engine-nmap">
+                                            <div><strong>nmap -sS</strong><small>SYN, средняя скорость</small></div>
+                                        </label>
+                                        <label class="v2-radio-item">
+                                            <input type="radio" name="v2-engine" value="asyncio">
+                                            <div><strong>asyncio TCP</strong><small>Без root, медленнее</small></div>
+                                        </label>
+                                    </div>
+                                    <div class="v2-rate-row" style="margin-top:0.75rem;">
+                                        <span style="font-size:0.72rem;color:rgba(255,255,255,0.45);flex-shrink:0;">masscan rate</span>
+                                        <input type="range" id="v2-rate-slider" min="5000" max="500000" step="5000" value="50000"
+                                            oninput="v2OnRateChange(this.value)" style="flex:1;accent-color:#10b981;">
+                                        <span class="v2-rate-display" id="v2-rate-display">50,000 pps</span>
+                                    </div>
+                                </div>
+
+                                <!-- Protocols & Creds -->
+                                <div>
+                                    <p class="v2-section-label">Протоколы</p>
+                                    <div class="v2-checkbox-group" style="margin-bottom:0.85rem;">
+                                        <label class="v2-checkbox-item"><input type="checkbox" class="v2-proto-check" value="onvif" checked> ONVIF</label>
+                                        <label class="v2-checkbox-item"><input type="checkbox" class="v2-proto-check" value="hikvision" checked> Hikvision</label>
+                                        <label class="v2-checkbox-item"><input type="checkbox" class="v2-proto-check" value="dahua" checked> Dahua</label>
+                                        <label class="v2-checkbox-item"><input type="checkbox" class="v2-proto-check" value="axis" checked> Axis</label>
+                                        <label class="v2-checkbox-item"><input type="checkbox" class="v2-proto-check" value="rtsp" checked> RTSP</label>
+                                        <label class="v2-checkbox-item"><input type="checkbox" class="v2-proto-check" value="hls" checked> HLS/MJPEG</label>
+                                        <label class="v2-checkbox-item"><input type="checkbox" class="v2-proto-check" value="rtmp" checked> RTMP</label>
+                                        <label class="v2-checkbox-item"><input type="checkbox" class="v2-proto-check" value="webrtc" checked> WebRTC/WHEP</label>
+                                        <label class="v2-checkbox-item"><input type="checkbox" class="v2-proto-check" value="vms" checked> VMS/Mobotix</label>
+                                    </div>
+                                    <p class="v2-section-label">Опции</p>
+                                    <label class="v2-checkbox-item" style="margin-bottom:0.35rem;"><input type="checkbox" id="v2-local-discovery" checked> LAN Discovery</label>
+                                    <label class="v2-checkbox-item"><input type="checkbox" id="v2-capture-frames" checked> Захват кадров (ffmpeg)</label>
+                                    <p class="v2-section-label" style="margin-top:0.85rem;">Учётные данные</p>
+                                    <div id="v2-creds-list" class="v2-creds-list"></div>
+                                    <button type="button" class="v2-btn-small v2-btn-green" onclick="v2AddCred()" style="margin-top:0.3rem;">+ Добавить</button>
+                                </div>
+
+                            </div><!-- end grid -->
+
+                            <!-- Action bar -->
+                            <div class="v2-action-bar">
+                                <button type="submit" class="v2-start-btn" id="v2-start-btn">
+                                    <span id="v2-start-spinner" class="v2-spinner" style="display:none;"></span>
+                                    ▶ Запустить Scanner v2
+                                </button>
+                                <button type="button" class="v2-cancel-btn" id="v2-cancel-btn" onclick="v2CancelScan()">✕ Отмена</button>
+                                <span id="v2-engine-used" style="display:none;font-size:0.7rem;color:rgba(255,255,255,0.35);margin-left:0.5rem;"></span>
+                            </div>
+                        </form>
+                    </div>
+
+                    <!-- Progress Card -->
+                    <div class="v2-progress-card" id="v2-progress-card" style="margin-top:1rem;">
+                        <div class="v2-stages-grid">
+                            <div class="v2-stage-item" id="v2-stage-discovery">
+                                <div class="v2-stage-num">Stage 0</div>
+                                <div class="v2-stage-name">LAN Discovery</div>
+                                <div class="v2-stage-value">—</div>
+                                <div class="v2-stage-status-icon">⏳</div>
+                            </div>
+                            <div class="v2-stage-item" id="v2-stage-sweep">
+                                <div class="v2-stage-num">Stage 1</div>
+                                <div class="v2-stage-name">Port Sweep</div>
+                                <div class="v2-stage-value">—</div>
+                                <div class="v2-stage-status-icon">⏳</div>
+                            </div>
+                            <div class="v2-stage-item" id="v2-stage-finger">
+                                <div class="v2-stage-num">Stage 2</div>
+                                <div class="v2-stage-name">Fingerprint</div>
+                                <div class="v2-stage-value">—</div>
+                                <div class="v2-stage-status-icon">⏳</div>
+                            </div>
+                            <div class="v2-stage-item" id="v2-stage-capture">
+                                <div class="v2-stage-num">Stage 3</div>
+                                <div class="v2-stage-name">Frame Capture</div>
+                                <div class="v2-stage-value">—</div>
+                                <div class="v2-stage-status-icon">⏳</div>
+                            </div>
+                        </div>
+                        <div class="v2-main-progress">
+                            <div class="v2-progress-header">
+                                <span class="v2-progress-stage-text" id="v2-progress-stage-text">Ожидание запуска...</span>
+                                <span class="v2-progress-pct" id="v2-progress-pct">0%</span>
+                            </div>
+                            <div class="v2-progress-track"><div class="v2-progress-fill" id="v2-progress-fill" style="width:0%;"></div></div>
+                        </div>
+                        <div class="v2-log-panel" id="v2-log-panel"></div>
+                    </div>
+
+                    <!-- Results Card -->
+                    <div class="v2-results-card" id="v2-results-card" style="margin-top:1rem;">
+                        <div class="v2-results-header">
+                            <div>
+                                <span class="v2-results-title">Обнаруженные камеры</span>
+                                <span class="v2-results-count" id="v2-results-count" style="margin-left:0.75rem;">0 камер</span>
+                            </div>
+                            <div class="v2-filter-bar">
+                                <button class="v2-filter-btn active" id="v2-filter-brand-all" data-value="all" onclick="v2SetFilter('brand','all')">Все</button>
+                                <button class="v2-filter-btn" id="v2-filter-brand-Hikvision" data-value="Hikvision" onclick="v2SetFilter('brand','Hikvision')">Hikvision</button>
+                                <button class="v2-filter-btn" id="v2-filter-brand-Dahua" data-value="Dahua" onclick="v2SetFilter('brand','Dahua')">Dahua</button>
+                                <button class="v2-filter-btn" id="v2-filter-brand-Axis" data-value="Axis" onclick="v2SetFilter('brand','Axis')">Axis</button>
+                                <button class="v2-filter-btn" id="v2-filter-brand-Mobotix" data-value="Mobotix" onclick="v2SetFilter('brand','Mobotix')">Mobotix</button>
+                                <button class="v2-filter-btn" id="v2-filter-proto-onvif" data-value="onvif" onclick="v2SetFilter('protocol','onvif')">ONVIF</button>
+                                <button class="v2-filter-btn" id="v2-filter-proto-rtsp_direct" data-value="rtsp_direct" onclick="v2SetFilter('protocol','rtsp_direct')">RTSP</button>
+                                <button class="v2-filter-btn" id="v2-filter-proto-webrtc" data-value="webrtc" onclick="v2SetFilter('protocol','webrtc')">WebRTC</button>
+                                <button class="v2-filter-btn" id="v2-filter-proto-http_snapshot" data-value="http_snapshot" onclick="v2SetFilter('protocol','http_snapshot')">Snapshots</button>
+                            </div>
+                            <div class="v2-results-actions">
+                                <button class="v2-btn-small v2-btn-green" onclick="v2ExportAllToGo2rtc()">+ Все в go2rtc</button>
+                                <button class="v2-btn-small" onclick="v2ExportJson()">⬇ JSON</button>
+                                <button class="v2-btn-small v2-btn-danger" onclick="v2ClearResults()">🗑</button>
+                            </div>
+                        </div>
+                        <div class="v2-camera-grid" id="v2-camera-grid">
+                            <div class="v2-empty-state" style="grid-column:1/-1">
+                                <div class="v2-empty-icon">📷</div>
+                                <p>Запустите сканирование для поиска камер</p>
+                            </div>
+                        </div>
+                    </div>
+
+                </div><!-- #camera-v2-panel -->
+
             </section>
 
             <section class="app-view" id="settings-view">
@@ -283,8 +677,15 @@ function switchView(viewId, trigger) {
     document.getElementById('app-sidebar').classList.remove('open');
     if (viewId === 'history-view') loadScanHistory();
     if (viewId === 'remote-desktop-view' && window.refreshRemoteTargets) refreshRemoteTargets();
-    if (viewId === 'cameras-view' && window.refreshCameraTargets) refreshCameraTargets();
-    if (viewId === 'cameras-view' && window.resizeCentraMap) setTimeout(window.resizeCentraMap, 80);
+    if (viewId === 'cameras-view') {
+        const savedVer = localStorage.getItem('ip2domain_cam_version');
+        if (savedVer === 'v2' && window.switchCameraVersion) {
+            switchCameraVersion('v2');
+        } else {
+            const activeTab = document.querySelector('.camera-tab.active')?.id?.replace('camera-', '')?.replace('-tab', '') || 'go2rtc';
+            if (window.switchCameraTab) switchCameraTab(activeTab);
+        }
+    }
     if (viewId === 'graph-view' && network) setTimeout(() => network.redraw(), 50);
 }
 
@@ -376,6 +777,33 @@ async function changePassword(event) {
 }
 
 async function logoutUser() { await fetch('/api/auth/logout', {method:'POST'}); sessionStorage.removeItem('ip2domain_api_token'); window.location.replace('/login'); }
+async function loadAsnPrefixesForV2() {
+    const input = document.getElementById('v2-asn-input');
+    const asn = (input?.value || '').trim();
+    if (!asn) {
+        alert('Введите ASN (например, AS12345 или 12345)');
+        return;
+    }
+    const cleanAsn = asn.toUpperCase().startsWith('AS') ? asn.toUpperCase() : 'AS' + asn;
+    try {
+        const resp = await fetch(`/api/strix/asn-prefixes?asn=${encodeURIComponent(cleanAsn)}`);
+        if (!resp.ok) {
+            alert('Не удалось получить префиксы для ' + cleanAsn);
+            return;
+        }
+        const data = await resp.json();
+        const prefixes = data.prefixes || [];
+        if (!prefixes.length) {
+            alert('Для ' + cleanAsn + ' префиксы не найдены');
+            return;
+        }
+        const targetArea = document.getElementById('v2-targets');
+        const current = targetArea.value.trim();
+        targetArea.value = (current ? current + '\n' : '') + prefixes.join('\n');
+    } catch (e) {
+        alert('Ошибка: ' + e.message);
+    }
+}
 loadCurrentUser();
 setSidebarCompact(localStorage.getItem('ip2domain_sidebar_compact') === '1');
 updateScanModeControls();
@@ -383,6 +811,10 @@ updateScanModeControls();
 <script src="/static/graph.js"></script>
 <script src="/static/scan.js"></script>
 <script src="/static/remote_desktop.js"></script>
-<script src="/static/cameras.js"></script>
+<script src="/static/cameras/centra.js?v=20260814-m7-skip-existing"></script>
+<script src="/static/cameras/scanner.js?v=20260814-m7-skip-existing"></script>
+<script src="/static/cameras/go2rtc.js?v=20260814-m7-skip-existing"></script>
+<script src="/static/cameras/strix.js?v=20260818-db-presets-v5"></script>
+<script src="/static/cameras/scanner_v2.js?v=20260819-v2-1"></script>
 </body>
 </html>

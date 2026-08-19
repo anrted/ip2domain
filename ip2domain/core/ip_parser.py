@@ -9,7 +9,7 @@ class IPParser:
     and text files containing IP specifications.
     """
 
-    DEFAULT_MAX_IPS = 4096
+    DEFAULT_MAX_IPS = 1048576  # 1M IPs
 
     @staticmethod
     def parse_target(target: str, max_ips: int = DEFAULT_MAX_IPS) -> Generator[str, None, None]:
@@ -31,7 +31,7 @@ class IPParser:
                 if int(start_ip) > int(end_ip):
                     raise ValueError(f"Start IP ({start_ip}) is greater than end IP ({end_ip})")
                 count = int(end_ip) - int(start_ip) + 1
-                if count > max_ips:
+                if max_ips and count > max_ips:
                     raise ValueError(f"Target expands to {count} IPs; maximum is {max_ips}")
                 for ip_int in range(int(start_ip), int(end_ip) + 1):
                     yield str(ipaddress.IPv4Address(ip_int))
@@ -45,7 +45,7 @@ class IPParser:
             if "/" in target:
                 net = ipaddress.ip_network(target, strict=False)
                 count = max(1, net.num_addresses - (2 if net.version == 4 and net.prefixlen < 31 else 0))
-                if count > max_ips:
+                if max_ips and count > max_ips:
                     raise ValueError(f"Target expands to {count} IPs; maximum is {max_ips}")
                 yielded = False
                 for ip in net.hosts():

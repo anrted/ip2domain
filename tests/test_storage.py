@@ -185,3 +185,134 @@ def test_centra_cameras_are_persisted_and_updated(tmp_path):
     assert cameras[0]["video"]["width"] == 1920
     assert cameras[0]["first_seen"] and cameras[0]["updated_at"]
     assert storage.clear_centra_cameras() == 2
+
+
+def test_provider_neutral_catalog_namespaces_external_ids(tmp_path):
+    storage = StorageManager(db_path=str(tmp_path / "catalog.db"))
+    storage.save_cameras("centra", [{"id": "I-1-1", "title": "Centra"}])
+    storage.save_cameras("generic-ip", [{"external_id": "I-1-1", "title": "IP camera"}])
+
+    page = storage.list_cameras(limit=10)
+
+    assert page["total"] == 2
+    assert storage.get_camera("centra", "I-1-1")["title"] == "Centra"
+    assert storage.get_camera("generic-ip", "I-1-1")["title"] == "IP camera"
+    assert storage.get_camera("centra", "I-1-1")["uid"] != storage.get_camera("generic-ip", "I-1-1")["uid"]
+
+
+def test_camera_device_can_be_loaded_directly_for_connection(tmp_path):
+    storage = StorageManager(db_path=str(tmp_path / "camera-connect.db"))
+    storage.save_camera_devices([{"target": "203.0.113.8", "score": 90, "services": []}])
+    assert storage.get_camera_device("203.0.113.8")["score"] == 90
+    assert storage.get_camera_device("203.0.113.9") is None
+
+
+def test_legacy_centra_writes_are_projected_to_catalog(tmp_path):
+    storage = StorageManager(db_path=str(tmp_path / "compat.db"))
+    storage.save_centra_cameras([{"id": "I-12-1", "title": "Legacy"}])
+    assert storage.get_camera("centra", "I-12-1")["title"] == "Legacy"
+
+
+def test_centra_geocode_coordinates_are_cached_by_address(tmp_path):
+    storage = StorageManager(db_path=str(tmp_path / "geocode.db"))
+    address = "Россия, Кемеровская область, Новокузнецк, ул. Тольятти, 2"
+    storage.save_centra_coordinates(address, [53.75, 87.12])
+    assert storage.get_centra_coordinates([address]) == {address: [53.75, 87.12]}
+
+
+def test_centra_scan_checks_include_not_found_ids(tmp_path):
+    storage = StorageManager(db_path=str(tmp_path / "checks.db"))
+    storage.save_centra_scan_checks([
+        {"camera_id": "I-10-1", "camera_type": "I", "building_id": 10, "entrance": 1, "found": True},
+        {"camera_id": "I-10-2", "camera_type": "I", "building_id": 10, "entrance": 2, "found": False},
+        {"camera_id": "G-10-1", "camera_type": "G", "building_id": 10, "entrance": 1, "found": False},
+    ])
+    assert set(storage.get_centra_checked_ids("I", 10, 10, 1, 3)) == {"I-10-1", "I-10-2"}
+
+
+def test_centra_screenshot_page_is_paginated_and_filtered(tmp_path):
+    storage = StorageManager(db_path=str(tmp_path / "screens.db"))
+    storage.save_centra_cameras([
+        {"id": "I-10-1", "camera_type": "I", "available": True},
+        {"id": "G-11-1", "camera_type": "G", "available": True},
+        {"id": "I-12-1", "camera_type": "I", "available": False},
+    ])
+    page = storage.list_centra_cameras_page(0, 100, "I")
+    assert page["total"] == 1
+    assert page["cameras"][0]["id"] == "I-10-1"
+    assert storage.get_centra_camera("G-11-1")["camera_type"] == "G"
+
+
+def test_centra_screenshot_page_searches_title_address_and_id_case_insensitively(tmp_path):
+    storage = StorageManager(db_path=str(tmp_path / "screen-search.db"))
+    storage.save_centra_cameras([
+        {"id": "H-1185-3", "title": "40 лет ВЛКСМ 116а", "address": "Новокузнецк"},
+        {"id": "I-20-1", "title": "Домофон Мира 2", "address": "Осинники"},
+    ])
+    assert storage.list_centra_cameras_page(search="влксм")["total"] == 1
+    assert storage.list_centra_cameras_page(search="ОСИННИКИ")["cameras"][0]["id"] == "I-20-1"
+    assert storage.list_centra_cameras_page(search="1185-3")["cameras"][0]["id"] == "H-1185-3"
+
+
+def test_centra_screenshot_page_is_sorted_by_title_before_pagination(tmp_path):
+    storage = StorageManager(db_path=str(tmp_path / "screen-order.db"))
+    storage.save_centra_cameras([
+        {"id": "I-30-1", "camera_type": "I", "available": True, "title": "Ясная 1"},
+        {"id": "I-10-1", "camera_type": "I", "available": True, "title": "Абрикосовая 2"},
+        {"id": "G-20-1", "camera_type": "G", "available": True, "title": "Мира 3"},
+    ])
+    page = storage.list_centra_cameras_page(0, 2)
+    assert [camera["title"] for camera in page["cameras"]] == ["Абрикосовая 2", "Мира 3"]
+    assert storage.list_centra_cameras_page(2, 2)["cameras"][0]["title"] == "Ясная 1"
+
+
+def test_centra_screenshot_title_sort_is_natural_and_ignores_camera_id(tmp_path):
+    storage = StorageManager(db_path=str(tmp_path / "natural-order.db"))
+    storage.save_centra_cameras([
+        {"id": "I-1-1", "available": True, "title": "Домофон Тольятти 43"},
+        {"id": "I-9999-1", "available": True, "title": "Домофон Тольятти 2"},
+        {"id": "I-2-1", "available": True, "title": "Домофон Тольятти 16"},
+    ])
+    titles = [camera["title"] for camera in storage.list_centra_cameras_page()["cameras"]]
+    assert titles == ["Домофон Тольятти 2", "Домофон Тольятти 16", "Домофон Тольятти 43"]
+
+
+def test_centra_person_results_are_persisted_updated_and_filtered(tmp_path):
+    storage = StorageManager(db_path=str(tmp_path / "people.db"))
+    storage.save_centra_person_result({
+        "camera_id": "I-10-1", "camera_type": "I", "people_count": 2,
+        "confidence": 0.8, "title": "Домофон Тестовый 1",
+    })
+    storage.save_centra_person_result({
+        "camera_id": "H-20-1", "camera_type": "H", "people_count": 1,
+        "confidence": 0.7, "title": "Камера Парковка",
+    })
+    storage.save_centra_person_result({
+        "camera_id": "I-10-1", "camera_type": "I", "people_count": 3,
+        "confidence": 0.9, "title": "Домофон Тестовый 1",
+    })
+
+    all_results = storage.list_centra_person_results()
+    filtered = storage.list_centra_person_results(camera_type="I", search="Тестовый")
+
+    assert all_results["total"] == 2
+    assert filtered["total"] == 1
+    assert filtered["cameras"][0]["people_count"] == 3
+    assert filtered["cameras"][0]["detected_at"]
+
+
+def test_centra_reid_state_survives_storage_reopen_and_can_be_cleared(tmp_path):
+    db_path = str(tmp_path / "reid.db")
+    storage = StorageManager(db_path=db_path)
+    storage.save_centra_reid_states([{
+        "person_id": "person-7", "vector": [0.1, 0.2], "colour_score": 0.3,
+        "last_seen": 9999999999.0, "camera_id": "I-1-1", "observations": [],
+    }])
+
+    reopened = StorageManager(db_path=db_path)
+    states = reopened.load_centra_reid_states(86400)
+
+    assert states[0]["person_id"] == "person-7"
+    assert reopened.get_centra_reid_state("person-7", 86400)["camera_id"] == "I-1-1"
+    assert reopened.clear_centra_reid_states() == 1
+    assert reopened.load_centra_reid_states(86400) == []

@@ -1,6 +1,7 @@
 import asyncio
 import aiohttp
 import ipaddress
+import os
 import re
 import shutil
 import xml.etree.ElementTree as ET
@@ -11,9 +12,11 @@ from urllib.parse import urljoin, urlsplit
 class CameraScanner:
     """Identify IP cameras/NVRs from remotely observable service fingerprints."""
 
-    DEFAULT_PORTS = [80, 443, 554, 8000, 8080, 8081, 8443, 8554, 8899, 37777]
+    DEFAULT_PORTS = [80, 443, 554, 8000, 8080, 8081, 8443, 8554, 8899, 10554, 37777]
     NMAP_BATCH_SIZE = 32
-    NMAP_BATCH_CONCURRENCY = 4
+    NMAP_BATCH_CONCURRENCY = 4  # compatibility fallback; runtime uses resource budget
+    MAX_NMAP_CONCURRENCY = 12
+    NMAP_MEMORY_BUDGET_MB = 192
     KEYWORDS = {
         "hikvision": "Hikvision", "dahua": "Dahua", "axis": "Axis",
         "ipcamera": "IP Camera", "ip camera": "IP Camera",
@@ -32,8 +35,29 @@ class CameraScanner:
         self.timeout = timeout
         self.nmap_bin = shutil.which("nmap")
 
+    @classmethod
+    def resource_limits(cls) -> Dict[str, int]:
+        """Conservative process/socket budget derived without extra dependencies."""
+        cpu_count = max(1, os.cpu_count() or 1)
+        try:
+            with open("/proc/meminfo", encoding="ascii") as source:
+                values = {parts[0].rstrip(":"): int(parts[1])
+                          for line in source if (parts := line.split()) and len(parts) >= 2}
+            available_mb = int(values.get("MemAvailable", values.get("MemTotal", 0)) / 1024)
+        except (OSError, ValueError):
+            available_mb = cls.NMAP_MEMORY_BUDGET_MB * cls.NMAP_BATCH_CONCURRENCY
+        hard_cap = max(1, min(32, int(os.environ.get(
+            "IP2DOMAIN_CAMERA_NMAP_MAX_CONCURRENCY", str(cls.MAX_NMAP_CONCURRENCY)))))
+        nmap = max(1, min(hard_cap, cpu_count * 2,
+                          max(1, available_mb // cls.NMAP_MEMORY_BUDGET_MB)))
+        return {"cpu_count": cpu_count, "available_memory_mb": available_mb,
+                "nmap_concurrency": nmap, "http_concurrency": max(8, min(64, nmap * 8)),
+                "hard_cap": hard_cap}
+
     async def scan(self, targets: List[str], ports: Optional[List[int]] = None,
-                   progress_callback=None) -> Dict:
+                   progress_callback=None, device_callback=None,
+                   cancel_event: Optional[asyncio.Event] = None,
+                   concurrency: int = 0) -> Dict:
         targets = list(dict.fromkeys(str(ipaddress.ip_address(item)) for item in targets))
         if not targets:
             raise ValueError("Список IP-адресов пуст")
@@ -46,33 +70,63 @@ class CameraScanner:
             progress_callback(5, f"Nmap: 0/{len(targets)} IP · {len(ports)} портов")
         batches = [targets[i:i + self.NMAP_BATCH_SIZE]
                    for i in range(0, len(targets), self.NMAP_BATCH_SIZE)]
-        semaphore = asyncio.Semaphore(self.NMAP_BATCH_CONCURRENCY)
+        limits = self.resource_limits()
+        effective_concurrency = limits["nmap_concurrency"]
+        if concurrency:
+            effective_concurrency = max(1, min(int(concurrency), effective_concurrency))
+        semaphore = asyncio.Semaphore(effective_concurrency)
         completed = 0
         lock = asyncio.Lock()
 
-        async def run(batch):
+        http_concurrency = min(limits["http_concurrency"], max(8, effective_concurrency * 8))
+        http_semaphore = asyncio.Semaphore(http_concurrency)
+        http_timeout = aiohttp.ClientTimeout(total=10, connect=5, sock_read=7)
+        http_connector = aiohttp.TCPConnector(ssl=False, limit=http_concurrency)
+        devices = []
+
+        async def publish(device):
+            if device_callback:
+                outcome = device_callback(device)
+                if asyncio.iscoroutine(outcome):
+                    await outcome
+
+        async def run(batch, session):
             nonlocal completed
+            if cancel_event and cancel_event.is_set():
+                raise asyncio.CancelledError
             async with semaphore:
-                result = await self._nmap_batch(batch, ports)
+                candidates = await self._nmap_batch(batch, ports, cancel_event)
+            await self._probe_http_candidates(candidates, semaphore=http_semaphore,
+                                              session=session, cancel_event=cancel_event)
+            matched = []
+            for device in candidates:
+                self._update_confidence(device)
+                if device["score"] >= 20:
+                    matched.append(device)
+                    await publish(device)
             async with lock:
                 completed += len(batch)
                 if progress_callback:
-                    progress_callback(5 + int(completed / len(targets) * 90),
+                    progress_callback(5 + int(completed / len(targets) * 94),
                                       f"Проверено: {completed}/{len(targets)} IP")
-            return result
+            return matched
 
-        results = await asyncio.gather(*(run(batch) for batch in batches))
-        candidates = [device for part in results for device in part]
-        await self._probe_http_candidates(candidates, progress_callback)
-        devices = []
-        for device in candidates:
-            self._update_confidence(device)
-            if device["score"] >= 20:
-                devices.append(device)
+        async with aiohttp.ClientSession(timeout=http_timeout, connector=http_connector,
+                                         headers={"User-Agent": "ip2domain-camera-discovery/1.0"}) as session:
+            tasks = [asyncio.create_task(run(batch, session)) for batch in batches]
+            try:
+                for task in asyncio.as_completed(tasks):
+                    devices.extend(await task)
+            finally:
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
         return {"target_count": len(targets), "devices": devices,
                 "camera_count": len(devices)}
 
-    async def _nmap_batch(self, targets: List[str], ports: List[int]) -> List[Dict]:
+    async def _nmap_batch(self, targets: List[str], ports: List[int],
+                          cancel_event: Optional[asyncio.Event] = None) -> List[Dict]:
         # Discovery must stay quick. Deeper enumeration/auth checks belong to the
         # explicit vulnerability scan launched from a camera result card.
         scripts = ("banner,http-favicon,http-headers,http-server-header,http-title,"
@@ -83,25 +137,48 @@ class CameraScanner:
                ",".join(map(str, ports)), "-oX", "-"] + targets
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        communicate = asyncio.create_task(proc.communicate())
+        cancellation = asyncio.create_task(cancel_event.wait()) if cancel_event else None
         try:
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=max(self.timeout + 10, min(7200, len(targets) * 2)))
-        except asyncio.TimeoutError:
-            proc.kill()
-            await proc.wait()
-            raise RuntimeError("Nmap превысил лимит времени")
+            waiters = {communicate} | ({cancellation} if cancellation else set())
+            done, _ = await asyncio.wait(
+                waiters, timeout=max(self.timeout + 10, min(7200, len(targets) * 2)),
+                return_when=asyncio.FIRST_COMPLETED)
+            if communicate in done:
+                stdout, stderr = communicate.result()
+            elif cancellation and cancellation in done:
+                raise asyncio.CancelledError
+            else:
+                raise RuntimeError("Nmap превысил лимит времени")
+        except (asyncio.CancelledError, RuntimeError):
+            if proc.returncode is None:
+                proc.kill()
+                await proc.wait()
+            communicate.cancel()
+            await asyncio.gather(communicate, return_exceptions=True)
+            raise
+        finally:
+            if cancellation:
+                cancellation.cancel()
         if proc.returncode != 0 and not stdout:
             raise RuntimeError(stderr.decode(errors="ignore").strip()[:400] or "Ошибка Nmap")
         return self._parse_nmap(stdout.decode(errors="ignore"), include_unmatched=True)
 
-    async def _probe_http_candidates(self, devices: List[Dict], progress_callback=None) -> None:
-        semaphore = asyncio.Semaphore(20)
-        timeout = aiohttp.ClientTimeout(total=10, connect=5, sock_read=7)
-        connector = aiohttp.TCPConnector(ssl=False, limit=20)
+    async def _probe_http_candidates(self, devices: List[Dict], progress_callback=None,
+                                     semaphore: Optional[asyncio.Semaphore] = None,
+                                     session: Optional[aiohttp.ClientSession] = None,
+                                     cancel_event: Optional[asyncio.Event] = None) -> None:
+        semaphore = semaphore or asyncio.Semaphore(20)
         probes = []
-        async with aiohttp.ClientSession(timeout=timeout, connector=connector,
-                                         headers={"User-Agent": "ip2domain-camera-discovery/1.0"}) as session:
+        owns_session = session is None
+        if owns_session:
+            timeout = aiohttp.ClientTimeout(total=10, connect=5, sock_read=7)
+            session = aiohttp.ClientSession(timeout=timeout, connector=aiohttp.TCPConnector(ssl=False, limit=20),
+                                            headers={"User-Agent": "ip2domain-camera-discovery/1.0"})
+        try:
             async def probe(device, service):
+                if cancel_event and cancel_event.is_set():
+                    raise asyncio.CancelledError
                 async with semaphore:
                     findings = await self._probe_http_service(session, device["target"], service)
                     device["findings"].extend(findings)
@@ -115,6 +192,9 @@ class CameraScanner:
                 if progress_callback:
                     progress_callback(95, f"HTTP fingerprint: {len(probes)} сервисов")
                 await asyncio.gather(*probes)
+        finally:
+            if owns_session:
+                await session.close()
 
     async def _probe_http_service(self, session: aiohttp.ClientSession,
                                   target: str, service: Dict) -> List[Dict]:

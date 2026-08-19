@@ -1,0 +1,1064 @@
+/* ============================================================
+   Camera Scanner v2 — Style Sheet
+   Separate from style.css to avoid touching v1 styles
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+/* ── v1/v2 Switcher ───────────────────────────────────────── */
+.camera-version-switcher {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    padding: 3px;
+    margin-left: auto;
+    flex-shrink: 0;
+}
+
+.camera-version-btn {
+    background: transparent;
+    border: none;
+    color: rgba(255, 255, 255, 0.45);
+    font-size: 0.72rem;
+    font-weight: 600;
+    font-family: inherit;
+    padding: 0.28rem 0.9rem;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: all 0.18s ease;
+    letter-spacing: 0.03em;
+}
+
+.camera-version-btn:hover {
+    color: rgba(255, 255, 255, 0.8);
+    background: rgba(255, 255, 255, 0.07);
+}
+
+.camera-version-btn.active {
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(99, 102, 241, 0.4);
+}
+
+.camera-version-btn.active-v2 {
+    background: linear-gradient(135deg, #10b981 0%, #06b6d4 100%);
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(16, 185, 129, 0.4);
+}
+
+/* ── v2 Panel Container ───────────────────────────────────── */
+#camera-v2-panel {
+    display: none;
+    flex-direction: column;
+    gap: 1.25rem;
+    animation: v2-fade-in 0.22s ease;
+}
+
+#camera-v2-panel.v2-active {
+    display: flex;
+}
+
+@keyframes v2-fade-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* ── v2 Header Card ───────────────────────────────────────── */
+.v2-header-card {
+    background: linear-gradient(135deg,
+        rgba(16, 185, 129, 0.12) 0%,
+        rgba(6, 182, 212, 0.08) 50%,
+        rgba(99, 102, 241, 0.1) 100%);
+    border: 1px solid rgba(16, 185, 129, 0.25);
+    border-radius: 14px;
+    padding: 1.25rem 1.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.v2-header-title {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.v2-header-icon {
+    font-size: 1.75rem;
+    line-height: 1;
+}
+
+.v2-header-text h2 {
+    margin: 0 0 0.2rem;
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: #f0fdf4;
+    background: linear-gradient(90deg, #10b981, #06b6d4);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.v2-header-text p {
+    margin: 0;
+    font-size: 0.78rem;
+    color: rgba(255, 255, 255, 0.5);
+}
+
+.v2-tools-status {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.v2-tool-badge {
+    font-size: 0.67rem;
+    font-weight: 600;
+    padding: 0.22rem 0.6rem;
+    border-radius: 20px;
+    letter-spacing: 0.03em;
+    border: 1px solid transparent;
+}
+
+.v2-tool-badge.ok {
+    background: rgba(16, 185, 129, 0.15);
+    color: #6ee7b7;
+    border-color: rgba(16, 185, 129, 0.3);
+}
+
+.v2-tool-badge.missing {
+    background: rgba(239, 68, 68, 0.15);
+    color: #fca5a5;
+    border-color: rgba(239, 68, 68, 0.3);
+}
+
+.v2-tool-badge.warn {
+    background: rgba(245, 158, 11, 0.15);
+    color: #fcd34d;
+    border-color: rgba(245, 158, 11, 0.3);
+}
+
+/* ── Config Card ──────────────────────────────────────────── */
+.v2-config-card {
+    background: rgba(15, 23, 42, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 14px;
+    padding: 1.25rem 1.5rem;
+    backdrop-filter: blur(8px);
+}
+
+.v2-config-grid {
+    display: grid;
+    grid-template-columns: 1.6fr 1fr 1fr;
+    gap: 1.25rem;
+    margin-bottom: 1.25rem;
+}
+
+@media (max-width: 900px) {
+    .v2-config-grid { grid-template-columns: 1fr; }
+}
+
+.v2-section-label {
+    font-size: 0.67rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: rgba(255, 255, 255, 0.35);
+    margin: 0 0 0.6rem;
+}
+
+.v2-targets-area {
+    width: 100%;
+    min-height: 110px;
+    resize: vertical;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    color: #e2e8f0;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 0.78rem;
+    padding: 0.65rem 0.85rem;
+    line-height: 1.6;
+    transition: border-color 0.15s;
+    box-sizing: border-box;
+}
+
+.v2-targets-area:focus {
+    outline: none;
+    border-color: rgba(16, 185, 129, 0.5);
+    box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.1);
+}
+
+.v2-targets-actions {
+    display: flex;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+    margin-top: 0.5rem;
+}
+
+/* Radio group for engine */
+.v2-radio-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+}
+
+.v2-radio-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.55rem;
+    cursor: pointer;
+    padding: 0.45rem 0.65rem;
+    border-radius: 7px;
+    border: 1px solid rgba(255,255,255,0.06);
+    transition: all 0.15s;
+}
+
+.v2-radio-item:hover {
+    background: rgba(255,255,255,0.04);
+    border-color: rgba(255,255,255,0.12);
+}
+
+.v2-radio-item input[type="radio"] {
+    margin-top: 2px;
+    accent-color: #10b981;
+}
+
+.v2-radio-item strong {
+    display: block;
+    font-size: 0.8rem;
+    color: #e2e8f0;
+    margin-bottom: 0.1rem;
+}
+
+.v2-radio-item small {
+    font-size: 0.7rem;
+    color: rgba(255,255,255,0.4);
+}
+
+/* Checkbox group for protocols */
+.v2-checkbox-group {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.3rem;
+}
+
+.v2-checkbox-item {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.75rem;
+    color: rgba(255,255,255,0.7);
+    cursor: pointer;
+    padding: 0.25rem 0;
+}
+
+.v2-checkbox-item input[type="checkbox"] {
+    accent-color: #10b981;
+}
+
+/* Credentials section */
+.v2-creds-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    margin-bottom: 0.5rem;
+}
+
+.v2-cred-row {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+}
+
+.v2-cred-row input {
+    flex: 1;
+    padding: 0.3rem 0.55rem;
+    font-size: 0.75rem;
+    background: rgba(0,0,0,0.3);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 5px;
+    color: #e2e8f0;
+    font-family: inherit;
+}
+
+.v2-cred-row .v2-del-btn {
+    background: rgba(239,68,68,0.15);
+    border: none;
+    color: #fca5a5;
+    font-size: 0.8rem;
+    padding: 0.25rem 0.45rem;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.v2-cred-row .v2-del-btn:hover {
+    background: rgba(239,68,68,0.3);
+}
+
+/* Rate slider */
+.v2-rate-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin-top: 0.4rem;
+}
+
+.v2-rate-row input[type="range"] {
+    flex: 1;
+    accent-color: #10b981;
+}
+
+.v2-rate-display {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #6ee7b7;
+    min-width: 70px;
+    text-align: right;
+}
+
+/* ── Action Bar ───────────────────────────────────────────── */
+.v2-action-bar {
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.v2-start-btn {
+    background: linear-gradient(135deg, #10b981 0%, #06b6d4 100%);
+    color: #fff;
+    border: none;
+    font-family: inherit;
+    font-size: 0.88rem;
+    font-weight: 700;
+    padding: 0.65rem 1.75rem;
+    border-radius: 9px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3);
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+}
+
+.v2-start-btn:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(16, 185, 129, 0.45);
+}
+
+.v2-start-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.v2-cancel-btn {
+    background: rgba(239, 68, 68, 0.15);
+    color: #fca5a5;
+    border: 1px solid rgba(239,68,68,0.3);
+    font-family: inherit;
+    font-size: 0.82rem;
+    font-weight: 600;
+    padding: 0.6rem 1.2rem;
+    border-radius: 8px;
+    cursor: pointer;
+    display: none;
+    align-items: center;
+    gap: 0.4rem;
+    transition: all 0.15s;
+}
+
+.v2-cancel-btn.visible {
+    display: flex;
+}
+
+.v2-cancel-btn:hover {
+    background: rgba(239,68,68,0.3);
+}
+
+/* ── Progress Card ────────────────────────────────────────── */
+.v2-progress-card {
+    background: rgba(15, 23, 42, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 14px;
+    padding: 1.25rem 1.5rem;
+    display: none;
+    backdrop-filter: blur(8px);
+}
+
+.v2-progress-card.visible {
+    display: block;
+    animation: v2-fade-in 0.2s ease;
+}
+
+.v2-stages-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.75rem;
+    margin-bottom: 1.25rem;
+}
+
+@media (max-width: 800px) {
+    .v2-stages-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+.v2-stage-item {
+    background: rgba(0,0,0,0.25);
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 10px;
+    padding: 0.75rem 1rem;
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.2s;
+}
+
+.v2-stage-item.running {
+    border-color: rgba(16, 185, 129, 0.4);
+    background: rgba(16, 185, 129, 0.06);
+}
+
+.v2-stage-item.done {
+    border-color: rgba(99, 102, 241, 0.3);
+    background: rgba(99, 102, 241, 0.05);
+}
+
+.v2-stage-item.skipped {
+    opacity: 0.45;
+}
+
+.v2-stage-num {
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: rgba(255,255,255,0.3);
+    margin-bottom: 0.3rem;
+}
+
+.v2-stage-name {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: #e2e8f0;
+    margin-bottom: 0.2rem;
+}
+
+.v2-stage-value {
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: #6ee7b7;
+    line-height: 1;
+}
+
+.v2-stage-status-icon {
+    position: absolute;
+    top: 0.65rem;
+    right: 0.75rem;
+    font-size: 0.85rem;
+}
+
+/* Main progress bar */
+.v2-main-progress {
+    margin-bottom: 1rem;
+}
+
+.v2-progress-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.45rem;
+}
+
+.v2-progress-stage-text {
+    font-size: 0.8rem;
+    color: rgba(255,255,255,0.7);
+    font-weight: 500;
+}
+
+.v2-progress-pct {
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: #6ee7b7;
+}
+
+.v2-progress-track {
+    height: 6px;
+    background: rgba(255,255,255,0.08);
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.v2-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #10b981, #06b6d4);
+    border-radius: 10px;
+    transition: width 0.4s ease;
+    box-shadow: 0 0 8px rgba(16, 185, 129, 0.5);
+}
+
+/* Log panel */
+.v2-log-panel {
+    background: rgba(0,0,0,0.4);
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 8px;
+    padding: 0.65rem 0.85rem;
+    max-height: 130px;
+    overflow-y: auto;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 0.7rem;
+    color: rgba(255,255,255,0.6);
+    line-height: 1.7;
+}
+
+.v2-log-panel .log-ok { color: #6ee7b7; }
+.v2-log-panel .log-warn { color: #fcd34d; }
+.v2-log-panel .log-err { color: #fca5a5; }
+
+/* ── Results Card ─────────────────────────────────────────── */
+.v2-results-card {
+    background: rgba(15, 23, 42, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 14px;
+    padding: 1.25rem 1.5rem;
+    backdrop-filter: blur(8px);
+    display: none;
+}
+
+.v2-results-card.visible {
+    display: block;
+    animation: v2-fade-in 0.2s ease;
+}
+
+.v2-results-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+}
+
+.v2-results-title {
+    font-size: 0.88rem;
+    font-weight: 700;
+    color: #e2e8f0;
+}
+
+.v2-results-count {
+    font-size: 0.75rem;
+    color: #6ee7b7;
+    font-weight: 600;
+}
+
+.v2-filter-bar {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.v2-filter-btn {
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 0.25rem 0.7rem;
+    border-radius: 20px;
+    border: 1px solid rgba(255,255,255,0.1);
+    background: transparent;
+    color: rgba(255,255,255,0.5);
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: inherit;
+}
+
+.v2-filter-btn:hover,
+.v2-filter-btn.active {
+    background: rgba(16,185,129,0.15);
+    color: #6ee7b7;
+    border-color: rgba(16,185,129,0.4);
+}
+
+.v2-results-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+/* Camera Grid */
+.v2-camera-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 1rem;
+}
+
+/* Camera Card */
+.v2-camera-card {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    overflow: hidden;
+    transition: all 0.2s ease;
+    position: relative;
+}
+
+.v2-camera-card:hover {
+    border-color: rgba(16, 185, 129, 0.3);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(0,0,0,0.3);
+}
+
+.v2-camera-screenshot {
+    width: 100%;
+    aspect-ratio: 16/9;
+    object-fit: cover;
+    background: rgba(0,0,0,0.5);
+    display: block;
+}
+
+.v2-camera-screenshot-placeholder {
+    width: 100%;
+    aspect-ratio: 16/9;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, rgba(15,23,42,0.8) 0%, rgba(30,41,59,0.6) 100%);
+    font-size: 2.5rem;
+    color: rgba(255,255,255,0.15);
+}
+
+.v2-camera-body {
+    padding: 0.85rem;
+}
+
+.v2-camera-brand {
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #6ee7b7;
+    margin-bottom: 0.2rem;
+}
+
+.v2-camera-ip {
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: #e2e8f0;
+    font-family: 'JetBrains Mono', monospace;
+    margin-bottom: 0.15rem;
+}
+
+.v2-camera-model {
+    font-size: 0.72rem;
+    color: rgba(255,255,255,0.5);
+    margin-bottom: 0.6rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.v2-proto-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    margin-bottom: 0.65rem;
+}
+
+.v2-proto-badge {
+    font-size: 0.6rem;
+    font-weight: 700;
+    padding: 0.15rem 0.45rem;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.v2-proto-badge.onvif    { background: rgba(99,102,241,0.2);  color: #a5b4fc; }
+.v2-proto-badge.hikvision { background: rgba(239,68,68,0.2);  color: #fca5a5; }
+.v2-proto-badge.dahua    { background: rgba(245,158,11,0.2);  color: #fcd34d; }
+.v2-proto-badge.axis     { background: rgba(6,182,212,0.2);   color: #67e8f9; }
+.v2-proto-badge.rtsp     { background: rgba(16,185,129,0.2);  color: #6ee7b7; }
+.v2-proto-badge.hls      { background: rgba(139,92,246,0.2);  color: #c4b5fd; }
+.v2-proto-badge.mjpeg    { background: rgba(236,72,153,0.2);  color: #f9a8d4; }
+.v2-proto-badge.rtmp     { background: rgba(249,115,22,0.2);  color: #fdba74; }
+.v2-proto-badge.generic  { background: rgba(100,116,139,0.2); color: #94a3b8; }
+
+.v2-camera-actions {
+    display: flex;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+}
+
+.v2-camera-btn {
+    flex: 1;
+    font-size: 0.68rem;
+    font-weight: 600;
+    padding: 0.35rem 0.6rem;
+    border-radius: 6px;
+    border: 1px solid rgba(255,255,255,0.1);
+    background: rgba(255,255,255,0.05);
+    color: rgba(255,255,255,0.7);
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: inherit;
+    text-align: center;
+    white-space: nowrap;
+}
+
+.v2-camera-btn:hover {
+    background: rgba(255,255,255,0.12);
+    color: #fff;
+    border-color: rgba(255,255,255,0.2);
+}
+
+.v2-camera-btn.go2rtc-btn {
+    background: rgba(16,185,129,0.15);
+    color: #6ee7b7;
+    border-color: rgba(16,185,129,0.3);
+}
+
+.v2-camera-btn.go2rtc-btn:hover {
+    background: rgba(16,185,129,0.3);
+}
+
+.v2-camera-btn.go2rtc-btn.added {
+    background: rgba(99,102,241,0.2);
+    color: #a5b4fc;
+    border-color: rgba(99,102,241,0.35);
+}
+
+/* Verified badge overlay */
+.v2-verified-badge {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    background: rgba(16,185,129,0.9);
+    color: #fff;
+    font-size: 0.6rem;
+    font-weight: 700;
+    padding: 0.18rem 0.5rem;
+    border-radius: 4px;
+    backdrop-filter: blur(4px);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+/* Empty state */
+.v2-empty-state {
+    text-align: center;
+    padding: 3rem;
+    color: rgba(255,255,255,0.3);
+}
+
+.v2-empty-state .v2-empty-icon {
+    font-size: 3rem;
+    margin-bottom: 0.75rem;
+    opacity: 0.4;
+}
+
+.v2-empty-state p {
+    font-size: 0.85rem;
+}
+
+/* Spinner */
+.v2-spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(255,255,255,0.3);
+    border-top-color: #10b981;
+    border-radius: 50%;
+    animation: v2-spin 0.7s linear infinite;
+}
+
+@keyframes v2-spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Utility: small button style for v2 */
+.v2-btn-small {
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 0.28rem 0.75rem;
+    border-radius: 6px;
+    border: 1px solid rgba(255,255,255,0.12);
+    background: rgba(255,255,255,0.06);
+    color: rgba(255,255,255,0.7);
+    cursor: pointer;
+    font-family: inherit;
+    transition: all 0.15s;
+}
+
+.v2-btn-small:hover {
+    background: rgba(255,255,255,0.12);
+    color: #fff;
+}
+
+.v2-btn-small.v2-btn-green {
+    background: rgba(16,185,129,0.15);
+    color: #6ee7b7;
+    border-color: rgba(16,185,129,0.3);
+}
+
+.v2-btn-small.v2-btn-green:hover {
+    background: rgba(16,185,129,0.28);
+}
+
+.v2-btn-small.v2-btn-danger {
+    background: rgba(239,68,68,0.12);
+    color: #fca5a5;
+    border-color: rgba(239,68,68,0.3);
+}
+
+/* Stream selector row inside camera card */
+.v2-stream-selector-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    margin-bottom: 0.65rem;
+}
+
+.v2-stream-info-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.68rem;
+}
+
+.v2-stream-count-badge {
+    background: rgba(16, 185, 129, 0.15);
+    color: #6ee7b7;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    border-radius: 4px;
+    padding: 0.1rem 0.4rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.v2-stream-count-badge:hover {
+    background: rgba(16, 185, 129, 0.3);
+    border-color: rgba(16, 185, 129, 0.6);
+}
+
+.v2-stream-select {
+    width: 100%;
+    background: rgba(0, 0, 0, 0.45);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 6px;
+    color: #e2e8f0;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    padding: 0.35rem 0.5rem;
+    outline: none;
+    cursor: pointer;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+.v2-stream-select:focus {
+    border-color: #10b981;
+    box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
+}
+
+.v2-stream-select option {
+    background: #0f172a;
+    color: #e2e8f0;
+}
+
+/* Card preview placeholder & capture button */
+.v2-preview-wrapper {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16/9;
+    background: rgba(0,0,0,0.6);
+    overflow: hidden;
+}
+
+.v2-placeholder-inner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    height: 100%;
+}
+
+.v2-capture-now-btn {
+    background: rgba(16, 185, 129, 0.2);
+    border: 1px solid rgba(16, 185, 129, 0.4);
+    color: #6ee7b7;
+    font-size: 0.68rem;
+    font-weight: 600;
+    padding: 0.25rem 0.65rem;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: inherit;
+}
+
+.v2-capture-now-btn:hover {
+    background: rgba(16, 185, 129, 0.35);
+    border-color: #10b981;
+    color: #fff;
+}
+
+.v2-refresh-preview-btn {
+    position: absolute;
+    bottom: 0.4rem;
+    right: 0.4rem;
+    background: rgba(0,0,0,0.7);
+    border: 1px solid rgba(255,255,255,0.2);
+    color: #e2e8f0;
+    font-size: 0.65rem;
+    padding: 0.2rem 0.45rem;
+    border-radius: 4px;
+    cursor: pointer;
+    opacity: 0.8;
+    transition: opacity 0.15s;
+}
+
+.v2-refresh-preview-btn:hover {
+    opacity: 1;
+    background: rgba(16,185,129,0.3);
+    border-color: #10b981;
+}
+
+/* Modal for 300+ streams */
+.v2-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.75);
+    backdrop-filter: blur(6px);
+    z-index: 99999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem;
+    animation: v2-fade-in 0.15s ease;
+}
+
+.v2-modal-content {
+    background: #0f172a;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 14px;
+    width: 100%;
+    max-width: 800px;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+    overflow: hidden;
+}
+
+.v2-modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+.v2-modal-title {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: #e2e8f0;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.v2-modal-close {
+    background: transparent;
+    border: none;
+    color: rgba(255,255,255,0.5);
+    font-size: 1.25rem;
+    cursor: pointer;
+    padding: 0.2rem 0.5rem;
+    border-radius: 6px;
+}
+
+.v2-modal-close:hover {
+    color: #fff;
+    background: rgba(255,255,255,0.1);
+}
+
+.v2-modal-search {
+    padding: 0.75rem 1.25rem;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    background: rgba(0,0,0,0.2);
+}
+
+.v2-modal-search input {
+    width: 100%;
+    padding: 0.45rem 0.75rem;
+    font-size: 0.8rem;
+    background: rgba(0,0,0,0.4);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 7px;
+    color: #fff;
+    font-family: inherit;
+}
+
+.v2-modal-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0.75rem 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+}
+
+.v2-stream-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.5rem 0.75rem;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 8px;
+    transition: background 0.15s;
+}
+
+.v2-stream-item:hover {
+    background: rgba(255,255,255,0.06);
+    border-color: rgba(16,185,129,0.3);
+}
+
+.v2-stream-item-url {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.73rem;
+    color: #e2e8f0;
+    word-break: break-all;
+    flex: 1;
+}
+
+.v2-stream-item-actions {
+    display: flex;
+    gap: 0.35rem;
+    flex-shrink: 0;
+}
+
+/* Camera tabs line — add flex for switcher alignment */
+.camera-tabs {
+    display: flex !important;
+    align-items: center;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+}
+
+/* Scrollable tabs on mobile */
+@media (max-width: 600px) {
+    .camera-version-switcher { margin-left: 0.5rem; }
+}
+

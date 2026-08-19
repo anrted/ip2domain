@@ -178,7 +178,7 @@ def main():
             if generated:
                 print(f"[*] Generated administrator password: {password}")
                 print("[*] Save this password: it will not be shown again.")
-        uvicorn.run(app, host=args.host, port=args.port)
+        uvicorn.run("ip2domain.web.app:app", host=args.host, port=args.port)
         sys.exit(0)
 
     if not args.target and not args.file:

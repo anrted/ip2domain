@@ -1,4 +1,5 @@
 from ip2domain.modules.camera_scanner import CameraScanner
+import asyncio
 
 
 def test_parse_camera_fingerprints():
@@ -50,6 +51,14 @@ def test_camera_discovery_uses_small_batches_and_fast_scripts():
     assert "--stats-every" in source
     assert "http-enum" not in source
     assert "http-auth-finder" not in source
+    assert 10554 in CameraScanner.DEFAULT_PORTS
+
+
+def test_camera_concurrency_is_resource_bounded():
+    limits = CameraScanner.resource_limits()
+    assert 1 <= limits["nmap_concurrency"] <= limits["hard_cap"] <= 32
+    assert limits["nmap_concurrency"] <= limits["cpu_count"] * 2
+    assert 8 <= limits["http_concurrency"] <= 64
 
 
 def test_http_redirect_body_identifies_goahead_dvr_as_camera():
@@ -66,3 +75,56 @@ def test_http_redirect_body_identifies_goahead_dvr_as_camera():
     assert device["confidence"] == "высокая"
     assert any(item["criterion"] == "HTTP HTML/JS fingerprint" for item in findings)
     assert any("DVR Remote Management System" in item["value"] for item in findings)
+
+
+def test_scan_publishes_each_completed_batch_immediately():
+    class FakeScanner(CameraScanner):
+        NMAP_BATCH_SIZE = 1
+        NMAP_BATCH_CONCURRENCY = 2
+
+        def __init__(self):
+            super().__init__()
+            self.nmap_bin = "fake-nmap"
+
+        async def _nmap_batch(self, targets, ports, cancel_event=None):
+            await asyncio.sleep(0.01 if targets[0].endswith("1") else 0.03)
+            return [{"target": targets[0], "hostname": "", "score": 0,
+                     "confidence": "низкая", "services": [], "findings": [{
+                         "criterion": "RTSP", "value": targets[0], "weight": 55,
+                         "reliability": "очень высокая"}]}]
+
+        async def _probe_http_candidates(self, devices, **kwargs):
+            return None
+
+    published = []
+    result = asyncio.run(FakeScanner().scan(
+        ["203.0.113.1", "203.0.113.2"], [554], device_callback=lambda item: published.append(item["target"])))
+
+    assert published == ["203.0.113.1", "203.0.113.2"]
+    assert result["camera_count"] == 2
+
+
+def test_scan_cancellation_is_forwarded_to_batches():
+    class FakeScanner(CameraScanner):
+        NMAP_BATCH_SIZE = 1
+
+        def __init__(self):
+            super().__init__()
+            self.nmap_bin = "fake-nmap"
+
+        async def _nmap_batch(self, targets, ports, cancel_event=None):
+            await cancel_event.wait()
+            raise asyncio.CancelledError
+
+    async def scenario():
+        event = asyncio.Event()
+        task = asyncio.create_task(FakeScanner().scan(["203.0.113.1"], [554], cancel_event=event))
+        await asyncio.sleep(0)
+        event.set()
+        try:
+            await task
+        except asyncio.CancelledError:
+            return True
+        return False
+
+    assert asyncio.run(scenario()) is True

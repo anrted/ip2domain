@@ -74,6 +74,10 @@ def test_web_login_and_role_authorization(tmp_path, monkeypatch):
     test_auth = AuthManager(str(tmp_path / "web-auth.db"))
     test_auth.create_user("admin", "admin-secure-password", role="admin")
     monkeypatch.setattr(web_app, "auth_manager", test_auth)
+    import ip2domain.web.routers.common as _common
+    import ip2domain.web.routers.auth as _auth_r
+    monkeypatch.setattr(_common, "auth_manager", test_auth)
+    monkeypatch.setattr(_auth_r, "auth_manager", test_auth)
     monkeypatch.delenv("IP2DOMAIN_API_TOKEN", raising=False)
 
     async def run_flow():

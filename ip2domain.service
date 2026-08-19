@@ -1,0 +1,16 @@
+[Unit]
+Description=ip2domain Web
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/ip2domain
+ExecStart=/root/ip2domain/.venv/bin/python -m ip2domain.cli --web --host 0.0.0.0 --port 5000
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
