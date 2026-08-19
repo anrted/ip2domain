@@ -33,6 +33,7 @@ from .protocols.rtmp import probe_rtmp
 from .protocols.hls import probe_hls_mjpeg
 from .protocols.webrtc import probe_webrtc
 from .protocols.vms import probe_vms
+from .protocols.ingram import probe_ingram
 
 logger = logging.getLogger(__name__)
 _TIMEOUT = 3.5
@@ -163,6 +164,10 @@ async def probe_host_v2(
         probe_tasks.append(probe_vms(ip, http_ports, credentials))
         task_keys.append("vms")
 
+    # Ingram fingerprinting always runs (independent of protocol filter)
+    probe_tasks.append(probe_ingram(ip, http_ports, credentials))
+    task_keys.append("ingram")
+
     probe_tasks.append(_probe_generic_http(ip, http_ports, credentials))
     task_keys.append("generic")
 
@@ -181,6 +186,7 @@ async def probe_host_v2(
     rtmp_r = res_map.get("rtmp", {})
     webrtc_r = res_map.get("webrtc", {})
     vms_r = res_map.get("vms", {})
+    ingram_r = res_map.get("ingram", {})
     generic_r = res_map.get("generic", {})
 
     camera = CameraResult(ip=ip, open_ports=sorted(open_ports))
@@ -300,7 +306,21 @@ async def probe_host_v2(
                 camera.streams.append(StreamInfo(url=url, stream_type=stype, verified=True))
         detected = True
 
-    # 10. Generic HTTP fallback (only if HTTP returned working snapshot/stream)
+    # 10. Ingram fingerprint (brand detection + brand-specific snapshot/stream)
+    if ingram_r.get("success"):
+        camera.brand = camera.brand or ingram_r.get("brand", "")
+        camera.http_port = camera.http_port or ingram_r.get("http_port", 0)
+        for p in ingram_r.get("protocols", []):
+            if p not in camera.protocols:
+                camera.protocols.append(p)
+        for s in ingram_r.get("streams", []):
+            url = s.get("url", "")
+            stype = s.get("type", "http_snapshot")
+            if url and not any(st.url == url for st in camera.streams):
+                camera.streams.append(StreamInfo(url=url, stream_type=stype, verified=True))
+        detected = True
+
+    # 11. Generic HTTP fallback (only if HTTP returned working snapshot/stream)
     if not detected and generic_r.get("success"):
         camera.brand = generic_r.get("brand", "Generic IPCam")
         camera.http_port = generic_r.get("http_port", 0)
