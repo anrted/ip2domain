@@ -501,20 +501,33 @@ function v2RenderResults() {
 // ─────────────────────────────────────────────────────────────────────────────
 // Camera Card (Handles 300+ streams gracefully & on-demand previews)
 // ─────────────────────────────────────────────────────────────────────────────
+function _streamScore(s) {
+    let score = 0;
+    if (s.screenshot && String(s.screenshot).trim().length > 0) score += 100;
+    if (s.verified) score += 50;
+    if (s.type === 'http_snapshot' || (s.url && (s.url.startsWith('http://') || s.url.startsWith('https://')))) score += 30;
+    if (s.width && s.height) score += 20;
+    return score;
+}
+
 function v2RenderCameraCard(cam) {
     const safeIp = cam.ip.replace(/\./g, '_');
-    const streams = cam.streams || [];
-    const totalStreams = streams.length;
+    const rawStreams = cam.streams || [];
+    const totalStreams = rawStreams.length;
 
-    // Determine current selected stream URL for this camera
+    // Sort streams so that the stream with a guaranteed screenshot / live verification is #1
+    const streams = [...rawStreams].sort((a, b) => _streamScore(b) - _streamScore(a));
+
+    // Determine current selected stream URL for this camera (default to highest score stream)
     if (!V2State.selectedStreams[cam.ip]) {
-        const firstVerified = streams.find(s => s.verified && s.url);
-        V2State.selectedStreams[cam.ip] = firstVerified?.url || (streams[0]?.url || '');
+        V2State.selectedStreams[cam.ip] = streams[0]?.url || '';
     }
     const currentStreamUrl = V2State.selectedStreams[cam.ip];
+    const currentStreamObj = streams.find(s => s.url === currentStreamUrl) || streams[0];
 
-    // Find any stream that has a verified screenshot
-    const streamWithScreen = streams.find(s => s.screenshot && (s.url === currentStreamUrl || s.verified));
+    // Find screenshot: first check selected stream, then any stream that has a screenshot
+    const streamWithScreen = (currentStreamObj?.screenshot ? currentStreamObj : null)
+        || streams.find(s => s.screenshot && s.screenshot.length > 0);
     const screenshotPath = streamWithScreen?.screenshot || '';
 
     // Preview area HTML
@@ -563,21 +576,23 @@ function v2RenderCameraCard(cam) {
         `;
     }
 
-
-    const verified = streams.some(s => s.verified);
+    const verified = streams.some(s => s.verified || s.screenshot);
     const verifiedBadge = verified ? '<span class="v2-verified-badge">✓ Live</span>' : '';
 
     const protocols = (cam.protocols || []).slice(0, 5);
     const badges = protocols.map(p => `<span class="v2-proto-badge ${_protoBadgeClass(p)}">${_protoLabel(p)}</span>`).join('');
 
-    // Stream selector dropdown (top 15 streams + option to browse all 300+)
+    // Stream selector dropdown (top 15 streams sorted by quality/preview)
     let streamSelectorHtml = '';
     if (totalStreams > 0) {
         const streamOptions = streams.slice(0, 15).map((s, idx) => {
             const shortPath = _formatShortStreamUrl(s.url);
             const isSel = s.url === currentStreamUrl ? 'selected' : '';
-            const ver = s.verified ? ' [✓ Live]' : '';
-            return `<option value="${_esc(s.url)}" ${isSel}>#${idx + 1} ${shortPath}${ver}</option>`;
+            let tag = '';
+            if (s.screenshot) tag = ' [🖼️ Кадр]';
+            else if (s.verified) tag = ' [🟢 Live]';
+            else if (s.type === 'http_snapshot') tag = ' [📷 Snap]';
+            return `<option value="${_esc(s.url)}" ${isSel}>#${idx + 1} ${shortPath}${tag}</option>`;
         }).join('');
 
         const moreOption = totalStreams > 15
@@ -601,6 +616,7 @@ function v2RenderCameraCard(cam) {
             </div>
         `;
     }
+
 
     const inGo2rtc = cam.in_go2rtc;
     const goBtn = `<button class="v2-camera-btn go2rtc-btn ${inGo2rtc ? 'added' : ''}"

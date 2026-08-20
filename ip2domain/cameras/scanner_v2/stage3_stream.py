@@ -222,10 +222,20 @@ async def verify_camera_streams(
             # Once we found a confirmed working stream for this camera, prioritize it
             break
 
-    # 3. Put verified streams at the front, but keep ALL streams so nothing is discarded
-    if verified_streams:
-        remaining = [s for s in camera.streams if s not in verified_streams]
-        camera.streams = verified_streams + remaining
+    # 3. Sort streams: screenshots first, then verified, then snapshots, then rest
+    def _stream_sort_key(s):
+        score = 0
+        if getattr(s, "screenshot_path", ""):
+            score += 100
+        if getattr(s, "verified", False):
+            score += 50
+        if getattr(s, "stream_type", "") == "http_snapshot":
+            score += 30
+        if getattr(s, "width", 0) and getattr(s, "height", 0):
+            score += min(20, (s.width * s.height) // 50000)
+        return score
 
-    return len(verified_streams)
+    camera.streams.sort(key=_stream_sort_key, reverse=True)
+    return len([s for s in camera.streams if s.verified or s.screenshot_path])
+
 
