@@ -115,7 +115,21 @@ class ScannerV2StorageMixin:
                     results.append(r)
                 except Exception:
                     pass
+
+            def _res_sort_key(res):
+                streams = res.get("streams", [])
+                score = 0
+                if any(bool(s.get("screenshot") or s.get("screenshot_path")) for s in streams):
+                    score += 1000
+                if any(bool(s.get("verified")) for s in streams):
+                    score += 500
+                if any(s.get("type") == "http_snapshot" or (str(s.get("url", "")).startswith("http")) for s in streams):
+                    score += 200
+                return score
+
+            results.sort(key=_res_sort_key, reverse=True)
             return results
+
 
 
 

@@ -475,6 +475,24 @@ async function v2LoadStoredResults() {
 }
 
 
+function _cameraScore(cam) {
+    let score = 0;
+    const streams = cam.streams || [];
+    if (streams.some(s => s.screenshot && String(s.screenshot).trim().length > 0)) {
+        score += 1000;
+    }
+    if (streams.some(s => s.verified)) {
+        score += 500;
+    }
+    if (streams.some(s => s.type === 'http_snapshot' || (s.url && (s.url.startsWith('http://') || s.url.startsWith('https://'))))) {
+        score += 200;
+    }
+    if (cam.brand && cam.brand !== 'Unknown' && cam.brand !== 'Generic IPCam' && cam.brand !== 'Generic RTSP') {
+        score += 50;
+    }
+    return score;
+}
+
 function v2RenderResults() {
     const grid = document.getElementById('v2-camera-grid');
     if (!grid) return;
@@ -495,8 +513,12 @@ function v2RenderResults() {
         return;
     }
 
+    // Default sorting: cameras with preview / screenshot first!
+    filtered = [...filtered].sort((a, b) => _cameraScore(b) - _cameraScore(a));
+
     grid.innerHTML = filtered.map(cam => v2RenderCameraCard(cam)).join('');
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Camera Card (Handles 300+ streams gracefully & on-demand previews)
