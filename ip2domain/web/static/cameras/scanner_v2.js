@@ -46,9 +46,18 @@ function v2CountIPsFromText(text) {
     let total = 0;
 
     for (const token of tokens) {
-        // Strip port if present (e.g. 1.2.3.4:554)
-        let clean = token.split(':')[0].trim();
-        if (!clean) continue;
+        let clean = token.trim();
+        if (!clean || clean.startsWith('#')) continue;
+
+        // Skip IPv6 subnets / addresses (e.g. 2a02:f800::/29)
+        if (clean.includes(':') && (clean.includes('::') || clean.split(':').length > 2)) {
+            continue;
+        }
+
+        // Strip port if IPv4 with port (e.g. 1.2.3.4:554)
+        if (clean.includes(':')) {
+            clean = clean.split(':')[0].trim();
+        }
 
         // 1. CIDR notation (e.g. 192.168.1.0/24)
         if (clean.includes('/')) {
@@ -134,9 +143,12 @@ async function loadAsnPrefixesForV2() {
         const resp = await fetch(`https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS${asn}`);
         if (!resp.ok) throw new Error('Ошибка RIPE API');
         const data = await resp.json();
-        const prefixes = (data?.data?.prefixes || []).map(p => p.prefix).filter(Boolean);
+        // Strictly filter for IPv4 prefixes (ignore IPv6)
+        const prefixes = (data?.data?.prefixes || [])
+            .map(p => p.prefix)
+            .filter(p => p && !p.includes(':'));
         if (!prefixes.length) {
-            alert(`Префиксы для AS${asn} не найдены`);
+            alert(`IPv4 префиксы для AS${asn} не найдены`);
             return;
         }
         const existing = targets.value.trim();
@@ -147,6 +159,7 @@ async function loadAsnPrefixesForV2() {
     }
 }
 window.loadAsnPrefixesForV2 = loadAsnPrefixesForV2;
+
 
 
 // ─────────────────────────────────────────────────────────────────────────────

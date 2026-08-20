@@ -125,10 +125,16 @@ async def masscan_sweep(
     import tempfile, os
     tmp_targets = tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False)
     try:
+        valid_ipv4_targets = 0
         for t in targets:
-            tmp_targets.write(t + "\n")
+            if ":" not in t:
+                tmp_targets.write(t + "\n")
+                valid_ipv4_targets += 1
         tmp_targets.flush()
         tmp_targets.close()
+
+        if valid_ipv4_targets == 0:
+            return []
 
         tmp_out = tmp_targets.name + ".json"
         cmd = [
@@ -140,7 +146,8 @@ async def masscan_sweep(
             "--output-filename", tmp_out,
             "--wait", "2",
         ]
-        logger.info("[v2 Stage1/masscan] Starting: rate=%d pps, ports=%s, targets=%d", rate, port_str, len(targets))
+        logger.info("[v2 Stage1/masscan] Starting: rate=%d pps, ports=%s, targets=%d", rate, port_str, valid_ipv4_targets)
+
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,

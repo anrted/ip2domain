@@ -46,7 +46,7 @@ def list_jobs() -> List[ScanJob]:
 
 
 def _parse_targets_streaming(target_str: str, max_ips: int = _MAX_IPS_V2) -> List[str]:
-    """Parse target string to IP list with streaming dedup for RAM efficiency."""
+    """Parse target string to IPv4 list with streaming dedup for RAM efficiency."""
     ips = []
     seen = set()
     count = 0
@@ -54,9 +54,17 @@ def _parse_targets_streaming(target_str: str, max_ips: int = _MAX_IPS_V2) -> Lis
         line = line.strip()
         if not line or line.startswith("#"):
             continue
+        # Strip port or whitespace if present
+        clean = line.split()[0].split(",")[0].strip()
+        if not clean:
+            continue
         try:
-            if "/" in line:
-                net = ipaddress.ip_network(line, strict=False)
+            if "/" in clean:
+                net = ipaddress.ip_network(clean, strict=False)
+                if net.version != 4:
+                    continue  # Ignore IPv6 networks
+                if net.prefixlen < 12:
+                    continue  # Safety: ignore excessively large networks
                 for ip in net.hosts():
                     s = str(ip)
                     if s not in seen:
@@ -65,10 +73,21 @@ def _parse_targets_streaming(target_str: str, max_ips: int = _MAX_IPS_V2) -> Lis
                         count += 1
                         if count >= max_ips:
                             return ips
-            elif "-" in line:
-                parts = line.split("-", 1)
-                start = int(ipaddress.IPv4Address(parts[0].strip()))
-                end = int(ipaddress.IPv4Address(parts[1].strip()))
+            elif "-" in clean:
+                parts = clean.split("-", 1)
+                start_addr = ipaddress.ip_address(parts[0].strip())
+                end_str = parts[1].strip()
+                if not "." in end_str and end_str.isdigit():
+                    # Handle short notation like 10.0.0.1-255
+                    sp = str(start_addr).split(".")
+                    end_str = f"{sp[0]}.{sp[1]}.{sp[2]}.{end_str}"
+                end_addr = ipaddress.ip_address(end_str)
+                if start_addr.version != 4 or end_addr.version != 4:
+                    continue  # Ignore IPv6
+                start = int(start_addr)
+                end = int(end_addr)
+                if end < start or (end - start) > 1000000:
+                    continue
                 for ip_int in range(start, end + 1):
                     s = str(ipaddress.IPv4Address(ip_int))
                     if s not in seen:
@@ -78,14 +97,20 @@ def _parse_targets_streaming(target_str: str, max_ips: int = _MAX_IPS_V2) -> Lis
                         if count >= max_ips:
                             return ips
             else:
-                s = str(ipaddress.ip_address(line))
+                addr = ipaddress.ip_address(clean.split(":")[0])
+                if addr.version != 4:
+                    continue
+                s = str(addr)
                 if s not in seen:
                     seen.add(s)
                     ips.append(s)
                     count += 1
+                    if count >= max_ips:
+                        return ips
         except Exception:
             continue
     return ips
+
 
 
 def _has_private_targets(targets: List[str]) -> bool:
