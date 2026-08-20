@@ -15,6 +15,7 @@ const V2State = {
     pollInterval: 2000,
     results: [],           // CameraResult[]
     selectedStreams: {},   // { [ip]: streamUrl }
+    previewCache: {},      // { [ip]: blobUrl }
     filterBrand: 'all',
     filterProtocol: 'all',
     credentials: [
@@ -26,6 +27,7 @@ const V2State = {
         { user: 'root',  password: 'root' },
     ],
 };
+
 
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -437,19 +439,35 @@ function v2AddLog(msg, cls) {
 // ─────────────────────────────────────────────────────────────────────────────
 function v2MergeResults(incoming) {
     if (!incoming || !incoming.length) return;
-    const existing = new Set(V2State.results.map(r => r.ip));
+    let changed = false;
+    const existingMap = new Map(V2State.results.map((r, i) => [r.ip, i]));
     for (const cam of incoming) {
-        if (!existing.has(cam.ip)) {
+        if (!existingMap.has(cam.ip)) {
             V2State.results.push(cam);
-            existing.add(cam.ip);
+            existingMap.set(cam.ip, V2State.results.length - 1);
+            changed = true;
         } else {
-            const idx = V2State.results.findIndex(r => r.ip === cam.ip);
-            if (idx >= 0) V2State.results[idx] = cam;
+            const idx = existingMap.get(cam.ip);
+            const oldCam = V2State.results[idx];
+            const oldStreamsJson = JSON.stringify(oldCam.streams || []);
+            const newStreamsJson = JSON.stringify(cam.streams || []);
+            if (oldStreamsJson !== newStreamsJson || oldCam.brand !== cam.brand || oldCam.model !== cam.model) {
+                if (V2State.previewCache[cam.ip]) {
+                    for (const s of (cam.streams || [])) {
+                        if (!s.screenshot) s.screenshot = V2State.previewCache[cam.ip];
+                    }
+                }
+                V2State.results[idx] = cam;
+                changed = true;
+            }
         }
     }
-    v2UpdateResultsCount();
-    v2RenderResults();
+    if (changed) {
+        v2UpdateResultsCount();
+        v2RenderResults();
+    }
 }
+
 
 function v2UpdateResultsCount() {
     const el = document.getElementById('v2-results-count');
@@ -525,10 +543,10 @@ function v2RenderResults() {
 // ─────────────────────────────────────────────────────────────────────────────
 function _streamScore(s) {
     let score = 0;
-    if (s.screenshot && String(s.screenshot).trim().length > 0) score += 100;
-    if (s.verified) score += 50;
-    if (s.type === 'http_snapshot' || (s.url && (s.url.startsWith('http://') || s.url.startsWith('https://')))) score += 30;
-    if (s.width && s.height) score += 20;
+    if (s.screenshot && String(s.screenshot).trim().length > 0) score += 1000;
+    if (s.verified) score += 500;
+    if (s.width && s.height) score += Math.min(100, Math.floor((s.width * s.height) / 20000));
+    if (s.type === 'rtsp' || (s.url && s.url.startsWith('rtsp://'))) score += 50;
     return score;
 }
 
@@ -540,22 +558,26 @@ function v2RenderCameraCard(cam) {
     // Sort streams so that the stream with a guaranteed screenshot / live verification is #1
     const streams = [...rawStreams].sort((a, b) => _streamScore(b) - _streamScore(a));
 
-    // Determine current selected stream URL for this camera (default to highest score stream)
-    if (!V2State.selectedStreams[cam.ip]) {
-        V2State.selectedStreams[cam.ip] = streams[0]?.url || '';
+    // Determine current selected stream URL for this camera (always prioritize stream with real screenshot)
+    const bestStream = streams[0];
+    const curSelected = V2State.selectedStreams[cam.ip];
+    const curStreamObj = streams.find(s => s.url === curSelected);
+
+    if (!curSelected || (!curStreamObj?.screenshot && bestStream?.screenshot)) {
+        V2State.selectedStreams[cam.ip] = bestStream?.url || '';
     }
     const currentStreamUrl = V2State.selectedStreams[cam.ip];
     const currentStreamObj = streams.find(s => s.url === currentStreamUrl) || streams[0];
 
-    // Find screenshot: first check selected stream, then any stream that has a screenshot
+    // Find screenshot: first check selected stream, then any stream that has a screenshot, or cached preview
+    const cachedBlobUrl = V2State.previewCache[cam.ip] || '';
     const streamWithScreen = (currentStreamObj?.screenshot ? currentStreamObj : null)
         || streams.find(s => s.screenshot && s.screenshot.length > 0);
-    const screenshotPath = streamWithScreen?.screenshot || '';
+    const screenshotPath = streamWithScreen?.screenshot || cachedBlobUrl;
 
     // Preview area HTML
     let previewHtml = '';
-    const user = cam.credentials?.user || 'admin';
-    const pass = cam.credentials?.password || '';
+
 
     let imgSrc = '';
     if (screenshotPath) {
@@ -564,9 +586,8 @@ function v2RenderCameraCard(cam) {
         } else {
             imgSrc = `/api/v2/capture?path=${encodeURIComponent(screenshotPath)}`;
         }
-    } else if (currentStreamUrl && (currentStreamUrl.startsWith('http://') || currentStreamUrl.startsWith('https://'))) {
-        imgSrc = `/api/v2/preview?ip=${encodeURIComponent(cam.ip)}&stream_url=${encodeURIComponent(currentStreamUrl)}&user=${encodeURIComponent(user)}&password=${encodeURIComponent(pass)}`;
     }
+
 
     if (imgSrc) {
         previewHtml = `
@@ -772,6 +793,7 @@ async function v2CapturePreview(ip, event) {
         // Cache update in local model
         const blob = await resp.blob();
         const objUrl = URL.createObjectURL(blob);
+        V2State.previewCache[ip] = objUrl;
 
         if (cam) {
             for (const s of (cam.streams || [])) {
@@ -781,6 +803,7 @@ async function v2CapturePreview(ip, event) {
                 }
             }
         }
+
 
         if (box) {
             box.innerHTML = `

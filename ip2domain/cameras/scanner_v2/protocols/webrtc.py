@@ -65,9 +65,14 @@ async def probe_webrtc(
                                 result["http_port"] = port
                                 result["protocols"] = ["webrtc", "whep"]
                                 for sname in stream_names[:6]:
-                                    result["webrtc_urls"].append(f"{base}/api/whep?src={sname}")
+                                    if 8554 in candidate_ports:
+                                        result["webrtc_urls"].append(f"rtsp://{ip}:8554/{sname}")
+                                    if 554 in candidate_ports:
+                                        result["webrtc_urls"].append(f"rtsp://{ip}:554/{sname}")
                                     result["webrtc_urls"].append(f"{base}/api/stream.mp4?src={sname}")
+                                    result["webrtc_urls"].append(f"{base}/api/whep?src={sname}")
                                 return result
+
                         except Exception:
                             pass
                 except Exception:

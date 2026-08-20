@@ -238,7 +238,7 @@ async def probe_host_v2(
         for url in onvif_r.get("rtsp_urls", []):
             camera.streams.append(StreamInfo(url=url, stream_type="rtsp"))
         if onvif_r.get("snapshot_url"):
-            camera.streams.append(StreamInfo(url=onvif_r["snapshot_url"], stream_type="http_snapshot", verified=True))
+            camera.streams.append(StreamInfo(url=onvif_r["snapshot_url"], stream_type="http_snapshot"))
         detected = True
 
     # 2. Hikvision ISAPI
@@ -253,7 +253,7 @@ async def probe_host_v2(
             if not any(s.url == url for s in camera.streams):
                 camera.streams.append(StreamInfo(url=url, stream_type="rtsp"))
         if hik_r.get("snapshot_url"):
-            camera.streams.append(StreamInfo(url=hik_r["snapshot_url"], stream_type="http_snapshot", verified=True))
+            camera.streams.append(StreamInfo(url=hik_r["snapshot_url"], stream_type="http_snapshot"))
         detected = True
 
     # 3. Dahua CGI
@@ -268,7 +268,7 @@ async def probe_host_v2(
                 camera.streams.append(StreamInfo(url=url, stream_type="rtsp"))
         for snap_url in dahua_r.get("snapshot_urls", [dahua_r.get("snapshot_url")]):
             if snap_url and not any(s.url == snap_url for s in camera.streams):
-                camera.streams.append(StreamInfo(url=snap_url, stream_type="http_snapshot", verified=True))
+                camera.streams.append(StreamInfo(url=snap_url, stream_type="http_snapshot"))
         detected = True
 
     # 4. Axis CGI
@@ -282,7 +282,7 @@ async def probe_host_v2(
             if not any(s.url == url for s in camera.streams):
                 camera.streams.append(StreamInfo(url=url, stream_type="rtsp"))
         if axis_r.get("snapshot_url"):
-            camera.streams.append(StreamInfo(url=axis_r["snapshot_url"], stream_type="http_snapshot", verified=True))
+            camera.streams.append(StreamInfo(url=axis_r["snapshot_url"], stream_type="http_snapshot"))
         if axis_r.get("mjpeg_url"):
             camera.streams.append(StreamInfo(url=axis_r["mjpeg_url"], stream_type="mjpeg"))
         detected = True
@@ -294,7 +294,7 @@ async def probe_host_v2(
         camera.http_port = camera.http_port or hls_r.get("http_port", 0)
         camera.credentials = camera.credentials or hls_r.get("credentials", {})
         if hls_r.get("snapshot_url"):
-            camera.streams.append(StreamInfo(url=hls_r["snapshot_url"], stream_type="http_snapshot", verified=True))
+            camera.streams.append(StreamInfo(url=hls_r["snapshot_url"], stream_type="http_snapshot"))
         if hls_r.get("hls_url"):
             camera.streams.append(StreamInfo(url=hls_r["hls_url"], stream_type="hls"))
             camera.protocols.append("hls")
@@ -331,8 +331,13 @@ async def probe_host_v2(
                 camera.protocols.append(p)
         for url in webrtc_r.get("webrtc_urls", []):
             if not any(s.url == url for s in camera.streams):
-                stype = "whep" if "whep" in url else "webrtc"
-                camera.streams.append(StreamInfo(url=url, stream_type=stype, verified=True))
+                if url.startswith("rtsp://"):
+                    stype = "rtsp"
+                elif "whep" in url:
+                    stype = "whep"
+                else:
+                    stype = "webrtc"
+                camera.streams.append(StreamInfo(url=url, stream_type=stype))
         detected = True
 
     # 9. VMS / Mobotix / Frigate / Blue Iris / Avtech
@@ -347,7 +352,7 @@ async def probe_host_v2(
         for url in vms_r.get("vms_urls", []):
             if not any(s.url == url for s in camera.streams):
                 stype = "mjpeg" if ("mjpg" in url or "Video.cgi" in url or "faststream" in url) else "http_snapshot"
-                camera.streams.append(StreamInfo(url=url, stream_type=stype, verified=True))
+                camera.streams.append(StreamInfo(url=url, stream_type=stype))
         detected = True
 
     # 10. Ingram fingerprint (brand detection + brand-specific snapshot/stream)
@@ -361,8 +366,9 @@ async def probe_host_v2(
             url = s.get("url", "")
             stype = s.get("type", "http_snapshot")
             if url and not any(st.url == url for st in camera.streams):
-                camera.streams.append(StreamInfo(url=url, stream_type=stype, verified=True))
+                camera.streams.append(StreamInfo(url=url, stream_type=stype))
         detected = True
+
 
     # 11. Generic HTTP fallback (only if HTTP returned working snapshot/stream)
     if not detected and generic_r.get("success"):
