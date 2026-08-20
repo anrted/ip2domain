@@ -237,6 +237,8 @@ async def probe_host_v2(
         camera.protocols.append("onvif")
         for url in onvif_r.get("rtsp_urls", []):
             camera.streams.append(StreamInfo(url=url, stream_type="rtsp"))
+        if onvif_r.get("snapshot_url"):
+            camera.streams.append(StreamInfo(url=onvif_r["snapshot_url"], stream_type="http_snapshot", verified=True))
         detected = True
 
     # 2. Hikvision ISAPI
@@ -250,6 +252,8 @@ async def probe_host_v2(
         for url in hik_r.get("rtsp_urls", []):
             if not any(s.url == url for s in camera.streams):
                 camera.streams.append(StreamInfo(url=url, stream_type="rtsp"))
+        if hik_r.get("snapshot_url"):
+            camera.streams.append(StreamInfo(url=hik_r["snapshot_url"], stream_type="http_snapshot", verified=True))
         detected = True
 
     # 3. Dahua CGI
@@ -262,6 +266,9 @@ async def probe_host_v2(
         for url in dahua_r.get("rtsp_urls", []):
             if not any(s.url == url for s in camera.streams):
                 camera.streams.append(StreamInfo(url=url, stream_type="rtsp"))
+        for snap_url in dahua_r.get("snapshot_urls", [dahua_r.get("snapshot_url")]):
+            if snap_url and not any(s.url == snap_url for s in camera.streams):
+                camera.streams.append(StreamInfo(url=snap_url, stream_type="http_snapshot", verified=True))
         detected = True
 
     # 4. Axis CGI
@@ -274,9 +281,12 @@ async def probe_host_v2(
         for url in axis_r.get("rtsp_urls", []):
             if not any(s.url == url for s in camera.streams):
                 camera.streams.append(StreamInfo(url=url, stream_type="rtsp"))
+        if axis_r.get("snapshot_url"):
+            camera.streams.append(StreamInfo(url=axis_r["snapshot_url"], stream_type="http_snapshot", verified=True))
         if axis_r.get("mjpeg_url"):
             camera.streams.append(StreamInfo(url=axis_r["mjpeg_url"], stream_type="mjpeg"))
         detected = True
+
 
     # 5. HLS / MJPEG / HTTP Snapshot
     if hls_r.get("success"):
@@ -369,11 +379,20 @@ async def probe_host_v2(
                     from .models import StreamInfo as _SI
                     camera.streams.append(_SI(url=url, stream_type="rtsp"))
                 break
-        # Try HTTP snapshot on the detected HTTP port
-        if generic_r.get("http_port") and not any(s.stream_type == "http_snapshot" for s in camera.streams):
-            snap_url = f"http://{ip}:{generic_r['http_port']}/snapshot.jpg"
-            from .models import StreamInfo as _SI2
-            camera.streams.append(_SI2(url=snap_url, stream_type="http_snapshot"))
+        # Try HTTP snapshot candidates on the detected HTTP port
+        if generic_r.get("http_port"):
+            hp = generic_r['http_port']
+            base_g = f"http://{ip}:{hp}"
+            candidates = [
+                f"{base_g}/snap.jpg?JpegCam=0",
+                f"{base_g}/cgi-bin/snapshot.cgi?channel=1",
+                f"{base_g}/snapshot.jpg",
+                f"{base_g}/image.jpg",
+            ]
+            for c_url in candidates:
+                if not any(s.url == c_url for s in camera.streams):
+                    camera.streams.append(StreamInfo(url=c_url, stream_type="http_snapshot"))
+
 
     if not detected:
         # Not a camera at all — discard

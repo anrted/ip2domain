@@ -49,15 +49,23 @@ async def probe_dahua(
                     break
 
                 text = resp.text.strip()
-                # Dahua CGI returns: "type=IPC-HDW2831T-AS\r\n"
-                if "=" not in text and "type" not in text.lower():
+                # Reject any HTML error or proxy/web pages (e.g. 503/404/login portals)
+                if "<html" in text.lower() or "<!doctype" in text.lower() or "<body" in text.lower() or "<head" in text.lower():
+                    break
+
+                # Real Dahua CGI response is plain-text key-value: "type=IPC-HDW2831T-AS\r\n"
+                lines = [l.strip() for l in text.splitlines() if "=" in l]
+                type_lines = [l for l in lines if l.lower().startswith("type=") or l.lower().startswith("table.") or l.lower().startswith("app=")]
+                if not type_lines:
                     break
 
                 model = ""
-                for line in text.splitlines():
-                    if "=" in line:
-                        model = line.split("=", 1)[1].strip()
+                for line in type_lines:
+                    k, v = line.split("=", 1)
+                    if k.lower() == "type" or "name" in k.lower() or "type" in k.lower():
+                        model = v.strip().strip('"\'')
                         break
+
 
                 serial = ""
                 firmware = ""
@@ -83,14 +91,20 @@ async def probe_dahua(
                     "credentials": {"user": user, "password": password},
                 })
 
-                # Build RTSP URLs for Dahua
+                # Build RTSP & Snapshot URLs for Dahua
                 creds_url = f"{user}:{password}@" if user else ""
                 rtsp_urls = [
                     f"rtsp://{creds_url}{ip}:554/cam/realmonitor?channel=1&subtype=0",
                     f"rtsp://{creds_url}{ip}:554/cam/realmonitor?channel=1&subtype=1",
                 ]
                 result["rtsp_urls"] = rtsp_urls
-                result["snapshot_url"] = base + _CGI_SNAPSHOT
+                result["snapshot_url"] = f"{base}/cgi-bin/snapshot.cgi?channel=1"
+                result["snapshot_urls"] = [
+                    f"{base}/cgi-bin/snapshot.cgi?channel=1",
+                    f"{base}/cgi-bin/snapshot.cgi?channel=0",
+                    f"{base}/cgi-bin/snapshot.cgi",
+                ]
                 return result
 
     return result
+
