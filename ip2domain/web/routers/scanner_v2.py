@@ -83,10 +83,18 @@ async def get_tools():
 @router.post("/scan")
 async def start_scan(req: ScanRequest):
     """Start a new Camera Scanner v2 job."""
+    active_job = storage.get_active_v2_job()
+    if active_job:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Сканирование уже выполняется (ID: {active_job.get('job_id')}). Дождитесь завершения или нажмите «Отмена».",
+        )
+
     create_job, _, _, run_v2_scan_pipeline, _ = _get_engine()
 
     job_id = f"v2_{int(time.time())}_{uuid.uuid4().hex[:6]}"
     job = create_job(job_id)
+
 
     credentials = (
         [(c.user, c.password) for c in req.credentials]

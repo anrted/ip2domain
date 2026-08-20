@@ -10,6 +10,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 const V2State = {
     currentJobId: null,
+    isStarting: false,
     pollTimer: null,
     pollInterval: 2000,
     results: [],           // CameraResult[]
@@ -25,6 +26,7 @@ const V2State = {
         { user: 'root',  password: 'root' },
     ],
 };
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // v1 / v2 switcher
@@ -68,8 +70,21 @@ function v2OnActivate() {
 }
 
 async function v2CheckActiveScan() {
-    const savedJobId = localStorage.getItem('ip2domain_v2_active_job');
+    let savedJobId = localStorage.getItem('ip2domain_v2_active_job');
     if (!savedJobId) {
+        try {
+            const resp = await fetch('/api/v2/active_job');
+            if (resp.ok) {
+                const data = await resp.json();
+                if (data.active && data.job) {
+                    savedJobId = data.job.job_id;
+                    localStorage.setItem('ip2domain_v2_active_job', savedJobId);
+                }
+            }
+        } catch (e) {}
+    }
+    if (!savedJobId) {
+        v2SetScanState('idle');
         v2LoadStoredResults();
         return;
     }
@@ -77,6 +92,7 @@ async function v2CheckActiveScan() {
         const resp = await fetch(`/api/v2/scan/${savedJobId}`);
         if (!resp.ok) {
             localStorage.removeItem('ip2domain_v2_active_job');
+            v2SetScanState('idle');
             v2LoadStoredResults();
             return;
         }
@@ -90,15 +106,18 @@ async function v2CheckActiveScan() {
             v2StartPolling();
         } else {
             localStorage.removeItem('ip2domain_v2_active_job');
+            v2SetScanState('idle');
             if (job.results && job.results.length) {
                 v2MergeResults(job.results);
             }
             v2LoadStoredResults();
         }
     } catch (e) {
+        v2SetScanState('idle');
         v2LoadStoredResults();
     }
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tools status
@@ -182,7 +201,8 @@ function v2OnRateChange(val) {
 async function v2StartScan(event) {
     if (event) event.preventDefault();
 
-    if (V2State.currentJobId) {
+    const startBtn = document.getElementById('v2-start-btn');
+    if (V2State.isStarting || V2State.currentJobId || (startBtn && startBtn.disabled)) {
         alert('Сканирование уже выполняется. Дождитесь его завершения или нажмите «Отмена».');
         return;
     }
@@ -192,6 +212,10 @@ async function v2StartScan(event) {
         alert('Укажите IP-адреса или CIDR-диапазоны для сканирования');
         return;
     }
+
+    // Immediately lock state & UI to prevent double click
+    V2State.isStarting = true;
+    v2SetScanState('running');
 
     const engine = document.querySelector('input[name="v2-engine"]:checked')?.value || 'auto';
     const masscanRate = parseInt(document.getElementById('v2-rate-slider')?.value || '50000');
@@ -222,6 +246,8 @@ async function v2StartScan(event) {
         });
         const data = await resp.json();
         if (!resp.ok) {
+            V2State.isStarting = false;
+            v2SetScanState('idle');
             alert('Ошибка запуска: ' + (data.detail || resp.status));
             return;
         }
@@ -233,11 +259,16 @@ async function v2StartScan(event) {
         v2SetScanState('running');
         v2StartPolling();
     } catch (err) {
+        V2State.isStarting = false;
+        v2SetScanState('idle');
         alert('Ошибка сети: ' + err.message);
+    } finally {
+        V2State.isStarting = false;
     }
 }
 
 function v2SetScanState(state) {
+
     const startBtn = document.getElementById('v2-start-btn');
     const cancelBtn = document.getElementById('v2-cancel-btn');
     const spinner = document.getElementById('v2-start-spinner');
