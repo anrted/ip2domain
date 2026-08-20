@@ -232,17 +232,31 @@ async def get_stream_preview(
     password: str = Query("", description="Optional password"),
 ):
     """Capture and return on-demand live snapshot for any camera stream."""
-    from ip2domain.cameras.scanner_v2.stage3_stream import capture_stream_frame
+    from ip2domain.cameras.scanner_v2.stage3_stream import capture_stream_frame, _download_http_snapshot
 
     creds = {"user": user, "password": password} if user else None
-    stream_type = "rtmp" if stream_url.startswith("rtmp://") else ("hls" if ".m3u8" in stream_url else "rtsp")
+    
+    ok = False
+    path = ""
+    codec, w, h = "", 0, 0
 
-    ok, path, codec, w, h = await capture_stream_frame(
-        stream_url=stream_url,
-        stream_type=stream_type,
-        capture_dir=_V2_CAPTURE_DIR,
-        credentials=creds,
-    )
+    if (stream_url.startswith("http://") or stream_url.startswith("https://")) and ".m3u8" not in stream_url and "mjpg" not in stream_url.lower() and "video.cgi" not in stream_url.lower():
+        # Try direct HTTP snapshot download first
+        snap_path = await _download_http_snapshot(stream_url, _V2_CAPTURE_DIR, credentials=creds)
+        if snap_path and Path(snap_path).exists():
+            ok = True
+            path = snap_path
+            codec = "JPEG"
+
+    if not ok:
+        stream_type = "rtmp" if stream_url.startswith("rtmp://") else ("hls" if ".m3u8" in stream_url else ("mjpeg" if "mjpg" in stream_url.lower() else "rtsp"))
+        ok, path, codec, w, h = await capture_stream_frame(
+            stream_url=stream_url,
+            stream_type=stream_type,
+            capture_dir=_V2_CAPTURE_DIR,
+            credentials=creds,
+        )
+
 
     if ok and Path(path).exists():
         # Update stream metadata in database if result exists
