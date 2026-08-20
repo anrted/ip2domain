@@ -83,14 +83,19 @@ async def get_tools():
 @router.post("/scan")
 async def start_scan(req: ScanRequest):
     """Start a new Camera Scanner v2 job."""
+    create_job, _, get_job, run_v2_scan_pipeline, _ = _get_engine()
+
     active_job = storage.get_active_v2_job()
     if active_job:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Сканирование уже выполняется (ID: {active_job.get('job_id')}). Дождитесь завершения или нажмите «Отмена».",
-        )
-
-    create_job, _, _, run_v2_scan_pipeline, _ = _get_engine()
+        mem_job = get_job(active_job.get("job_id", ""))
+        if not mem_job or getattr(mem_job, "status", "") in ("completed", "cancelled", "failed"):
+            # Zombie job in DB left after service restart / abort -> mark it cancelled
+            storage.save_v2_job({**active_job, "status": "cancelled"})
+        else:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Сканирование уже выполняется (ID: {active_job.get('job_id')}). Дождитесь завершения или нажмите «Отмена».",
+            )
 
     job_id = f"v2_{int(time.time())}_{uuid.uuid4().hex[:6]}"
     job = create_job(job_id)
@@ -142,9 +147,15 @@ async def get_scan_status(job_id: str):
 async def cancel_scan(job_id: str):
     _, cancel_job, _, _, _ = _get_engine()
     ok = cancel_job(job_id)
+    db_job = storage.get_v2_job(job_id)
+    if db_job:
+        db_job["status"] = "cancelled"
+        storage.save_v2_job(db_job)
+        ok = True
     if not ok:
         raise HTTPException(status_code=404, detail="Job not found or already finished")
     return {"cancelled": True, "job_id": job_id}
+
 
 
 @router.get("/results")
