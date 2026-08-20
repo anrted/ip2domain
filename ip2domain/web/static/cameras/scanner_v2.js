@@ -535,8 +535,53 @@ function v2RenderResults() {
     filtered = [...filtered].sort((a, b) => _cameraScore(b) - _cameraScore(a));
 
     grid.innerHTML = filtered.map(cam => v2RenderCameraCard(cam)).join('');
+    initV2LazyLoading();
 }
 
+let v2ImageObserver = null;
+function initV2LazyLoading() {
+    if (v2ImageObserver) {
+        v2ImageObserver.disconnect();
+    }
+    const lazyImages = document.querySelectorAll('#v2-camera-grid img.v2-lazy-img[data-src]');
+    if (!lazyImages.length) return;
+
+    function loadImg(img) {
+        const src = img.getAttribute('data-src');
+        if (src) {
+            img.src = src;
+            img.removeAttribute('data-src');
+            img.onload = () => img.classList.add('v2-loaded');
+            img.onerror = () => {
+                img.style.display = 'none';
+                const ph = img.nextElementSibling;
+                if (ph) ph.style.display = 'flex';
+            };
+        }
+        if (v2ImageObserver) {
+            v2ImageObserver.unobserve(img);
+        }
+    }
+
+    if ('IntersectionObserver' in window) {
+        v2ImageObserver = new IntersectionObserver((entries, observer) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    loadImg(entry.target);
+                }
+            });
+        }, {
+            root: null,
+            rootMargin: '350px 0px',
+            threshold: 0.01
+        });
+
+        lazyImages.forEach(img => v2ImageObserver.observe(img));
+    } else {
+        lazyImages.forEach(img => loadImg(img));
+    }
+}
+window.initV2LazyLoading = initV2LazyLoading;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Camera Card (Handles 300+ streams gracefully & on-demand previews)
@@ -592,8 +637,10 @@ function v2RenderCameraCard(cam) {
     if (imgSrc) {
         previewHtml = `
             <div class="v2-preview-wrapper" id="v2-preview-box-${safeIp}">
-                <img class="v2-camera-screenshot" src="${imgSrc}"
-                     alt="${_esc(cam.ip)}" loading="lazy"
+                <img class="v2-camera-screenshot v2-lazy-img"
+                     data-src="${imgSrc}"
+                     src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 9'%3E%3Crect width='16' height='9' fill='%230b0f19'/%3E%3C/svg%3E"
+                     alt="${_esc(cam.ip)}"
                      onerror="this.style.display='none';document.getElementById('v2-ph-${safeIp}').style.display='flex'">
                 <div class="v2-camera-screenshot-placeholder" id="v2-ph-${safeIp}" style="display:none">
                     <div class="v2-placeholder-inner">
@@ -605,6 +652,7 @@ function v2RenderCameraCard(cam) {
             </div>
         `;
     } else {
+
         previewHtml = `
             <div class="v2-preview-wrapper" id="v2-preview-box-${safeIp}">
                 <div class="v2-camera-screenshot-placeholder">

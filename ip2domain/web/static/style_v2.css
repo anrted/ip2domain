@@ -619,7 +619,19 @@
     object-fit: cover;
     background: rgba(0,0,0,0.5);
     display: block;
+    transition: opacity 0.3s ease, filter 0.3s ease;
 }
+
+.v2-camera-screenshot.v2-lazy-img:not(.v2-loaded) {
+    opacity: 0.4;
+    filter: blur(6px);
+}
+
+.v2-camera-screenshot.v2-loaded {
+    opacity: 1;
+    filter: blur(0);
+}
+
 
 .v2-camera-screenshot-placeholder {
     width: 100%;
