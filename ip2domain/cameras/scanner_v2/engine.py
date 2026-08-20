@@ -232,26 +232,57 @@ async def run_v2_scan_pipeline(
 
         # ── Stage 1: Port Sweep ────────────────────────────────────────
         job.stage1_status = "running"
-        job.stage = "Stage 1: Сканирование портов..."
-        job.add_log(f"[Stage 1] Сканирование {len(targets):,} IP (всего в задаче {full_target_count:,})...")
+        tools = check_tools()
+        chosen_engine = engine
+        if chosen_engine == "auto":
+            chosen_engine = (
+                "masscan"
+                if (len(targets) >= 4096 and tools["masscan"] and tools["is_root"])
+                else ("nmap_syn" if (len(targets) >= 4096 and tools["nmap"] and tools["is_root"]) else "asyncio")
+            )
+        job.engine_used = chosen_engine
+        if chosen_engine == "masscan":
+            engine_desc = f"masscan ({masscan_rate:,} pps, 48 портов)"
+        elif chosen_engine == "nmap_syn":
+            engine_desc = "nmap -sS SYN"
+        else:
+            engine_desc = f"asyncio TCP (параллельность: {concurrency})"
+
+        job.stage = f"Stage 1: Сканирование портов ({chosen_engine})..."
+        job.add_log(f"[Stage 1] Запуск {engine_desc} для {len(targets):,} IP (всего в задаче {full_target_count:,})...")
 
         stage1_start = asyncio.get_event_loop().time()
         completed_s1 = 0
         total_s1 = len(targets)
+        last_log_time = 0.0
 
         def stage1_progress(completed: int, total: int, cur_ip: str, found: int):
-            nonlocal completed_s1
+            nonlocal completed_s1, last_log_time
             completed_s1 = completed
             job.stage1_scanned = completed
-            job.current_ip = cur_ip
             elapsed = max(0.1, asyncio.get_event_loop().time() - stage1_start)
-            speed = completed / elapsed if completed > 0 else 0
-            eta = (total - completed) / speed if speed > 0 else 0
-            job.progress_pct = 5 + int((completed / max(1, total)) * 35)
-            job.stage = (
-                f"Stage 1: Sweep [{resume_from_index + completed:,}/{full_target_count:,}] "
-                f"· {speed:.0f} IP/сек · ост. {_format_eta(eta)}"
-            )
+
+            if "rate:" in cur_ip and "%" in cur_ip:
+                # Direct masscan status line (e.g. "rate: 49.90-kpps, 1.23% done, 0:45:12 remaining, found=15")
+                job.current_ip = ""
+                job.stage = f"Stage 1: masscan [{resume_from_index + completed:,}/{full_target_count:,}] · {cur_ip}"
+                pct_num = min(100.0, (completed / max(1, total)) * 100)
+                job.progress_pct = 5 + int(pct_num * 0.35)
+                # Log progress periodically (every 30s)
+                now = asyncio.get_event_loop().time()
+                if now - last_log_time >= 30.0:
+                    last_log_time = now
+                    job.add_log(f"[Stage 1/masscan] {cur_ip}")
+            else:
+                job.current_ip = cur_ip
+                speed = completed / elapsed if completed > 0 else 0
+                eta = (total - completed) / speed if speed > 0 else 0
+                job.progress_pct = 5 + int((completed / max(1, total)) * 35)
+                job.stage = (
+                    f"Stage 1: Sweep [{resume_from_index + completed:,}/{full_target_count:,}] "
+                    f"· {speed:.0f} IP/сек · ост. {_format_eta(eta)}"
+                )
+
             # Periodically persist index to DB for restart recovery
             if storage and (completed % 100 == 0 or completed == total):
                 try:
@@ -276,6 +307,7 @@ async def run_v2_scan_pipeline(
             on_progress=stage1_progress,
             is_cancelled=job.is_cancelled,
         )
+
 
         job.engine_used = engine_used
         job.stage1_responsive = len(responsive_hosts)

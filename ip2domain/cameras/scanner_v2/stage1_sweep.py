@@ -156,19 +156,20 @@ async def masscan_sweep(
                 if is_cancelled and is_cancelled():
                     proc.kill()
                     return
-                # masscan prints "rate: X.XX-kpps, X% done"
+                # masscan prints "rate: X.XX-kpps, X% done, X:XX:XX remaining, found=N"
                 if "%" in txt and on_progress:
                     try:
                         pct_part = [p for p in txt.split(",") if "%" in p][0]
                         pct = float(pct_part.strip().replace("%", "").split()[-1])
                         scanned = int(total * pct / 100)
-                        on_progress(scanned, total, "", 0)
+                        on_progress(scanned, total, txt, 0)
                     except Exception:
                         pass
 
         stderr_task = asyncio.create_task(_read_stderr())
         await proc.wait()
         await stderr_task
+
 
         if is_cancelled and is_cancelled():
             return []
