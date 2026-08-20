@@ -28,6 +28,125 @@ const V2State = {
     ],
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Target counting & CIDR/Range calculation (Pure JS)
+// ─────────────────────────────────────────────────────────────────────────────
+const MAX_V2_TARGETS = 5000000;
+
+function _ipToInt(ip) {
+    if (!ip || typeof ip !== 'string') return null;
+    const parts = ip.trim().split('.').map(Number);
+    if (parts.length !== 4 || parts.some(p => isNaN(p) || p < 0 || p > 255)) return null;
+    return ((parts[0] << 24) >>> 0) + (parts[1] << 16) + (parts[2] << 8) + parts[3];
+}
+
+function v2CountIPsFromText(text) {
+    if (!text || !text.trim()) return 0;
+    const tokens = text.split(/[\s,;\n\r]+/).filter(Boolean);
+    let total = 0;
+
+    for (const token of tokens) {
+        // Strip port if present (e.g. 1.2.3.4:554)
+        let clean = token.split(':')[0].trim();
+        if (!clean) continue;
+
+        // 1. CIDR notation (e.g. 192.168.1.0/24)
+        if (clean.includes('/')) {
+            const [ip, maskStr] = clean.split('/');
+            const mask = parseInt(maskStr, 10);
+            if (!isNaN(mask) && mask >= 0 && mask <= 32) {
+                total += Math.pow(2, 32 - mask);
+                continue;
+            }
+        }
+
+        // 2. Range notation (e.g. 10.0.0.1-10.0.0.255 or 10.0.0.1-255)
+        if (clean.includes('-')) {
+            const parts = clean.split('-');
+            const startStr = parts[0].trim();
+            let endStr = parts[1].trim();
+
+            const startInt = _ipToInt(startStr);
+            if (startInt !== null) {
+                // Short range notation like 10.0.0.1-255
+                if (!endStr.includes('.') && /^\d+$/.test(endStr)) {
+                    const lastOctet = parseInt(endStr, 10);
+                    if (lastOctet >= 0 && lastOctet <= 255) {
+                        const startParts = startStr.split('.');
+                        endStr = `${startParts[0]}.${startParts[1]}.${startParts[2]}.${lastOctet}`;
+                    }
+                }
+                const endInt = _ipToInt(endStr);
+                if (endInt !== null && endInt >= startInt) {
+                    total += (endInt - startInt + 1);
+                    continue;
+                }
+            }
+        }
+
+        // 3. Single IPv4 address
+        if (_ipToInt(clean) !== null) {
+            total += 1;
+            continue;
+        }
+
+        // Fallback: if it looks like an IP or hostname
+        if (/^[a-zA-Z0-9.-]+$/.test(clean)) {
+            total += 1;
+        }
+    }
+
+    return total;
+}
+
+function v2CalculateTargetsCount() {
+    const textarea = document.getElementById('v2-targets');
+    const counter = document.getElementById('v2-targets-counter');
+    if (!textarea || !counter) return;
+
+    const count = v2CountIPsFromText(textarea.value);
+    const countFormatted = count.toLocaleString('ru-RU');
+    const maxFormatted = MAX_V2_TARGETS.toLocaleString('ru-RU');
+
+    if (count === 0) {
+        counter.innerHTML = `<span style="color:rgba(255,255,255,0.45)">0 IP (макс. ${maxFormatted})</span>`;
+    } else if (count > MAX_V2_TARGETS) {
+        counter.innerHTML = `<span style="color:#f87171;font-weight:700">⚠️ ${countFormatted} / ${maxFormatted} IP (превышен лимит 5 млн!)</span>`;
+    } else {
+        const pct = ((count / MAX_V2_TARGETS) * 100).toFixed(count >= 100000 ? 1 : 2);
+        counter.innerHTML = `<span style="color:#6ee7b7;font-weight:600">🎯 ${countFormatted} IP</span> <span style="color:rgba(255,255,255,0.45);font-size:0.7rem">(${pct}% от 5 млн)</span>`;
+    }
+}
+window.v2CalculateTargetsCount = v2CalculateTargetsCount;
+
+async function loadAsnPrefixesForV2() {
+    const asnInput = document.getElementById('v2-asn-input');
+    const targets = document.getElementById('v2-targets');
+    if (!asnInput || !targets) return;
+    const rawAsn = asnInput.value.trim().toUpperCase();
+    if (!rawAsn) return;
+    const asn = rawAsn.startsWith('AS') ? rawAsn.slice(2) : rawAsn;
+    if (!/^\d+$/.test(asn)) {
+        alert('Введите корректный номер ASN, например AS12345 или 12345');
+        return;
+    }
+    try {
+        const resp = await fetch(`https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS${asn}`);
+        if (!resp.ok) throw new Error('Ошибка RIPE API');
+        const data = await resp.json();
+        const prefixes = (data?.data?.prefixes || []).map(p => p.prefix).filter(Boolean);
+        if (!prefixes.length) {
+            alert(`Префиксы для AS${asn} не найдены`);
+            return;
+        }
+        const existing = targets.value.trim();
+        targets.value = existing ? `${existing}\n${prefixes.join('\n')}` : prefixes.join('\n');
+        v2CalculateTargetsCount();
+    } catch (e) {
+        alert(`Не удалось загрузить префиксы: ${e.message}`);
+    }
+}
+window.loadAsnPrefixesForV2 = loadAsnPrefixesForV2;
 
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -69,7 +188,9 @@ function v2OnActivate() {
     v2RenderCredentials();
     v2LoadStoredResults();
     v2CheckActiveScan();
+    v2CalculateTargetsCount();
 }
+
 
 async function v2CheckActiveScan() {
     let savedJobId = localStorage.getItem('ip2domain_v2_active_job');

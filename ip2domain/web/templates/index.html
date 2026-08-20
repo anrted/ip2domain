@@ -479,16 +479,20 @@
 
                                 <!-- Targets -->
                                 <div>
-                                    <p class="v2-section-label">Цели сканирования</p>
+                                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.35rem;">
+                                        <p class="v2-section-label" style="margin:0;">Цели сканирования</p>
+                                        <span id="v2-targets-counter" style="font-size:0.75rem;font-weight:600;color:rgba(255,255,255,0.45);">0 IP (макс. 5 000 000)</span>
+                                    </div>
                                     <textarea id="v2-targets" class="v2-targets-area"
                                         placeholder="192.168.1.0/24&#10;10.0.0.1-10.0.0.255&#10;172.16.5.100"
-                                        rows="6"></textarea>
+                                        rows="6" oninput="v2CalculateTargetsCount()"></textarea>
                                     <div class="v2-targets-actions">
-                                        <button type="button" class="v2-btn-small" onclick="document.getElementById('v2-targets').value=''">✕ Очистить</button>
+                                        <button type="button" class="v2-btn-small" onclick="document.getElementById('v2-targets').value='';v2CalculateTargetsCount();">✕ Очистить</button>
                                         <input id="v2-asn-input" type="text" placeholder="AS12345" style="font-size:0.72rem;padding:0.18rem 0.5rem;width:80px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.12);border-radius:4px;color:#fff;">
                                         <button type="button" class="v2-btn-small" onclick="loadAsnPrefixesForV2()">По ASN</button>
                                     </div>
                                 </div>
+
 
                                 <!-- Engine -->
                                 <div>
@@ -815,7 +819,8 @@ updateScanModeControls();
 <script src="/static/cameras/scanner.js?v=20260814-m7-skip-existing"></script>
 <script src="/static/cameras/go2rtc.js?v=20260814-m7-skip-existing"></script>
 <script src="/static/cameras/strix.js?v=20260818-db-presets-v5"></script>
-<script src="/static/cameras/scanner_v2.js?v=20260820-v2-11"></script>
+<script src="/static/cameras/scanner_v2.js?v=20260820-v2-12"></script>
+
 
 
 
