@@ -1029,19 +1029,30 @@ async function v2OpenStreamPlayer(srcUrl, camName, ip, currentIdx = 0) {
         const regResp = await fetch("/api/go2rtc/streams", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name: tempName, url: srcUrl })
+            body: JSON.stringify({
+                name: tempName,
+                url: [srcUrl, `ffmpeg:${srcUrl}#video=h264#audio=aac`]
+            })
         });
-        const regData = await regResp.json();
+        if (!regResp.ok) {
+            const err = await regResp.json();
+            throw new Error(err.detail || "Не удалось запустить временный поток в go2rtc");
+        }
 
         const iframe = document.getElementById('v2-modal-iframe');
         const loader = document.getElementById('v2-modal-loader');
-        if (iframe) {
-            iframe.src = `http://${location.hostname}:1984/stream.html?src=${encodeURIComponent(tempName)}&mode=webrtc,mse,mp4,mjpeg`;
+        if (iframe && loader) {
+            iframe.src = `/api/go2rtc/player/stream.html?src=${encodeURIComponent(tempName)}`;
             iframe.onload = () => {
-                if (loader) loader.style.display = 'none';
+                loader.style.display = 'none';
                 iframe.style.display = 'block';
             };
+            setTimeout(() => {
+                loader.style.display = 'none';
+                iframe.style.display = 'block';
+            }, 800);
         }
+
     } catch (err) {
         const loader = document.getElementById('v2-modal-loader');
         if (loader) {
