@@ -148,15 +148,25 @@ async def _download_http_snapshot(
     try:
         async with httpx.AsyncClient(verify=False, timeout=4.0, follow_redirects=True) as client:
             resp = await client.get(url, auth=auth)
-            if resp.status_code == 200 and resp.content and (
-                resp.content[:3] == b"\xff\xd8\xff"
-                or "image" in resp.headers.get("content-type", "").lower()
-            ):
-                out_path.write_bytes(resp.content)
+            content = resp.content or b""
+            # Must be a real image with at least 1 KB of data
+            is_valid_image = (
+                resp.status_code == 200
+                and len(content) >= 1000
+                and (
+                    content[:2] == b"\xff\xd8"  # JPEG SOI
+                    or content[:4] == b"\x89PNG" # PNG
+                    or content[:3] == b"GIF"     # GIF
+                    or (content[:4] == b"RIFF" and content[8:12] == b"WEBP") # WebP
+                )
+            )
+            if is_valid_image:
+                out_path.write_bytes(content)
                 return str(out_path)
     except Exception as exc:
         logger.debug("[v2 Stage3] Snapshot download failed for %s: %s", url, exc)
     return None
+
 
 
 async def verify_camera_streams(

@@ -219,9 +219,10 @@ async def serve_capture(path: str = Query(...)):
         p.resolve().relative_to(_V2_CAPTURE_DIR.resolve())
     except ValueError:
         raise HTTPException(status_code=403, detail="Access denied")
-    if not p.exists():
-        raise HTTPException(status_code=404, detail="Screenshot not found")
+    if not p.exists() or p.stat().st_size < 1000:
+        raise HTTPException(status_code=404, detail="Screenshot not found or invalid")
     return FileResponse(str(p), media_type="image/jpeg")
+
 
 
 @router.api_route("/preview", methods=["GET", "POST", "HEAD"])
