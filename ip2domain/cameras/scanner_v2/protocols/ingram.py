@@ -23,7 +23,8 @@ from typing import Dict, List, Optional, Tuple
 import httpx
 
 logger = logging.getLogger(__name__)
-_TIMEOUT = 3.5
+_TIMEOUT = 2.5  # per-request timeout (parallelism makes total probe time manageable)
+
 
 # ---------------------------------------------------------------------------
 # Ingram fingerprint rules (from rules.csv), keyed by brand slug.
@@ -259,16 +260,17 @@ async def _fetch_paths(
     paths: List[str],
     client: httpx.AsyncClient,
 ) -> Dict[str, httpx.Response]:
-    """Fetch multiple paths from host, return {path: response}."""
-    cache: Dict[str, httpx.Response] = {}
-    for path in paths:
+    """Fetch multiple paths from host in PARALLEL, return {path: response}."""
+    async def _get(path: str):
         url = f"http://{ip}:{port}{path}"
         try:
             r = await client.get(url)
-            cache[path] = r
+            return path, r
         except Exception:
-            pass
-    return cache
+            return path, None
+
+    results = await asyncio.gather(*[_get(p) for p in paths])
+    return {path: resp for path, resp in results if resp is not None}
 
 
 def _detect_brand(resp_cache: Dict[str, httpx.Response]) -> Optional[str]:
@@ -284,24 +286,28 @@ async def _probe_brand_streams(
     brand: str,
     client: httpx.AsyncClient,
 ) -> List[Tuple[str, str]]:
-    """Try brand-specific snapshot/stream URLs, return list of (url, stream_type) that return JPEG."""
-    found: List[Tuple[str, str]] = []
+    """Try brand-specific snapshot/stream URLs in PARALLEL, return list of (url, stream_type) that return JPEG."""
     paths = _BRAND_STREAMS.get(brand, [])
-    for path, stype in paths:
+    if not paths:
+        return []
+
+    async def _check(path: str, stype: str):
         url = f"http://{ip}:{port}{path}"
         try:
             r = await client.get(url)
             if r.status_code == 200 and r.content:
                 ct = r.headers.get("content-type", "").lower()
                 if ct.startswith("image/") or r.content[:3] == b"\xff\xd8\xff":
-                    found.append((url, stype))
-                    break  # one working snapshot is enough
+                    return (url, stype)
                 elif "multipart" in ct or "mjpeg" in ct or "x-motion-jpeg" in ct:
-                    found.append((url, "mjpeg"))
-                    break
+                    return (url, "mjpeg")
         except Exception:
             pass
-    return found
+        return None
+
+    results = await asyncio.gather(*[_check(p, s) for p, s in paths])
+    found = [r for r in results if r is not None]
+    return found[:1]  # one working snapshot is enough
 
 
 # ---------------------------------------------------------------------------
@@ -617,19 +623,22 @@ async def probe_ingram(
                         snap_url = f"http://{ip}:{port}/jpg/image.jpg"
                         working_streams.append((snap_url, "http_snapshot"))
 
-                # ── Standard credential-based stream probing ────────────────
+                # ── Standard credential-based stream probing (sequential creds, parallel paths) ─
                 if not working_streams:
                     for user, pwd in merged_creds[:6]:
-                        async with httpx.AsyncClient(
-                            verify=False,
-                            timeout=_TIMEOUT,
-                            follow_redirects=True,
-                            auth=(user, pwd) if user else None,
-                        ) as auth_client:
-                            streams = await _probe_brand_streams(ip, port, brand_slug, auth_client)
-                            if streams:
-                                working_streams = streams
-                                break
+                        try:
+                            async with httpx.AsyncClient(
+                                verify=False,
+                                timeout=_TIMEOUT,
+                                follow_redirects=True,
+                                auth=(user, pwd) if user else None,
+                            ) as auth_client:
+                                streams = await _probe_brand_streams(ip, port, brand_slug, auth_client)
+                                if streams:
+                                    working_streams = streams
+                                    break
+                        except Exception:
+                            continue
 
                 # Even if no snapshot found, mark brand detected
                 result["success"] = True

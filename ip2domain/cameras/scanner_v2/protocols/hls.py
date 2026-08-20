@@ -77,56 +77,79 @@ async def probe_hls_mjpeg(
     if not candidate_ports:
         return result
 
-    async with httpx.AsyncClient(verify=False, timeout=_TIMEOUT, follow_redirects=True) as client:
-        for port in candidate_ports:
+    _CHECK_TIMEOUT = 1.5   # root check — fast fail for dead ports
+    _PATH_TIMEOUT  = 3.0   # snapshot/HLS paths — some slow devices need this
+
+    async with httpx.AsyncClient(verify=False, follow_redirects=True) as client:
+        for port in candidate_ports[:3]:  # max 3 HTTP ports
             base = f"http://{ip}:{port}"
-            for user, password in credentials:
+
+            # Step 1: Quick root check — confirm port is alive and find working credential
+            working_auth = None
+            found_cred = None
+            for user, password in credentials[:3]:
                 auth = (user, password) if user else None
+                try:
+                    resp = await client.get(base + "/", auth=auth, timeout=_CHECK_TIMEOUT)
+                    if resp.status_code == 200:
+                        working_auth = auth
+                        found_cred = {"user": user, "password": password}
+                        break
+                    elif resp.status_code == 401:
+                        continue
+                    elif resp.status_code in (404, 302, 301, 403):
+                        working_auth = auth
+                        found_cred = {"user": user, "password": password}
+                        break
+                except Exception:
+                    break  # Port not responding — skip
 
-                # Try JPEG snapshots
-                for path in _SNAPSHOT_PATHS:
-                    try:
-                        resp = await client.get(base + path, auth=auth, timeout=_TIMEOUT)
-                        if resp.status_code == 200 and _is_jpeg(resp.content):
-                            result.update({
-                                "success": True, "snapshot_url": base + path,
-                                "http_port": port,
-                                "credentials": {"user": user, "password": password},
-                                "snapshot_bytes": resp.content,
-                            })
-                            # Also check for MJPEG/HLS
-                            for mp in _MJPEG_PATHS:
-                                try:
-                                    async with client.stream("GET", base + mp, auth=auth, timeout=2.0) as mr:
-                                        if mr.status_code == 200 and "image/jpeg" in mr.headers.get("content-type", "").lower():
-                                            result["mjpeg_url"] = base + mp
-                                            break
-                                except Exception:
-                                    pass
-                            for hp in _HLS_PATHS:
-                                try:
-                                    hr = await client.get(base + hp, auth=auth, timeout=2.0)
-                                    if hr.status_code == 200 and _is_hls(hr.content):
-                                        result["hls_url"] = base + hp
+            if working_auth is None and found_cred is None:
+                continue
+
+            # Step 2: Try JPEG snapshot paths with the working credential
+            for path in _SNAPSHOT_PATHS:
+                try:
+                    resp = await client.get(base + path, auth=working_auth, timeout=_PATH_TIMEOUT)
+                    if resp.status_code == 200 and _is_jpeg(resp.content):
+                        result.update({
+                            "success": True, "snapshot_url": base + path,
+                            "http_port": port,
+                            "credentials": found_cred or {},
+                            "snapshot_bytes": resp.content,
+                        })
+                        for mp in _MJPEG_PATHS:
+                            try:
+                                async with client.stream("GET", base + mp, auth=working_auth, timeout=_CHECK_TIMEOUT) as mr:
+                                    if mr.status_code == 200 and "image/jpeg" in mr.headers.get("content-type", "").lower():
+                                        result["mjpeg_url"] = base + mp
                                         break
-                                except Exception:
-                                    pass
-                            return result
-                    except Exception:
-                        continue
+                            except Exception:
+                                pass
+                        for hp in _HLS_PATHS:
+                            try:
+                                hr = await client.get(base + hp, auth=working_auth, timeout=_CHECK_TIMEOUT)
+                                if hr.status_code == 200 and _is_hls(hr.content):
+                                    result["hls_url"] = base + hp
+                                    break
+                            except Exception:
+                                pass
+                        return result
+                except Exception:
+                    continue
 
-                # Try HLS
-                for path in _HLS_PATHS:
-                    try:
-                        resp = await client.get(base + path, auth=auth, timeout=_TIMEOUT)
-                        if resp.status_code == 200 and _is_hls(resp.content):
-                            result.update({
-                                "success": True, "hls_url": base + path,
-                                "http_port": port,
-                                "credentials": {"user": user, "password": password},
-                            })
-                            return result
-                    except Exception:
-                        continue
+            # Step 3: Try HLS paths
+            for path in _HLS_PATHS:
+                try:
+                    resp = await client.get(base + path, auth=working_auth, timeout=_PATH_TIMEOUT)
+                    if resp.status_code == 200 and _is_hls(resp.content):
+                        result.update({
+                            "success": True, "hls_url": base + path,
+                            "http_port": port,
+                            "credentials": found_cred or {},
+                        })
+                        return result
+                except Exception:
+                    continue
 
     return result

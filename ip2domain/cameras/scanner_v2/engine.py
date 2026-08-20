@@ -348,7 +348,7 @@ async def run_v2_scan_pipeline(
                 try:
                     camera = await asyncio.wait_for(
                         probe_host_v2(ip, open_ports, credentials, protocols=protocols),
-                        timeout=10.0,
+                        timeout=20.0,
                     )
                 except asyncio.TimeoutError:
                     logger.debug("[v2 Stage2] Host %s probe timed out", ip)

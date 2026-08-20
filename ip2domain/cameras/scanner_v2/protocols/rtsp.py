@@ -453,8 +453,8 @@ async def probe_rtsp_direct(
                             break
                     else:
                         failed_auth_paths += 1
-                        if failed_auth_paths >= 3:
-                            # 3 paths failed authentication with all given credentials -> camera locked
+                        if failed_auth_paths >= 10:
+                            # 10 paths failed authentication with all given credentials -> camera likely locked
                             break
 
 
