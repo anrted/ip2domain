@@ -11,8 +11,10 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
+
 from typing import Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -146,29 +148,49 @@ async def masscan_sweep(
             stderr=asyncio.subprocess.PIPE,
         )
 
-        # Poll stderr for progress while scanning
+        # Poll stderr for progress while scanning (masscan uses \r for in-place updates)
         scanned = 0
         total = len(targets)
         async def _read_stderr():
             nonlocal scanned
-            async for line in proc.stderr:
-                txt = line.decode(errors="ignore").strip()
-                if is_cancelled and is_cancelled():
-                    proc.kill()
-                    return
-                # masscan prints "rate: X.XX-kpps, X% done, X:XX:XX remaining, found=N"
-                if "%" in txt and on_progress:
-                    try:
-                        pct_part = [p for p in txt.split(",") if "%" in p][0]
-                        pct = float(pct_part.strip().replace("%", "").split()[-1])
-                        scanned = int(total * pct / 100)
-                        on_progress(scanned, total, txt, 0)
-                    except Exception:
-                        pass
+            buf = ""
+            try:
+                while True:
+                    chunk = await proc.stderr.read(1024)
+                    if not chunk:
+                        break
+                    buf += chunk.decode(errors="ignore")
+                    lines = re.split(r"[\r\n]+", buf)
+                    buf = lines.pop() if lines else ""
+                    for txt in lines:
+                        txt = txt.strip()
+                        if not txt:
+                            continue
+                        if is_cancelled and is_cancelled():
+                            try:
+                                proc.kill()
+                            except Exception:
+                                pass
+                            return
+                        # masscan prints "rate: X.XX-kpps, X% done, X:XX:XX remaining, found=N"
+                        if "%" in txt and on_progress:
+                            try:
+                                pct_part = [p for p in txt.split(",") if "%" in p][0]
+                                pct = float(pct_part.strip().replace("%", "").split()[-1])
+                                scanned = int(total * pct / 100)
+                                on_progress(scanned, total, txt, 0)
+                            except Exception:
+                                pass
+            except Exception as exc:
+                logger.debug("[v2 Stage1/masscan] Stderr reader exception: %s", exc)
 
         stderr_task = asyncio.create_task(_read_stderr())
         await proc.wait()
-        await stderr_task
+        try:
+            await stderr_task
+        except Exception:
+            pass
+
 
 
         if is_cancelled and is_cancelled():
