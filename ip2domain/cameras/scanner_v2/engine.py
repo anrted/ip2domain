@@ -432,28 +432,39 @@ async def run_v2_scan_pipeline(
                 return_exceptions=True,
             )
 
-            # Filter out cameras that have 0 working streams after verification
+            # Soft filter: keep all cameras that have at least one stream (even unverified).
+            # Cameras where ffmpeg capture failed are kept but marked — they still have RTSP URLs
+            # which can be checked manually or via the preview proxy.
             valid_cameras = []
+            verified_count = 0
             for cam in job.results:
-                if cam.streams and any(s.verified for s in cam.streams):
-                    valid_cameras.append(cam)
-                    if storage:
-                        try:
-                            storage.save_v2_result(cam.to_dict())
-                        except Exception:
-                            pass
-                else:
+                if not cam.streams:
+                    # Truly no streams at all — discard
                     if storage:
                         try:
                             storage.delete_v2_result(cam.ip)
                         except Exception:
                             pass
+                    continue
+                has_verified = any(s.verified for s in cam.streams)
+                if has_verified:
+                    verified_count += 1
+                # Always save — even unverified cameras with stream URLs are useful
+                valid_cameras.append(cam)
+                if storage:
+                    try:
+                        storage.save_v2_result(cam.to_dict())
+                    except Exception:
+                        pass
 
             job.results = valid_cameras
             job.found_cameras = len(valid_cameras)
             job.stage3_status = "done"
-            verified = len(valid_cameras)
-            job.add_log(f"[Stage 3] Завершено: {verified} камер с подтверждённым видео")
+            job.add_log(
+                f"[Stage 3] Завершено: {len(valid_cameras)} камер сохранено "
+                f"({verified_count} с подтверждённым видео, {len(valid_cameras) - verified_count} без скриншота)"
+            )
+
 
         # ── Done ───────────────────────────────────────────────────────
         job.status = "completed"

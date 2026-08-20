@@ -124,6 +124,7 @@ async def probe_host_v2(
     if not http_ports:
         http_ports = [p for p in open_ports if p not in RTSP_PORTS and p not in RTMP_PORTS]
     rtsp_ports = sorted(set(open_ports) & RTSP_PORTS)
+    # Only add 554 if it was actually found open by masscan
     if not rtsp_ports and 554 in open_ports:
         rtsp_ports = [554]
     rtmp_ports = sorted(set(open_ports) & RTMP_PORTS)
@@ -151,8 +152,8 @@ async def probe_host_v2(
     if "hls" in active_protos:
         probe_tasks.append(probe_hls_mjpeg(ip, http_ports, credentials))
         task_keys.append("hls")
-    if "rtsp" in active_protos:
-        probe_tasks.append(probe_rtsp_direct(ip, rtsp_ports or [554], credentials))
+    if "rtsp" in active_protos and rtsp_ports:  # Only probe RTSP if a RTSP port was actually found open
+        probe_tasks.append(probe_rtsp_direct(ip, rtsp_ports, credentials))
         task_keys.append("rtsp")
     if "rtmp" in active_protos and (rtmp_ports or 1935 in open_ports):
         probe_tasks.append(probe_rtmp(ip, rtmp_ports or [1935]))
@@ -326,9 +327,23 @@ async def probe_host_v2(
         camera.http_port = generic_r.get("http_port", 0)
         camera.protocols.append("http_generic")
         detected = True
+        # Build fallback stream URLs for generic cameras:
+        # Try RTSP on open RTSP ports
+        for p in open_ports:
+            if p in RTSP_PORTS or p == 554:
+                url = f"rtsp://{ip}:{p}/"
+                if not any(s.url == url for s in camera.streams):
+                    from .models import StreamInfo as _SI
+                    camera.streams.append(_SI(url=url, stream_type="rtsp"))
+                break
+        # Try HTTP snapshot on the detected HTTP port
+        if generic_r.get("http_port") and not any(s.stream_type == "http_snapshot" for s in camera.streams):
+            snap_url = f"http://{ip}:{generic_r['http_port']}/snapshot.jpg"
+            from .models import StreamInfo as _SI2
+            camera.streams.append(_SI2(url=snap_url, stream_type="http_snapshot"))
 
-    if not detected or not camera.streams:
-        # Discard hosts that returned 401 Unauthorized or have 0 working streams
+    if not detected:
+        # Not a camera at all — discard
         return None
 
     # Default brand if still empty
@@ -345,6 +360,15 @@ async def probe_host_v2(
         for p in open_ports:
             if p in RTSP_PORTS or p == 554:
                 camera.rtsp_port = p
+                break
+
+    # If still no streams at all, build a generic RTSP fallback so the camera isn't discarded
+    if not camera.streams:
+        for p in open_ports:
+            if p in RTSP_PORTS or p == 554:
+                from .models import StreamInfo as _SI3
+                camera.streams.append(_SI3(url=f"rtsp://{ip}:{p}/", stream_type="rtsp"))
+                camera.rtsp_port = camera.rtsp_port or p
                 break
 
     return camera
