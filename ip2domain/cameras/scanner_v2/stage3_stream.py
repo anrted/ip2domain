@@ -131,6 +131,34 @@ async def capture_stream_frame(
     return False, "", "", 0, 0
 
 
+async def _download_http_snapshot(
+    url: str,
+    capture_dir: Path,
+    credentials: Optional[dict] = None,
+) -> Optional[str]:
+    """Download JPEG snapshot from HTTP camera and save locally."""
+    import httpx
+    capture_dir.mkdir(parents=True, exist_ok=True)
+    out_path = _capture_path(capture_dir, url)
+
+    auth = None
+    if credentials and credentials.get("user"):
+        auth = (credentials["user"], credentials.get("password", ""))
+
+    try:
+        async with httpx.AsyncClient(verify=False, timeout=4.0, follow_redirects=True) as client:
+            resp = await client.get(url, auth=auth)
+            if resp.status_code == 200 and resp.content and (
+                resp.content[:3] == b"\xff\xd8\xff"
+                or "image" in resp.headers.get("content-type", "").lower()
+            ):
+                out_path.write_bytes(resp.content)
+                return str(out_path)
+    except Exception as exc:
+        logger.debug("[v2 Stage3] Snapshot download failed for %s: %s", url, exc)
+    return None
+
+
 async def verify_camera_streams(
     camera: CameraResult,
     capture_dir: Path,
@@ -138,18 +166,42 @@ async def verify_camera_streams(
 ) -> int:
     """Verify streams for a single CameraResult and capture frames for valid streams.
 
-    Prunes dead / 401 unauthorized streams and keeps only verified working streams.
+    Downloads HTTP snapshots and runs ffmpeg for RTSP/MJPEG/HLS streams.
+    Preserves all discovered streams and prioritizes verified ones.
     Returns the count of verified streams.
     """
     verified_streams = []
 
-    # 1. Keep already-verified HTTP snapshots / WebRTC / MJPEG streams
-    for stream in camera.streams:
-        if stream.verified and stream.stream_type in ("http_snapshot", "mjpeg", "webrtc", "whep"):
+    # 1. Process HTTP snapshots, WebRTC, and MJPEG streams
+    for stream in list(camera.streams):
+        if stream.stream_type == "http_snapshot":
+            if not stream.screenshot_path:
+                path = await _download_http_snapshot(stream.url, capture_dir, camera.credentials)
+                if path:
+                    stream.screenshot_path = path
+                    stream.verified = True
+            if stream.screenshot_path or stream.verified:
+                verified_streams.append(stream)
+        elif stream.stream_type == "mjpeg":
+            if not stream.screenshot_path:
+                ok, path, codec, w, h = await capture_stream_frame(
+                    stream_url=stream.url,
+                    stream_type="mjpeg",
+                    capture_dir=capture_dir,
+                    credentials=camera.credentials,
+                )
+                if ok:
+                    stream.screenshot_path = path
+                    stream.verified = True
+                    stream.codec = codec
+                    stream.width = w
+                    stream.height = h
+            verified_streams.append(stream)
+        elif stream.verified and stream not in verified_streams:
             verified_streams.append(stream)
 
     # 2. Test unverified streams (RTSP / RTMP / HLS)
-    unverified_streams = [s for s in camera.streams if not s.verified]
+    unverified_streams = [s for s in camera.streams if not s.verified and s not in verified_streams]
     streams_to_test = unverified_streams[:max_streams_to_try]
 
     for stream in streams_to_test:
@@ -167,13 +219,13 @@ async def verify_camera_streams(
             stream.height = h
             stream.resolution = f"{w}x{h}" if w and h else ""
             verified_streams.append(stream)
-            # Once we found a confirmed working stream for this camera, stop testing credential variations
+            # Once we found a confirmed working stream for this camera, prioritize it
             break
 
-    # 3. Only keep working verified streams in camera.streams (discard all 401 / dead candidates)
+    # 3. Put verified streams at the front, but keep ALL streams so nothing is discarded
     if verified_streams:
-        camera.streams = verified_streams
-    else:
-        camera.streams = []
+        remaining = [s for s in camera.streams if s not in verified_streams]
+        camera.streams = verified_streams + remaining
 
     return len(verified_streams)
+

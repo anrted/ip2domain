@@ -519,10 +519,24 @@ function v2RenderCameraCard(cam) {
 
     // Preview area HTML
     let previewHtml = '';
+    const user = cam.credentials?.user || 'admin';
+    const pass = cam.credentials?.password || '';
+
+    let imgSrc = '';
     if (screenshotPath) {
+        if (screenshotPath.startsWith('blob:') || screenshotPath.startsWith('/api/') || screenshotPath.startsWith('http')) {
+            imgSrc = screenshotPath;
+        } else {
+            imgSrc = `/api/v2/capture?path=${encodeURIComponent(screenshotPath)}`;
+        }
+    } else if (currentStreamUrl && (currentStreamUrl.startsWith('http://') || currentStreamUrl.startsWith('https://'))) {
+        imgSrc = `/api/v2/preview?ip=${encodeURIComponent(cam.ip)}&stream_url=${encodeURIComponent(currentStreamUrl)}&user=${encodeURIComponent(user)}&password=${encodeURIComponent(pass)}`;
+    }
+
+    if (imgSrc) {
         previewHtml = `
             <div class="v2-preview-wrapper" id="v2-preview-box-${safeIp}">
-                <img class="v2-camera-screenshot" src="/api/v2/capture?path=${encodeURIComponent(screenshotPath)}"
+                <img class="v2-camera-screenshot" src="${imgSrc}"
                      alt="${_esc(cam.ip)}" loading="lazy"
                      onerror="this.style.display='none';document.getElementById('v2-ph-${safeIp}').style.display='flex'">
                 <div class="v2-camera-screenshot-placeholder" id="v2-ph-${safeIp}" style="display:none">
@@ -548,6 +562,7 @@ function v2RenderCameraCard(cam) {
             </div>
         `;
     }
+
 
     const verified = streams.some(s => s.verified);
     const verifiedBadge = verified ? '<span class="v2-verified-badge">✓ Live</span>' : '';
@@ -659,7 +674,19 @@ function v2OnStreamChange(ip, streamUrl) {
         return;
     }
     V2State.selectedStreams[ip] = streamUrl;
+    const cam = V2State.results.find(c => c.ip === ip);
+    if (cam) {
+        const safeIp = ip.replace(/\./g, '_');
+        const cardEl = document.getElementById(`v2-cam-${safeIp}`);
+        if (cardEl) {
+            const temp = document.createElement('div');
+            temp.innerHTML = v2RenderCameraCard(cam);
+            const newCard = temp.firstElementChild;
+            if (newCard) cardEl.replaceWith(newCard);
+        }
+    }
 }
+
 
 async function v2CapturePreview(ip, event) {
     if (event) event.stopPropagation();
