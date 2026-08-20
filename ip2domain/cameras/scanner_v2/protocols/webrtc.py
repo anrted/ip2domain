@@ -82,15 +82,23 @@ async def probe_webrtc(
                 for path in _WHEP_PATHS:
                     try:
                         r = await client.options(base + path, auth=auth, timeout=2.0)
-                        link_hdr = r.headers.get("link", "") or r.headers.get("access-control-allow-methods", "")
-                        if r.status_code in (200, 204, 405) and ("POST" in link_hdr or "whep" in link_hdr.lower() or "sdp" in r.text.lower()):
+                        link_hdr = r.headers.get("link", "").lower()
+                        accept_post = r.headers.get("accept-post", "").lower()
+                        # Strict WHEP validation: must explicitly mention whep, sdp, or WebRTC protocol headers
+                        if r.status_code in (200, 204) and (
+                            "whep" in link_hdr
+                            or "urn:ietf:params:whep" in link_hdr
+                            or "application/sdp" in accept_post
+                            or "application/sdp" in r.text.lower()
+                        ):
                             result["success"] = True
-                            result["brand"] = "WHEP / WebRTC Camera"
+                            result["brand"] = "WHEP / WebRTC Gateway"
                             result["http_port"] = port
                             result["protocols"] = ["webrtc", "whep"]
                             result["webrtc_urls"].append(base + path)
                             return result
                     except Exception:
                         pass
+
 
     return result
