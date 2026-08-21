@@ -18,6 +18,8 @@ const V2State = {
     previewCache: {},      // { [ip]: blobUrl }
     filterBrand: 'all',
     filterProtocol: 'all',
+    filterGeo: 'all',
+    geoSearch: '',
     credentials: [
         { user: 'admin', password: '' },
         { user: 'admin', password: 'admin' },
@@ -610,9 +612,15 @@ function v2MergeResults(incoming) {
 }
 
 
-function v2UpdateResultsCount() {
+function v2UpdateResultsCount(filteredCount) {
     const el = document.getElementById('v2-results-count');
-    if (el) el.textContent = `${V2State.results.length} камер`;
+    if (!el) return;
+    const total = V2State.results.length;
+    if (filteredCount !== undefined && filteredCount !== total) {
+        el.textContent = `${filteredCount} из ${total} камер`;
+    } else {
+        el.textContent = `${total} камер`;
+    }
 }
 
 async function v2LoadStoredResults() {
@@ -652,6 +660,65 @@ function _cameraScore(cam) {
     return score;
 }
 
+function v2UpdateGeoDropdown() {
+    const select = document.getElementById('v2-filter-geo');
+    if (!select) return;
+
+    const curVal = V2State.filterGeo || 'all';
+    const citiesMap = new Map();
+    const regionsMap = new Map();
+    let ruCount = 0, byCount = 0, noGeoCount = 0;
+
+    (V2State.results || []).forEach(cam => {
+        if (cam.city) {
+            citiesMap.set(cam.city, (citiesMap.get(cam.city) || 0) + 1);
+        }
+        if (cam.region) {
+            regionsMap.set(cam.region, (regionsMap.get(cam.region) || 0) + 1);
+        }
+        if (cam.country_code === 'RU') ruCount++;
+        else if (cam.country_code === 'BY') byCount++;
+        if (!cam.city && !cam.region) noGeoCount++;
+    });
+
+    let html = '<option value="all">📍 Все регионы и города</option>';
+
+    if (ruCount > 0 || byCount > 0) {
+        html += '<optgroup label="Страны">';
+        if (ruCount > 0) html += `<option value="country:RU">🇷🇺 Россия (${ruCount})</option>`;
+        if (byCount > 0) html += `<option value="country:BY">🇧🇾 Беларусь (${byCount})</option>`;
+        html += '</optgroup>';
+    }
+
+    if (citiesMap.size > 0) {
+        html += '<optgroup label="Города">';
+        const sortedCities = Array.from(citiesMap.entries()).sort((a, b) => b[1] - a[1]);
+        sortedCities.forEach(([city, count]) => {
+            html += `<option value="city:${_esc(city)}">📍 ${_esc(city)} (${count})</option>`;
+        });
+        html += '</optgroup>';
+    }
+
+    if (regionsMap.size > 0) {
+        html += '<optgroup label="Регионы / Области">';
+        const sortedRegions = Array.from(regionsMap.entries()).sort((a, b) => b[1] - a[1]);
+        sortedRegions.forEach(([region, count]) => {
+            html += `<option value="region:${_esc(region)}">🗺️ ${_esc(region)} (${count})</option>`;
+        });
+        html += '</optgroup>';
+    }
+
+    if (noGeoCount > 0) {
+        html += `<optgroup label="Другое"><option value="__no_geo__">Без гео-привязки (${noGeoCount})</option></optgroup>`;
+    }
+
+    select.innerHTML = html;
+    select.value = curVal;
+    if (select.value !== curVal && curVal !== 'all') {
+        select.value = 'all';
+    }
+}
+
 function v2RenderResults() {
     const grid = document.getElementById('v2-camera-grid');
     if (!grid) return;
@@ -663,11 +730,38 @@ function v2RenderResults() {
     if (V2State.filterProtocol !== 'all') {
         filtered = filtered.filter(c => (c.protocols || []).includes(V2State.filterProtocol));
     }
+    if (V2State.filterGeo && V2State.filterGeo !== 'all') {
+        if (V2State.filterGeo === '__no_geo__') {
+            filtered = filtered.filter(c => !c.city && !c.region);
+        } else if (V2State.filterGeo.startsWith('country:')) {
+            const cCode = V2State.filterGeo.replace('country:', '').toUpperCase();
+            filtered = filtered.filter(c => (c.country_code || '').toUpperCase() === cCode);
+        } else if (V2State.filterGeo.startsWith('region:')) {
+            const reg = V2State.filterGeo.replace('region:', '').toLowerCase();
+            filtered = filtered.filter(c => (c.region || '').toLowerCase() === reg);
+        } else if (V2State.filterGeo.startsWith('city:')) {
+            const cit = V2State.filterGeo.replace('city:', '').toLowerCase();
+            filtered = filtered.filter(c => (c.city || '').toLowerCase() === cit);
+        }
+    }
+    if (V2State.geoSearch && V2State.geoSearch.trim()) {
+        const q = V2State.geoSearch.trim().toLowerCase();
+        filtered = filtered.filter(c =>
+            (c.city || '').toLowerCase().includes(q) ||
+            (c.region || '').toLowerCase().includes(q) ||
+            (c.isp || '').toLowerCase().includes(q) ||
+            (c.ip || '').includes(q)
+        );
+    }
+
+    v2UpdateResultsCount(filtered.length);
+    v2UpdateGeoDropdown();
 
     if (!filtered.length) {
         grid.innerHTML = `<div class="v2-empty-state" style="grid-column:1/-1">
             <div class="v2-empty-icon">📷</div>
-            <p>Камеры не найдены. Запустите сканирование.</p>
+            <p>Камеры не найдены по выбранным фильтрам.</p>
+            ${V2State.filterGeo !== 'all' || V2State.geoSearch ? `<button type="button" class="v2-btn-small" onclick="v2ClearGeoFilter()" style="margin-top:0.5rem">Сбросить гео-фильтр</button>` : ''}
         </div>`;
         return;
     }
@@ -860,7 +954,7 @@ function v2RenderCameraCard(cam) {
     let locationHtml = '';
     if (cam.city) {
         const flag = cam.country_code === 'BY' ? '🇧🇾' : '🇷🇺';
-        locationHtml = `<div class="v2-camera-location" title="${_esc(cam.region || '')}${cam.isp ? ' • ' + _esc(cam.isp) : ''}">
+        locationHtml = `<div class="v2-camera-location" onclick="v2SetGeoFilter('city:${_esc(cam.city)}')" title="Фильтровать по городу ${_esc(cam.city)}${cam.region ? ' • ' + _esc(cam.region) : ''}${cam.isp ? ' • ' + _esc(cam.isp) : ''}">
             <span class="v2-geo-pin">📍</span>
             <strong class="v2-geo-city">${flag} ${_esc(cam.city)}</strong>
             ${cam.region && cam.region !== cam.city ? `<span class="v2-geo-region">${_esc(cam.region)}</span>` : ''}
@@ -1544,6 +1638,43 @@ function v2SetFilter(type, value) {
         btn.classList.toggle('active', btn.dataset.value === value);
     });
     v2RenderResults();
+}
+
+function v2SetGeoFilter(val) {
+    V2State.filterGeo = val;
+    const select = document.getElementById('v2-filter-geo');
+    if (select && select.value !== val) {
+        select.value = val;
+    }
+    _updateGeoClearBtn();
+    v2RenderResults();
+}
+window.v2SetGeoFilter = v2SetGeoFilter;
+
+function v2SetGeoSearch(val) {
+    V2State.geoSearch = val;
+    _updateGeoClearBtn();
+    v2RenderResults();
+}
+window.v2SetGeoSearch = v2SetGeoSearch;
+
+function v2ClearGeoFilter() {
+    V2State.filterGeo = 'all';
+    V2State.geoSearch = '';
+    const select = document.getElementById('v2-filter-geo');
+    if (select) select.value = 'all';
+    const searchInput = document.getElementById('v2-geo-search-input');
+    if (searchInput) searchInput.value = '';
+    _updateGeoClearBtn();
+    v2RenderResults();
+}
+window.v2ClearGeoFilter = v2ClearGeoFilter;
+
+function _updateGeoClearBtn() {
+    const btn = document.getElementById('v2-geo-clear-btn');
+    if (!btn) return;
+    const hasActive = (V2State.filterGeo && V2State.filterGeo !== 'all') || (V2State.geoSearch && V2State.geoSearch.trim().length > 0);
+    btn.style.display = hasActive ? 'block' : 'none';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

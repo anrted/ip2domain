@@ -797,6 +797,21 @@
                                 <button class="v2-btn-small v2-btn-danger" onclick="v2ClearResults()">🗑</button>
                             </div>
                         </div>
+
+                        <!-- Geo & Location Filter Toolbar -->
+                        <div class="v2-geo-filter-bar" id="v2-geo-filter-bar">
+                            <div class="v2-geo-filter-group">
+                                <span style="font-size:0.75rem; color:#94a3b8; font-weight:600;">📍 Регион / Город:</span>
+                                <select id="v2-filter-geo" class="v2-geo-filter-select" onchange="v2SetGeoFilter(this.value)">
+                                    <option value="all">Все регионы и города</option>
+                                </select>
+                            </div>
+                            <div class="v2-geo-search-group">
+                                <input type="text" id="v2-geo-search-input" class="v2-geo-search-input" placeholder="🔍 Поиск по городу, региону или провайдеру..." oninput="v2SetGeoSearch(this.value)">
+                                <button type="button" class="v2-geo-clear-btn" id="v2-geo-clear-btn" onclick="v2ClearGeoFilter()" title="Сбросить гео-фильтр" style="display:none;">✕</button>
+                            </div>
+                        </div>
+
                         <div class="v2-camera-grid" id="v2-camera-grid">
                             <div class="v2-empty-state" style="grid-column:1/-1">
                                 <div class="v2-empty-icon">📷</div>
