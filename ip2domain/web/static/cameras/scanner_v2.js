@@ -23,10 +23,17 @@ const V2State = {
         { user: 'admin', password: 'admin' },
         { user: 'admin', password: '12345' },
         { user: 'admin', password: '123456' },
+        { user: 'admin', password: '12345admin' },
+        { user: 'admin', password: 'admin123' },
+        { user: 'admin', password: 'admin12345' },
         { user: 'root',  password: '' },
         { user: 'root',  password: 'root' },
+        { user: 'root',  password: 'pass' },
+        { user: 'root',  password: '123456' },
+        { user: 'service', password: 'service' },
     ],
 };
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Target counting & CIDR/Range calculation (Pure JS)

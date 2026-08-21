@@ -141,13 +141,15 @@ async def _download_http_snapshot(
     capture_dir.mkdir(parents=True, exist_ok=True)
     out_path = _capture_path(capture_dir, url)
 
-    auth = None
-    if credentials and credentials.get("user"):
-        auth = (credentials["user"], credentials.get("password", ""))
+    user = credentials.get("user") if credentials else ""
+    password = credentials.get("password", "") if credentials else ""
 
     try:
         async with httpx.AsyncClient(verify=False, timeout=4.0, follow_redirects=True) as client:
+            auth = httpx.DigestAuth(user, password) if user else None
             resp = await client.get(url, auth=auth)
+            if resp.status_code == 401 and user:
+                resp = await client.get(url, auth=(user, password))
             content = resp.content or b""
             # Must be a real image with at least 1 KB of data
             is_valid_image = (
@@ -166,6 +168,7 @@ async def _download_http_snapshot(
     except Exception as exc:
         logger.debug("[v2 Stage3] Snapshot download failed for %s: %s", url, exc)
     return None
+
 
 
 

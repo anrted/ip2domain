@@ -40,13 +40,19 @@ async def probe_hikvision(
         for port in candidate_ports:
             base = f"http://{ip}:{port}"
             for user, password in credentials:
-                auth = (user, password) if user else None
                 try:
+                    auth = httpx.DigestAuth(user, password) if user else None
                     resp = await client.get(
                         base + _ISAPI_DEVICE_INFO,
                         auth=auth,
                         timeout=_TIMEOUT,
                     )
+                    if resp.status_code == 401 and user:
+                        resp = await client.get(
+                            base + _ISAPI_DEVICE_INFO,
+                            auth=(user, password),
+                            timeout=_TIMEOUT,
+                        )
                 except Exception:
                     continue
 
@@ -55,6 +61,7 @@ async def probe_hikvision(
                     continue
                 if resp.status_code != 200:
                     break  # Port likely not Hikvision ISAPI
+
 
                 xml = resp.text
                 # Verify it's actually ISAPI

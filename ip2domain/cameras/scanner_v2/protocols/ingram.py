@@ -106,24 +106,25 @@ _BRAND_NAMES: Dict[str, str] = {
 # Brand-specific: known default credentials to try
 # ---------------------------------------------------------------------------
 _BRAND_CREDS: Dict[str, List[Tuple[str, str]]] = {
-    "avtech":    [("admin", ""), ("admin", "admin"), ("admin", "123456")],
-    "axis":      [("root", ""), ("admin", "admin"), ("root", "pass"), ("root", "root")],
-    "cctv":      [("admin", ""), ("admin", "admin"), ("admin", "12345"), ("888888", "888888")],
-    "dlink-dcs": [("admin", ""), ("admin", "admin")],
-    "dlink":     [("admin", ""), ("admin", "admin")],
-    "dvr":       [("admin", ""), ("admin", "admin"), ("888888", "888888"), ("666666", "666666"), ("disabled", "p455v0rT")],
-    "dahua":     [("admin", ""), ("admin", "admin"), ("admin", "admin123"), ("disabled", "p455v0rT")],
-    "geovision": [("admin", "admin"), ("admin", "")],
-    "hikvision": [("admin", "12345"), ("admin", ""), ("admin", "admin")],
-    "instar":    [("admin", "instar"), ("admin", "admin")],
-    "ipcamera":  [("admin", ""), ("admin", "admin"), ("admin", "12345")],
-    "netwave":   [("admin", "admin"), ("admin", "")],
-    "nuuo":      [("admin", ""), ("admin", "admin"), ("viewer", "viewer")],
-    "reecam":    [("admin", "admin"), ("admin", "")],
-    "tenda":     [("admin", "admin"), ("admin", "")],
-    "uniview":   [("admin", "admin"), ("admin", "12345")],
-    "xiongmai":  [("admin", ""), ("admin", "admin"), ("admin", "12345")],
+    "avtech":    [("admin", ""), ("admin", "admin"), ("admin", "123456"), ("admin", "12345")],
+    "axis":      [("root", "pass"), ("root", ""), ("root", "root"), ("admin", "admin"), ("root", "123456"), ("root", "12345"), ("admin", "pass")],
+    "cctv":      [("admin", ""), ("admin", "admin"), ("admin", "12345"), ("admin", "123456"), ("888888", "888888"), ("666666", "666666")],
+    "dlink-dcs": [("admin", ""), ("admin", "admin"), ("admin", "12345")],
+    "dlink":     [("admin", ""), ("admin", "admin"), ("admin", "12345")],
+    "dvr":       [("admin", ""), ("admin", "admin"), ("888888", "888888"), ("666666", "666666"), ("admin", "12345"), ("admin", "123456")],
+    "dahua":     [("admin", "admin"), ("admin", ""), ("admin", "admin123"), ("admin", "123456"), ("admin", "admin12345"), ("888888", "888888"), ("666666", "666666"), ("admin", "12345")],
+    "geovision": [("admin", "admin"), ("admin", ""), ("admin", "12345")],
+    "hikvision": [("admin", "12345admin"), ("admin", "12345"), ("admin", "admin12345"), ("admin", "123456"), ("admin", "admin123"), ("admin", ""), ("admin", "admin"), ("admin", "password")],
+    "instar":    [("admin", "instar"), ("admin", "admin"), ("admin", "")],
+    "ipcamera":  [("admin", "admin"), ("admin", ""), ("admin", "12345"), ("admin", "123456"), ("admin", "admin123"), ("admin", "12345admin"), ("root", "root"), ("root", "pass"), ("root", "123456")],
+    "netwave":   [("admin", "admin"), ("admin", ""), ("admin", "12345")],
+    "nuuo":      [("admin", ""), ("admin", "admin"), ("viewer", "viewer"), ("admin", "12345")],
+    "reecam":    [("admin", "admin"), ("admin", ""), ("admin", "12345")],
+    "tenda":     [("admin", "admin"), ("admin", ""), ("admin", "123456"), ("admin", "12345")],
+    "uniview":   [("admin", "admin"), ("admin", "12345"), ("admin", "123456"), ("admin", "admin123"), ("admin", "12345admin"), ("admin", "")],
+    "xiongmai":  [("admin", ""), ("admin", "admin"), ("admin", "12345"), ("admin", "123456"), ("default", "")],
 }
+
 
 # ---------------------------------------------------------------------------
 # Brand-specific snapshot / stream paths
@@ -486,21 +487,22 @@ async def _probe_axis_digest(
     port: int,
     credentials: List[Tuple[str, str]],
 ) -> Optional[Tuple[str, str]]:
-    """Axis camera: try digest-auth on /jpg/image.jpg (or /axis-cgi/jpg/image.cgi).
-
-    Returns first working (user, password) tuple or None.
-    """
-    for path in ['/jpg/image.jpg', '/axis-cgi/jpg/image.cgi']:
+    """Axis camera: try digest-auth on /jpg/image.jpg or /axis-cgi/jpg/image.cgi."""
+    for path in ['/axis-cgi/jpg/image.cgi', '/jpg/image.jpg', '/axis-media/media.amp']:
         url = f"http://{ip}:{port}{path}"
         for user, pwd in credentials:
             try:
                 async with httpx.AsyncClient(verify=False, timeout=_TIMEOUT) as client:
-                    r = await client.get(url, auth=(user, pwd))
-                    if r.status_code == 200 and r.content[:3] == b'\xff\xd8\xff':
+                    auth = httpx.DigestAuth(user, pwd) if user else None
+                    r = await client.get(url, auth=auth)
+                    if r.status_code == 401 and user:
+                        r = await client.get(url, auth=(user, pwd))
+                    if r.status_code == 200 and len(r.content or b"") > 500:
                         return user, pwd
             except Exception:
                 pass
     return None
+
 
 
 # ---------------------------------------------------------------------------
