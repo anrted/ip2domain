@@ -1004,6 +1004,8 @@ function _protoBadgeClass(p) {
     if (p.includes('mjpeg')) return 'mjpeg';
     if (p.includes('rtmp')) return 'rtmp';
     if (p.includes('rtsp')) return 'rtsp';
+    if (p.includes('sofia')) return 'sofia';
+    if (p.includes('dhip')) return 'dhip';
     return 'generic';
 }
 
@@ -1013,8 +1015,9 @@ function _protoLabel(p) {
         axis_cgi: 'Axis', rtsp_direct: 'RTSP', rtmp: 'RTMP',
         hls: 'HLS', mjpeg: 'MJPEG', http_snapshot: 'SNAP',
         http_generic: 'HTTP', rtsp_port_open: 'RTSP?',
+        xiongmai_sofia: 'SOFIA:34567', dahua_dhip: 'DHIP:37777',
     };
-    return MAP[p] || p.toUpperCase().slice(0, 6);
+    return MAP[p] || p.toUpperCase().slice(0, 11);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

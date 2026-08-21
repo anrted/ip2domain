@@ -813,6 +813,8 @@
 .v2-proto-badge.hls      { background: rgba(139,92,246,0.2);  color: #c4b5fd; }
 .v2-proto-badge.mjpeg    { background: rgba(236,72,153,0.2);  color: #f9a8d4; }
 .v2-proto-badge.rtmp     { background: rgba(249,115,22,0.2);  color: #fdba74; }
+.v2-proto-badge.sofia    { background: rgba(244,63,94,0.25);  color: #fda4af; border: 1px solid rgba(244,63,94,0.35); }
+.v2-proto-badge.dhip     { background: rgba(168,85,247,0.25); color: #d8b4fe; border: 1px solid rgba(168,85,247,0.35); }
 .v2-proto-badge.generic  { background: rgba(100,116,139,0.2); color: #94a3b8; }
 
 .v2-camera-actions {

@@ -34,6 +34,8 @@ from .protocols.hls import probe_hls_mjpeg
 from .protocols.webrtc import probe_webrtc
 from .protocols.vms import probe_vms
 from .protocols.ingram import probe_ingram
+from .protocols.sofia import probe_sofia
+from .protocols.dahua_media import probe_dahua_media
 
 logger = logging.getLogger(__name__)
 _TIMEOUT = 3.5
@@ -198,6 +200,16 @@ async def probe_host_v2(
         probe_tasks.append(probe_vms(ip, http_ports, credentials))
         task_keys.append("vms")
 
+    # Sofia / Xiongmai (port 34567)
+    if 34567 in open_ports or "sofia" in active_protos or "xiongmai" in active_protos:
+        probe_tasks.append(probe_sofia(ip, 34567, credentials))
+        task_keys.append("sofia")
+
+    # Dahua Media (port 37777)
+    if 37777 in open_ports or "dahua" in active_protos or "dhip" in active_protos:
+        probe_tasks.append(probe_dahua_media(ip, 37777, credentials))
+        task_keys.append("dahua_media")
+
     # Ingram fingerprinting always runs (independent of protocol filter)
     probe_tasks.append(probe_ingram(ip, http_ports, credentials))
     task_keys.append("ingram")
@@ -220,6 +232,8 @@ async def probe_host_v2(
     rtmp_r = res_map.get("rtmp", {})
     webrtc_r = res_map.get("webrtc", {})
     vms_r = res_map.get("vms", {})
+    sofia_r = res_map.get("sofia", {})
+    dahua_media_r = res_map.get("dahua_media", {})
     ingram_r = res_map.get("ingram", {})
     generic_r = res_map.get("generic", {})
 
@@ -355,7 +369,35 @@ async def probe_host_v2(
                 camera.streams.append(StreamInfo(url=url, stream_type=stype))
         detected = True
 
-    # 10. Ingram fingerprint (brand detection + brand-specific snapshot/stream)
+    # 10. Sofia / Xiongmai (NETSurveillance port 34567)
+    if sofia_r.get("success"):
+        camera.brand = camera.brand or "Xiongmai"
+        camera.model = sofia_r.get("model", "") or camera.model or "Xiongmai NVR"
+        camera.serial = sofia_r.get("serial", "") or camera.serial
+        camera.firmware = sofia_r.get("firmware", "") or camera.firmware
+        camera.rtsp_port = camera.rtsp_port or sofia_r.get("rtsp_port", 554)
+        camera.http_port = camera.http_port or sofia_r.get("http_port", 80)
+        camera.credentials = camera.credentials or sofia_r.get("credentials", {})
+        if "xiongmai_sofia" not in camera.protocols:
+            camera.protocols.append("xiongmai_sofia")
+        for url in sofia_r.get("streams", []):
+            if not any(s.url == url for s in camera.streams):
+                camera.streams.append(StreamInfo(url=url, stream_type="rtsp"))
+        detected = True
+
+    # 11. Dahua Media (DHIP port 37777)
+    if dahua_media_r.get("success"):
+        camera.brand = camera.brand or "Dahua"
+        camera.model = camera.model or dahua_media_r.get("model", "Dahua DVR/NVR")
+        camera.credentials = camera.credentials or dahua_media_r.get("credentials", {})
+        if "dahua_dhip" not in camera.protocols:
+            camera.protocols.append("dahua_dhip")
+        for url in dahua_media_r.get("streams", []):
+            if not any(s.url == url for s in camera.streams):
+                camera.streams.append(StreamInfo(url=url, stream_type="rtsp"))
+        detected = True
+
+    # 12. Ingram fingerprint (brand detection + brand-specific snapshot/stream)
     if ingram_r.get("success"):
         camera.brand = camera.brand or ingram_r.get("brand", "")
         camera.http_port = camera.http_port or ingram_r.get("http_port", 0)
