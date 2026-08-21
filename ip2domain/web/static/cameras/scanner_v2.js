@@ -625,7 +625,7 @@ function v2UpdateResultsCount(filteredCount) {
 
 async function v2LoadStoredResults() {
     try {
-        const resp = await fetch('/api/v2/results?limit=500');
+        const resp = await fetch('/api/v2/results?limit=5000');
         if (!resp.ok) return;
         const data = await resp.json();
         const results = data.results || [];

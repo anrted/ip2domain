@@ -93,8 +93,8 @@ class ScannerV2StorageMixin:
                 ),
             )
 
-    def get_v2_results(self, limit: int = 1000, brand: str = "", protocol: str = "") -> List[Dict]:
-        """Retrieve v2 scanner results, optionally filtered."""
+    def get_v2_results(self, limit: int = 5000, brand: str = "", protocol: str = "") -> List[Dict]:
+        """Retrieve v2 scanner results, prioritizing cameras with preview/verified streams."""
         with self._get_connection() as conn:
             query = "SELECT result_json, in_go2rtc FROM v2_results WHERE is_garbage = 0"
             params = []
@@ -104,7 +104,11 @@ class ScannerV2StorageMixin:
             if protocol:
                 query += " AND protocols LIKE ?"
                 params.append(f"%{protocol}%")
-            query += " ORDER BY updated_at DESC LIMIT ?"
+            # SQL sorting: cameras with captured screenshots or verified live streams FIRST, then recent
+            query += """ ORDER BY 
+                (streams_json LIKE '%"screenshot": "%' AND streams_json NOT LIKE '%"screenshot": ""%') DESC,
+                (streams_json LIKE '%"verified": true%') DESC,
+                updated_at DESC LIMIT ?"""
             params.append(limit)
             rows = conn.execute(query, params).fetchall()
             results = []

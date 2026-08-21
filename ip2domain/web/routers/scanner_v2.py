@@ -160,7 +160,7 @@ async def cancel_scan(job_id: str):
 
 @router.get("/results")
 async def get_results(
-    limit: int = Query(default=500, le=2000),
+    limit: int = Query(default=5000, le=20000),
     brand: str = Query(default=""),
     protocol: str = Query(default=""),
 ):
