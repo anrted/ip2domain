@@ -1269,14 +1269,29 @@ async function v2OpenStreamPlayer(srcUrl, camName, ip, currentIdx = 0) {
         }
 
         // RTSP / RTMP stream via go2rtc WebRTC/MSE
+        let actualSrcUrl = srcUrl;
+        if (actualSrcUrl.startsWith('ws://') || actualSrcUrl.startsWith('wss://')) {
+            // Translate WebSocket endpoint (e.g. Axis rtsp-over-websocket) to canonical RTSP stream for go2rtc
+            const u = cam?.credentials?.user || '';
+            const p = cam?.credentials?.password || '';
+            const credsPart = u ? `${encodeURIComponent(u)}:${encodeURIComponent(p)}@` : '';
+            if (actualSrcUrl.includes('rtsp-over-websocket')) {
+                actualSrcUrl = `rtsp://${credsPart}${ip}:554/axis-media/media.amp`;
+            } else {
+                const rtspStream = (cam?.streams || []).find(s => (s.url || '').startsWith('rtsp://'));
+                if (rtspStream) actualSrcUrl = rtspStream.url;
+            }
+        }
+
         const regResp = await fetch("/api/go2rtc/streams", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 name: tempName,
-                url: [srcUrl, `ffmpeg:${srcUrl}#video=h264#audio=aac`]
+                url: [actualSrcUrl, `ffmpeg:${actualSrcUrl}#video=h264#audio=aac`]
             })
         });
+
         if (!regResp.ok) {
             const err = await regResp.json();
             throw new Error(err.detail || "Не удалось запустить временный поток в go2rtc");

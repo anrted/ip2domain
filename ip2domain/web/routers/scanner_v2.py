@@ -205,6 +205,21 @@ async def add_to_go2rtc(
         safe_ip = ip.replace(".", "_")
         stream_name = f"v2_{safe_ip}_1"
 
+    # Resolve WebSocket endpoint if passed
+    if stream_url.startswith("ws://") or stream_url.startswith("wss://"):
+        res = storage.get_v2_result(ip)
+        creds = res.get("credentials", {}) if res else {}
+        u = creds.get("user", "")
+        p = creds.get("password", "")
+        creds_str = f"{u}:{p}@" if u else ""
+        if "rtsp-over-websocket" in stream_url:
+            stream_url = f"rtsp://{creds_str}{ip}:554/axis-media/media.amp"
+        elif res and res.get("streams"):
+            for s in res["streams"]:
+                if s.get("url", "").startswith("rtsp://"):
+                    stream_url = s["url"]
+                    break
+
     go2rtc_url = f"{GO2RTC_API_URL}/api/streams"
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
@@ -213,6 +228,7 @@ async def add_to_go2rtc(
                 params={"name": stream_name},
                 content=stream_url,
             )
+
             if resp.status_code in (200, 201, 204):
                 storage.mark_v2_result_go2rtc(ip, True)
                 return {"success": True, "stream_name": stream_name}
