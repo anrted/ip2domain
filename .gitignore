@@ -26,7 +26,11 @@ ip2domain/web/centra_captures/
 ip2domain/web/camera_captures/
 ip2domain/web/strix_captures/
 ip2domain/web/v2_captures/
-ip2domain/data/
+ip2domain/data/v2_captures/
+ip2domain/data/*.mmdb
+ip2domain/data/*.sqlite3
+ip2domain/data/*.db
+ip2domain/data/StrixCamDB/
 captures/
 
 # OS / Editor files

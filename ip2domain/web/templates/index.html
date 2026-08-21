@@ -39,6 +39,9 @@
             <button class="nav-item" data-view="cameras-view" onclick="switchView('cameras-view', this)" title="Камеры">
                 <span class="nav-icon">◉</span><span>Камеры</span>
             </button>
+            <button class="nav-item" data-view="city-ip-view" onclick="switchView('city-ip-view', this)" title="IP по городам (РФ / РБ)">
+                <span class="nav-icon">📍</span><span>IP по городам</span>
+            </button>
         </nav>
 
         <div class="sidebar-spacer"></div>
@@ -167,6 +170,178 @@
                     <div class="section-header"><div><h2>История сканирований</h2><p class="section-description">Предыдущие задания и сохранённые результаты</p></div><button class="btn btn-ghost" onclick="loadScanHistory()">Обновить</button></div>
                     <div class="table-wrapper"><table><thead><tr><th>Дата</th><th>Цель</th><th>IP</th><th>Доменов</th><th>Verify / Nmap</th><th>Статус</th></tr></thead><tbody id="history-body"><tr><td colspan="6" class="empty-state">Загрузка истории...</td></tr></tbody></table></div>
                 </section>
+            </section>
+
+            <section class="app-view" id="city-ip-view">
+                <!-- Summary Stats Bar -->
+                <div class="geo-stats-grid">
+                    <div class="geo-stat-card">
+                        <span class="geo-stat-icon">🇷🇺</span>
+                        <div class="geo-stat-meta">
+                            <span class="geo-stat-value" id="geo-stat-ru-ips">0</span>
+                            <span class="geo-stat-label">Адресов в городах РФ</span>
+                        </div>
+                    </div>
+                    <div class="geo-stat-card">
+                        <span class="geo-stat-icon">🇧🇾</span>
+                        <div class="geo-stat-meta">
+                            <span class="geo-stat-value" id="geo-stat-by-ips">0</span>
+                            <span class="geo-stat-label">Адресов в городах РБ</span>
+                        </div>
+                    </div>
+                    <div class="geo-stat-card">
+                        <span class="geo-stat-icon">🌐</span>
+                        <div class="geo-stat-meta">
+                            <span class="geo-stat-value" id="geo-stat-total-subnets">0</span>
+                            <span class="geo-stat-label">Всего подсетей в базе</span>
+                        </div>
+                    </div>
+                    <div class="geo-stat-card">
+                        <span class="geo-stat-icon">✓</span>
+                        <div class="geo-stat-meta">
+                            <span class="geo-stat-value" id="geo-stat-selected-count">0</span>
+                            <span class="geo-stat-label">Выбрано подсетей</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Filters & Search Toolbar -->
+                <section class="glass-card geo-filter-panel">
+                    <div class="geo-filter-row-top">
+                        <div class="geo-country-tabs">
+                            <button type="button" class="geo-country-tab-btn active" data-country="ALL">Все страны</button>
+                            <button type="button" class="geo-country-tab-btn" data-country="RU">🇷🇺 Россия</button>
+                            <button type="button" class="geo-country-tab-btn" data-country="BY">🇧🇾 Беларусь</button>
+                        </div>
+                        <button type="button" class="btn btn-ghost btn-small" id="geo-btn-reset-filters">Сбросить фильтры</button>
+                    </div>
+
+                    <div class="geo-filter-inputs">
+                        <select id="geo-region-select" class="geo-select">
+                            <option value="">Все регионы и области</option>
+                        </select>
+                        <select id="geo-isp-select" class="geo-select">
+                            <option value="">Все провайдеры / ISP</option>
+                        </select>
+                        <input type="text" id="geo-search-input" class="geo-input" placeholder="Поиск: город (напр. Новокузнецк), регион, провайдер, ASN или CIDR...">
+                    </div>
+
+                    <div>
+                        <div style="font-size:0.75rem; color:var(--text-muted); margin-bottom:4px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px;">Популярные города (быстрый выбор):</div>
+                        <div class="geo-chips-container" id="geo-quick-chips"></div>
+                    </div>
+                </section>
+
+                <!-- Action Toolbar for Quick Direct Sending -->
+                <section class="glass-card" style="padding:12px 18px; margin-bottom:20px; display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; background:rgba(30,41,59,0.85); border-color:rgba(99,102,241,0.3);">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <strong style="font-size:0.9rem; color:#f8fafc;">🚀 Отправить CIDR в сканеры:</strong>
+                        <span style="font-size:0.78rem; color:var(--text-muted);">(отмеченные или все подсети города)</span>
+                    </div>
+                    <div style="display:flex; flex-wrap:wrap; gap:8px;">
+                        <button type="button" class="btn btn-small" id="geo-btn-send-cam-v2-top" style="background:linear-gradient(135deg, #f97316, #ea580c);" title="Отправить в Сканер Камер v2">📹 В Сканер Камер (v2)</button>
+                        <button type="button" class="btn btn-small" id="geo-btn-send-rdp-top" style="background:linear-gradient(135deg, #8b5cf6, #6366f1);" title="Отправить в RDP/VNC сканер">🖥️ В RDP / VNC</button>
+                        <button type="button" class="btn btn-small btn-ghost" id="geo-btn-send-recon-top" title="Отправить в Recon Граф">🌐 В Сканер и граф</button>
+                        <button type="button" class="btn btn-small btn-ghost" id="geo-btn-copy-cidrs-top" title="Скопировать список CIDR в буфер">📋 Скопировать CIDR</button>
+                    </div>
+                </section>
+
+                <!-- Main Grid: Subnets Table + Action Sidebar -->
+                <div class="geo-workspace-grid">
+                    <!-- Left: Subnets Table -->
+                    <section class="glass-card geo-table-card">
+                        <div class="geo-table-toolbar">
+                            <div>
+                                <h3 style="font-size:1.05rem; font-weight:600;">Найденные диапазоны подсетей (CIDR)</h3>
+                                <p style="font-size:0.78rem; color:var(--text-muted);">Отметьте подсети флажками для массовой отправки или нажимайте кнопку в строке</p>
+                            </div>
+                        </div>
+
+                        <div class="geo-table-container">
+                            <table class="geo-subnets-table">
+                                <thead>
+                                    <tr>
+                                        <th class="geo-col-select"><input type="checkbox" id="geo-select-all" title="Выбрать все на странице"></th>
+                                        <th>CIDR / Подсеть</th>
+                                        <th>Город / Регион</th>
+                                        <th>Провайдер</th>
+                                        <th>ASN</th>
+                                        <th>Адресов</th>
+                                        <th>Действие</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="geo-subnets-tbody">
+                                    <tr><td colspan="7" class="geo-table-loading">Загрузка данных...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div class="geo-pagination">
+                            <span id="geo-pagination-info">Показано 0 – 0 из 0</span>
+                            <div class="geo-page-buttons">
+                                <button type="button" class="geo-page-btn" id="geo-prev-page" disabled>‹ Назад</button>
+                                <button type="button" class="geo-page-btn" id="geo-next-page" disabled>Вперёд ›</button>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Right: CIDR Dispatcher & Actions -->
+                    <div class="geo-side-column">
+                        <!-- Selection & Transfer Card -->
+                        <section class="glass-card geo-tool-card">
+                            <div class="section-header" style="margin-bottom:0;">
+                                <div>
+                                    <h3 style="font-size:1rem; font-weight:600;">Выбранные диапазоны</h3>
+                                    <p class="section-description">Список CIDR для отправки в сканеры</p>
+                                </div>
+                                <span class="geo-count-badge" id="geo-selected-count-badge">0 CIDR</span>
+                            </div>
+
+                            <div style="display:flex; gap:6px;">
+                                <button type="button" class="btn btn-small" id="geo-btn-select-all-filter" style="flex:1;">✓ Выбрать ВСЕ подсети города</button>
+                                <button type="button" class="btn btn-small btn-ghost" id="geo-btn-clear-selection">Снять выбор</button>
+                            </div>
+
+                            <div class="form-group" style="margin-top:4px;">
+                                <textarea id="geo-selected-cidrs-text" class="geo-textarea" rows="7" placeholder="Здесь отображаются выбранные CIDR подсети..."></textarea>
+                            </div>
+
+                            <!-- Pipeline transfer buttons -->
+                            <div style="border-top:1px solid rgba(255,255,255,0.08); padding-top:10px;">
+                                <div style="font-size:0.75rem; color:var(--text-muted); margin-bottom:8px; font-weight:600; text-transform:uppercase;">Отправить в модули ip2domain:</div>
+                                <div class="geo-actions-grid">
+                                    <button type="button" class="btn btn-small" id="geo-btn-send-cam-v2" style="background:linear-gradient(135deg, #f97316, #ea580c);" title="Передать в Сканер Камер v2">📹 В Сканер Камер</button>
+                                    <button type="button" class="btn btn-small" id="geo-btn-send-rdp" style="background:linear-gradient(135deg, #8b5cf6, #6366f1);" title="Передать в RDP/VNC сканер">🖥️ В RDP / VNC</button>
+                                </div>
+                                <button type="button" class="btn btn-small btn-ghost" id="geo-btn-send-recon" style="width:100%; margin-top:6px;" title="Передать в Recon Граф">🌐 В Сканер и граф</button>
+                            </div>
+
+                            <!-- Export row -->
+                            <div style="border-top:1px solid rgba(255,255,255,0.08); padding-top:10px; margin-top:4px;">
+                                <div style="font-size:0.75rem; color:var(--text-muted); margin-bottom:6px; font-weight:600; text-transform:uppercase;">Экспорт:</div>
+                                <div class="geo-btn-export-row">
+                                    <button type="button" class="btn btn-ghost btn-small" id="geo-btn-copy-cidrs">📋 Копировать CIDR</button>
+                                    <button type="button" class="btn btn-ghost btn-small" id="geo-btn-download-txt">💾 TXT</button>
+                                    <button type="button" class="btn btn-ghost btn-small" id="geo-btn-download-json">💾 JSON</button>
+                                    <button type="button" class="btn btn-ghost btn-small" id="geo-btn-download-csv">💾 CSV</button>
+                                </div>
+                            </div>
+                        </section>
+
+                        <!-- Reverse GeoIP Lookup Card -->
+                        <section class="glass-card geo-tool-card">
+                            <div>
+                                <h3 style="font-size:0.95rem; font-weight:600;">📍 Обратный GeoIP поиск</h3>
+                                <p class="section-description">Определить город и подсеть для любого IP</p>
+                            </div>
+                            <div style="display:flex; gap:8px;">
+                                <input type="text" id="geo-lookup-input" class="geo-input" style="flex:1;" placeholder="Введите IP (например: 31.135.32.1)...">
+                                <button type="button" class="btn btn-small" id="geo-btn-lookup">Найти</button>
+                            </div>
+                            <div id="geo-lookup-result" style="display:none;"></div>
+                        </section>
+                    </div>
+                </div>
             </section>
 
             <section class="app-view" id="remote-desktop-view">
@@ -616,6 +791,7 @@
                                 <button class="v2-filter-btn" id="v2-filter-proto-http_snapshot" data-value="http_snapshot" onclick="v2SetFilter('protocol','http_snapshot')">Snapshots</button>
                             </div>
                             <div class="v2-results-actions">
+                                <button class="v2-btn-small" id="v2-btn-resolve-geo" style="background:rgba(14,165,233,0.2);border:1px solid rgba(14,165,233,0.45);color:#38bdf8;font-weight:600;" onclick="v2ResolveAllGeo(this)" title="Определить город и гео-локацию для всех отсканированных камер">📍 Определить города</button>
                                 <button class="v2-btn-small v2-btn-green" onclick="v2ExportAllToGo2rtc()">+ Все в go2rtc</button>
                                 <button class="v2-btn-small" onclick="v2ExportJson()">⬇ JSON</button>
                                 <button class="v2-btn-small v2-btn-danger" onclick="v2ClearResults()">🗑</button>
@@ -668,6 +844,7 @@ const viewMeta = {
     'history-view': ['История сканирований', 'Управление сохранёнными заданиями'],
     'remote-desktop-view': ['RDP / VNC', 'Удалённые рабочие столы и снимки VNC'],
     'cameras-view': ['Камеры', 'Поиск IP-камер и видеорегистраторов'],
+    'city-ip-view': ['IP по городам (РФ / РБ)', 'База подсетей, поиск и генерация IP по городам России и Беларуси'],
     'settings-view': ['Настройки', 'Профиль и безопасность аккаунта'],
 };
 
@@ -689,6 +866,9 @@ function switchView(viewId, trigger) {
             const activeTab = document.querySelector('.camera-tab.active')?.id?.replace('camera-', '')?.replace('-tab', '') || 'go2rtc';
             if (window.switchCameraTab) switchCameraTab(activeTab);
         }
+    }
+    if (viewId === 'city-ip-view' && window.CityIpFinder) {
+        window.CityIpFinder.init();
     }
     if (viewId === 'graph-view' && network) setTimeout(() => network.redraw(), 50);
 }
@@ -820,6 +1000,7 @@ updateScanModeControls();
 <script src="/static/cameras/go2rtc.js?v=20260814-m7-skip-existing"></script>
 <script src="/static/cameras/strix.js?v=20260818-db-presets-v5"></script>
 <script src="/static/cameras/scanner_v2.js?v=20260821-v2-16"></script>
+<script src="/static/city_ip.js?v=20260821-v1"></script>
 
 
 

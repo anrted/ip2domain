@@ -23,6 +23,7 @@ from .stage1_sweep import adaptive_port_sweep, check_tools
 from .stage2_proto import probe_host_v2
 from .stage3_stream import verify_camera_streams
 from .protocols.discovery import run_local_discovery
+from ip2domain.data.geo_city_db import geo_city_db
 
 logger = logging.getLogger(__name__)
 
@@ -490,6 +491,44 @@ async def run_v2_scan_pipeline(
                 f"({verified_count} с подтверждённым видео, {len(valid_cameras) - verified_count} без скриншота)"
             )
 
+        # ── Stage 4: Geolocation for Cameras with Preview ──────────────
+        if job.results:
+            job.stage4_status = "running"
+            cams_with_preview = [
+                cam for cam in job.results
+                if any(bool(getattr(s, "screenshot", None) or getattr(s, "verified", False)) for s in (cam.streams or []))
+            ]
+            if cams_with_preview:
+                job.stage = f"Stage 4: Определение городов ({len(cams_with_preview)} камер с превью)..."
+                job.add_log(f"[Stage 4] Определение гео-локации для {len(cams_with_preview)} камер с превью...")
+                geo_resolved = 0
+                for cam in cams_with_preview:
+                    if job.is_cancelled():
+                        break
+                    try:
+                        geo = geo_city_db.find_by_ip(cam.ip)
+                        if geo:
+                            cam.city = geo.get("city", "")
+                            cam.region = geo.get("region", "")
+                            cam.country_code = geo.get("country_code", "")
+                            cam.isp = geo.get("isp", "")
+                            if cam.city:
+                                geo_resolved += 1
+                                job.add_log(f"[Stage 4] 📍 {cam.ip} → {cam.city} ({cam.region}) [{cam.isp}]")
+                    except Exception as g_exc:
+                        logger.debug("[v2 Stage4] Geo lookup error for %s: %s", cam.ip, g_exc)
+
+                    if storage:
+                        try:
+                            storage.save_v2_result(cam.to_dict())
+                        except Exception:
+                            pass
+
+                job.stage4_completed = len(cams_with_preview)
+                job.add_log(f"[Stage 4] Завершено: определен город для {geo_resolved} из {len(cams_with_preview)} камер с превью")
+            else:
+                job.stage4_completed = 0
+            job.stage4_status = "done"
 
         # ── Done ───────────────────────────────────────────────────────
         job.status = "completed"

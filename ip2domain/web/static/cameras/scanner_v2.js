@@ -857,12 +857,23 @@ function v2RenderCameraCard(cam) {
         ${inGo2rtc ? '✓ go2rtc' : '+ go2rtc'}
     </button>`;
 
+    let locationHtml = '';
+    if (cam.city) {
+        const flag = cam.country_code === 'BY' ? '🇧🇾' : '🇷🇺';
+        locationHtml = `<div class="v2-camera-location" title="${_esc(cam.region || '')}${cam.isp ? ' • ' + _esc(cam.isp) : ''}">
+            <span class="v2-geo-pin">📍</span>
+            <strong class="v2-geo-city">${flag} ${_esc(cam.city)}</strong>
+            ${cam.region && cam.region !== cam.city ? `<span class="v2-geo-region">${_esc(cam.region)}</span>` : ''}
+        </div>`;
+    }
+
     return `<div class="v2-camera-card" id="v2-cam-${safeIp}">
         ${previewHtml}
         ${verifiedBadge}
         <div class="v2-camera-body">
             <div class="v2-camera-brand">${_esc(cam.brand || 'Unknown')}</div>
             <div class="v2-camera-ip">${_esc(cam.ip)}${cam.rtsp_port ? ':' + cam.rtsp_port : ''}</div>
+            ${locationHtml}
             <div class="v2-camera-model">${_esc(cam.model || '')}</div>
             <div class="v2-proto-badges">${badges}</div>
             ${streamSelectorHtml}
@@ -1008,6 +1019,22 @@ async function v2CapturePreview(ip, event) {
             badge.className = 'v2-verified-badge';
             badge.textContent = '✓ Live';
             card.appendChild(badge);
+        }
+
+        // Auto-enrich city for camera with preview if missing
+        const camObj = V2State.results.find(c => c.ip === ip);
+        if (camObj && !camObj.city) {
+            fetch(`/api/geo/lookup?ip=${encodeURIComponent(ip)}`)
+                .then(r => r.json())
+                .then(j => {
+                    if (j.found && j.data && j.data.city) {
+                        camObj.city = j.data.city;
+                        camObj.region = j.data.region || '';
+                        camObj.country_code = j.data.country_code || '';
+                        camObj.isp = j.data.isp || '';
+                        v2RenderResults();
+                    }
+                }).catch(() => {});
         }
 
     } catch (err) {
@@ -1432,6 +1459,79 @@ async function v2ClearResults() {
     V2State.results = [];
     v2RenderResults();
     v2UpdateResultsCount();
+}
+
+async function v2ResolveAllGeo(btn) {
+    if (!V2State.results || !V2State.results.length) {
+        alert('Сначала выполните сканирование или загрузите список камер.');
+        return;
+    }
+
+    const origText = btn ? btn.textContent : '';
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = '⏳ Определение...';
+    }
+
+    let updatedCount = 0;
+
+    // 1. Try server-side endpoint first
+    try {
+        const resp = await fetch('/api/v2/resolve_geo', { method: 'POST' });
+        if (resp.ok) {
+            const data = await resp.json();
+            if (data.results && data.results.length) {
+                V2State.results = data.results;
+                v2RenderResults();
+                _showV2Toast(`✓ Геолокация определена для ${data.updated_count || data.results.length} камер!`);
+                if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = origText;
+                }
+                return;
+            }
+        }
+    } catch (e) {
+        console.warn('[v2] Server geo endpoint unavailable, using live lookup fallback:', e);
+    }
+
+    // 2. Client-side parallel batch resolution via /api/geo/lookup?ip=...
+    const cams = V2State.results;
+    const batchSize = 10;
+    for (let i = 0; i < cams.length; i += batchSize) {
+        const chunk = cams.slice(i, i + batchSize);
+        await Promise.all(chunk.map(async (cam) => {
+            try {
+                const r = await fetch(`/api/geo/lookup?ip=${encodeURIComponent(cam.ip)}`);
+                if (r.ok) {
+                    const j = await r.json();
+                    if (j.found && j.data) {
+                        cam.city = j.data.city || '';
+                        cam.region = j.data.region || '';
+                        cam.country_code = j.data.country_code || '';
+                        cam.isp = j.data.isp || '';
+                        if (cam.city) updatedCount++;
+                    }
+                }
+            } catch (err) {}
+        }));
+        v2RenderResults();
+    }
+
+    _showV2Toast(`✓ Геолокация определена для ${updatedCount} из ${cams.length} камер!`);
+    if (btn) {
+        btn.disabled = false;
+        btn.textContent = origText;
+    }
+}
+window.v2ResolveAllGeo = v2ResolveAllGeo;
+
+function _showV2Toast(msg) {
+    const toast = document.createElement('div');
+    toast.textContent = msg;
+    toast.style.cssText = 'position:fixed;bottom:2rem;right:2rem;background:linear-gradient(135deg, #0ea5e9, #0284c7);color:#fff;padding:0.6rem 1.3rem;border-radius:8px;font-size:0.85rem;font-weight:600;z-index:99999;box-shadow:0 6px 25px rgba(0,0,0,0.5);animation:v2-fade-in 0.2s ease';
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 3000);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

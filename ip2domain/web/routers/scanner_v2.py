@@ -305,3 +305,46 @@ async def get_stream_preview(
 
     raise HTTPException(status_code=404, detail="Stream frame unavailable or authentication failed")
 
+
+@router.post("/resolve_geo")
+@router.post("/results/resolve-geo")
+async def resolve_all_cameras_geo():
+    """Retroactively resolve cities and regions for all stored camera results."""
+    from ip2domain.data.geo_city_db import geo_city_db
+    import httpx
+
+    results = storage.get_v2_results(limit=10000)
+    updated_count = 0
+    updated_cameras = []
+
+    for cam in results:
+        ip = str(cam.get("ip", "")).strip()
+        if not ip:
+            continue
+
+        changed = False
+        geo = geo_city_db.find_by_ip(ip)
+        if geo:
+            cam["city"] = geo.get("city", "")
+            cam["region"] = geo.get("region", "")
+            cam["country_code"] = geo.get("country_code", "")
+            cam["isp"] = geo.get("isp", "")
+            changed = True
+
+        if changed or cam.get("city"):
+            try:
+                storage.save_v2_result(cam)
+                updated_count += 1
+            except Exception:
+                pass
+
+        updated_cameras.append(cam)
+
+    return JSONResponse(content={
+        "success": True,
+        "total_cameras": len(results),
+        "updated_count": updated_count,
+        "results": updated_cameras,
+    })
+
+

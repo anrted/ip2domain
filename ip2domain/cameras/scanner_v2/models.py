@@ -50,6 +50,10 @@ class CameraResult:
     open_ports: List[int] = field(default_factory=list)
     credentials: Dict[str, str] = field(default_factory=dict)  # {"user": "admin", "password": ""}
     raw_probe: Dict[str, Any] = field(default_factory=dict)
+    city: str = ""                   # Discovered city name (e.g. "Новокузнецк")
+    region: str = ""                 # Region / Oblast
+    country_code: str = ""           # "RU" | "BY"
+    isp: str = ""                    # ISP / Autonomous System
     in_go2rtc: bool = False
     timestamp: str = ""
 
@@ -76,6 +80,10 @@ class CameraResult:
             "rtmp_port": self.rtmp_port,
             "open_ports": self.open_ports,
             "credentials": self.credentials,
+            "city": self.city,
+            "region": self.region,
+            "country_code": self.country_code,
+            "isp": self.isp,
             "in_go2rtc": self.in_go2rtc,
             "timestamp": self.timestamp,
         }
@@ -100,6 +108,8 @@ class ScanJob:
     stage2_total: int = 0
     stage3_status: str = "pending"
     stage3_completed: int = 0
+    stage4_status: str = "pending"
+    stage4_completed: int = 0
 
     progress_pct: int = 0
     current_ip: str = ""
@@ -137,10 +147,8 @@ class ScanJob:
                     "completed": self.stage2_completed,
                     "total": self.stage2_total,
                 },
-                "capture": {
-                    "status": self.stage3_status,
-                    "completed": self.stage3_completed,
-                },
+                "capture": {"status": self.stage3_status, "completed": self.stage3_completed},
+                "geolocation": {"status": self.stage4_status, "completed": self.stage4_completed},
             },
             "progress_pct": self.progress_pct,
             "current_ip": self.current_ip,

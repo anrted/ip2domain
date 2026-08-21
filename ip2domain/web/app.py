@@ -25,6 +25,7 @@ from ip2domain.web.routers import (
     go2rtc_router,
     strix_router,
     scanner_v2_router,
+    city_ip_router,
 )
 
 logger = logging.getLogger(__name__)
@@ -72,6 +73,9 @@ async def require_authentication(request: Request, call_next):
         or request.url.path.startswith("/api/strix/asn-prefixes")
         or request.url.path.startswith("/api/asn/lookup")
         or request.url.path.startswith("/api/v2/tools")
+        or request.url.path.startswith("/api/v2/resolve_geo")
+        or request.url.path.startswith("/api/v2/results/resolve-geo")
+        or request.url.path.startswith("/api/geo/")
         or request.url.path in public_paths
     ):
         return await call_next(request)
@@ -109,6 +113,7 @@ app.include_router(centra_router)
 app.include_router(go2rtc_router)
 app.include_router(strix_router)
 app.include_router(scanner_v2_router)
+app.include_router(city_ip_router)
 
 @app.get("/", response_class=HTMLResponse)
 def serve_index():
