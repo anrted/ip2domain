@@ -1120,12 +1120,21 @@ async function v2CaptureFromModal(ip, streamUrl, btn) {
 // ─────────────────────────────────────────────────────────────────────────────
 function v2OpenSelectedStreamPlayer(ip) {
     const cam = V2State.results.find(c => c.ip === ip);
-    if (!cam) return;
-    const streamUrl = V2State.selectedStreams[ip] || (cam.streams?.[0]?.url || '');
+    if (!cam || !cam.streams || !cam.streams.length) return;
+    let streamUrl = V2State.selectedStreams[ip] || '';
+    if (!streamUrl || streamUrl.startsWith('ws://') || streamUrl.includes('.jpg') || streamUrl.includes('.jpeg') || streamUrl.includes('snapshot')) {
+        const playable = cam.streams.find(s => (s.url || '').startsWith('rtsp://') || (s.url || '').startsWith('rtmp://') || (s.url || '').includes('.mjpg') || (s.url || '').includes('video.cgi') || (s.url || '').includes('.m3u8'));
+        if (playable) {
+            streamUrl = playable.url;
+        } else {
+            streamUrl = cam.streams[0].url;
+        }
+    }
     const idx = (cam.streams || []).findIndex(s => s.url === streamUrl);
     v2OpenStreamPlayer(streamUrl, cam.brand || cam.ip, ip, idx >= 0 ? idx : 0);
 }
 window.v2OpenSelectedStreamPlayer = v2OpenSelectedStreamPlayer;
+
 
 async function v2OpenStreamPlayer(srcUrl, camName, ip, currentIdx = 0) {
     if (!srcUrl) return;
