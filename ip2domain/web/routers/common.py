@@ -18,6 +18,8 @@ from ip2domain.core.storage import StorageManager
 from ip2domain.web.auth import AuthManager
 from ip2domain.cameras.centra import CentraProvider
 from ip2domain.cameras.generic_ip import GenericIPCameraProvider
+from ip2domain.cameras.orion import OrionProvider
+from ip2domain.cameras.a42 import A42Provider
 from ip2domain.cameras.providers import ProviderRegistry
 from ip2domain.cameras.services import CameraCatalogService, SnapshotCache
 
@@ -31,6 +33,8 @@ auth_manager = AuthManager(storage.db_path)
 camera_providers = ProviderRegistry()
 camera_providers.register(CentraProvider())
 camera_providers.register(GenericIPCameraProvider())
+camera_providers.register(OrionProvider())
+camera_providers.register(A42Provider())
 camera_catalog = CameraCatalogService(storage, camera_providers)
 
 class JobStore:

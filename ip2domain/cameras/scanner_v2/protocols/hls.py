@@ -12,6 +12,30 @@ logger = logging.getLogger(__name__)
 _TIMEOUT = 3.0
 
 _SNAPSHOT_PATHS = [
+    # Beward / intercom panels
+    "/cgi-bin/images_cgi?channel=0",
+    "/cgi-bin/images_cgi?channel=1",
+    # Hikvision / HiWatch ISAPI
+    "/ISAPI/Streaming/channels/101/picture",
+    "/ISAPI/Streaming/channels/1/picture",
+    # Axis
+    "/axis-cgi/jpg/image.cgi",
+    "/axis-cgi/jpg/image.cgi?camera=1",
+    # 2N Helios / IP Intercoms
+    "/api/camera/snapshot?width=640&height=480",
+    "/api/camera/snapshot",
+    # Grandstream GDS3710 / GDS3712
+    "/jpeg/view.html",
+    "/snapshot/view.jpg",
+    # Hanwha / Samsung
+    "/stw-cgi/video.cgi?msubmenu=snapshot&action=view&Profile=1&Channel=0",
+    "/stw-cgi/video.cgi?msubmenu=snapshot&action=view",
+    # Milesight
+    "/cgi-bin/operator/snapshot.cgi?mainstream",
+    "/cgi-bin/operator/snapshot.cgi?substream",
+    # Uniview LAPI
+    "/LAPI/V1.0/Channels/0/Media/Video/Source/0/Snapshot",
+    # Generic & common brand snapshots
     "/snap.jpg?JpegCam=0",
     "/snap.jpg?JpegSize=XL",
     "/snap.jpg",
@@ -40,9 +64,19 @@ _SNAPSHOT_PATHS = [
 ]
 
 _MJPEG_PATHS = [
-    "/video.mjpg", "/videostream.cgi",
-    "/cgi-bin/mjpg/video.cgi", "/cgi-bin/videostream.cgi",
-    "/axis-cgi/mjpg/video.cgi", "/stream/video.mjpeg",
+    "/axis-cgi/mjpg/video.cgi",
+    "/cgi-bin/mjpg/video.cgi",
+    "/ISAPI/Streaming/channels/101/httpPreview",
+    "/ISAPI/Streaming/channels/1/httpPreview",
+    "/api/camera/snapshot?width=640&height=480&fps=15",
+    "/jpeg/stream=0",
+    "/jpeg/mjpeg.html",
+    "/stw-cgi/video.cgi?msubmenu=stream&action=view&Profile=1&CodecType=MJPEG",
+    "/video/mjpg.cgi",
+    "/video.mjpg",
+    "/videostream.cgi",
+    "/cgi-bin/videostream.cgi",
+    "/stream/video.mjpeg",
     "/mjpeg/video.mjpeg",
 ]
 

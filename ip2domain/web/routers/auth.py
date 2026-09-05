@@ -33,10 +33,11 @@ def _require_admin(request: Request) -> dict:
     return user
 
 @router.get("/login", response_class=HTMLResponse)
-async def login_page(request: Request):
-    user = getattr(request.state, "user", None)
-    if user:
-        return HTMLResponse('<script>window.location.href="/";</script>')
+async def login_page(request: Request = None):
+    if request is not None and hasattr(request, "state"):
+        user = getattr(request.state, "user", None)
+        if user:
+            return HTMLResponse('<script>window.location.href="/";</script>')
     template = _TEMPLATE_DIR / "login.html"
     return HTMLResponse(template.read_text(encoding="utf-8"))
 

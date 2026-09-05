@@ -78,7 +78,10 @@ async def start_remote_desktop_scan(req: RemoteDesktopScanRequest, background_ta
             raise ValueError("Список IP-адресов пуст")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    if not private_targets_allowed():
+    import sys
+    app_mod = sys.modules.get("ip2domain.web.app")
+    _private_allowed = getattr(app_mod, "private_targets_allowed", private_targets_allowed)
+    if not _private_allowed():
         blocked = next((target for target in targets if not ipaddress.ip_address(target).is_global), None)
         if blocked:
             raise HTTPException(status_code=400, detail=f"Приватный или служебный IP запрещён: {blocked}")

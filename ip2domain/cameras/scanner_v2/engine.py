@@ -55,8 +55,11 @@ def _parse_targets_streaming(target_str: str, max_ips: int = _MAX_IPS_V2) -> Lis
         line = line.strip()
         if not line or line.startswith("#"):
             continue
-        # Strip port or whitespace if present
-        clean = line.split()[0].split(",")[0].strip()
+        # Strip comments and handle ranges with spaces like '10.0.0.1 - 10.0.0.3'
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        clean = line.replace(" ", "").split(",")[0].strip()
         if not clean:
             continue
         try:

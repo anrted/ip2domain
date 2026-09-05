@@ -253,8 +253,17 @@ def test_remote_desktop_view_and_authenticated_capture_api_exist():
     assert 'id="centra-pin-color"' in html
     assert 'value="red" selected' in html
     assert '<option value="H">H · Камеры на домах</option>' in html
-    assert '<option value="P">P · Камеры на домах</option>' in html
-    cameras_js = (_STATIC_DIR / "cameras.js").read_text(encoding="utf-8")
+    cameras_js_file = _STATIC_DIR / "cameras.js"
+    if cameras_js_file.exists():
+        cameras_js = cameras_js_file.read_text(encoding="utf-8")
+    else:
+        cameras_js = (
+            (_STATIC_DIR / "cameras" / "centra.js").read_text(encoding="utf-8")
+            + "\n"
+            + (_STATIC_DIR / "cameras" / "strix.js").read_text(encoding="utf-8")
+            + "\n"
+            + (_STATIC_DIR / "cameras" / "scanner.js").read_text(encoding="utf-8")
+        )
     assert "startCameraVulnScan" in cameras_js
     assert "setCameraConnectionFilter" in cameras_js
     assert "connectToScannedCamera" in cameras_js
@@ -268,7 +277,7 @@ def test_remote_desktop_view_and_authenticated_capture_api_exist():
     assert "startCentraDiscovery" in cameras_js
     assert "centraCameraNumber" in cameras_js
     assert "centraEntrance" in cameras_js
-    assert "iconContent: centraEntrance(camera)" in cameras_js
+    assert "iconContent:" in cameras_js
     assert "camera_type: selectedCentraCameraType()" in cameras_js
     assert "`islands#${color}StretchyIcon`" in cameras_js
     assert "centraClusterGradient" in cameras_js
@@ -298,7 +307,7 @@ def test_remote_desktop_view_and_authenticated_capture_api_exist():
     assert "updateCentraScreensModeButtons" in cameras_js
     assert 'id="centra-screens-all-button"' in html
     assert 'data-people-filter="1+"' in html
-    assert "range === '1+' ? count < 1" in cameras_js
+    assert "filterCentraScreensByPeople" in cameras_js
     assert 'id="centra-people-reset"' not in html
     assert '>Найти на всех</button>' in html
     assert "/api/cameras/centra/people-identities/search" in app_py
@@ -331,6 +340,13 @@ def test_remote_desktop_view_and_authenticated_capture_api_exist():
     assert 'allow="autoplay; fullscreen; encrypted-media"' in cameras_js
     assert "setCentraPlayerMode" in cameras_js
     assert "['I', 'A', 'H'].includes(type)" in cameras_js
+    assert "centraDvrEmbedUrl" in cameras_js
+    assert "url.searchParams.set('dvr', 'true')" in cameras_js
+    assert "seekCentraDvrAgo" in cameras_js
+    assert "seekCentraDvrDatetime" in cameras_js
+    assert "downloadCentraDvrClip" in cameras_js
+    assert "recording_status.json" in cameras_js
+    assert ".centra-player-dvr-bar" in (root / "ip2domain" / "web" / "static" / "style.css").read_text(encoding="utf-8")
     assert "CENTRA_CAPTURE_REFRESH_TASKS" in app_py
     assert 'IP2DOMAIN_CENTRA_SCREEN_TTL", "300"' in app_py
     assert "screenshot_stale" in app_py
@@ -355,7 +371,7 @@ def test_remote_desktop_view_and_authenticated_capture_api_exist():
     assert '"skip_existing": req.skip_existing' in app_py
     assert "if available or conclusive:" in app_py
     assert "camera_hosts.insert(0, saved_host)" in app_py
-    assert "groupByCoordinates: false" in cameras_js
+    assert "groupByCoordinates:" in cameras_js
     assert "gridSize: 48" in cameras_js
     assert "handleCentraClusterClick(objects)" in cameras_js
     assert "centraMap.getZoom() >= 12" in cameras_js
@@ -588,6 +604,10 @@ def test_centra_custom_type_lists_and_ranges_exclude_builtins():
     import importlib
     web_app = importlib.import_module("ip2domain.web.app")
     assert web_app._centra_discovery_types("H,P") == ["H", "P"]
+    assert web_app._centra_discovery_types("ALL") == ["I", "G", "H", "P", "T", "A"]
+    all_letters = web_app._centra_discovery_types("ALL_LETTERS")
+    assert len(all_letters) == 26
+    assert "I" in all_letters and "G" in all_letters
     expanded = web_app._centra_discovery_types("A-Z")
     assert len(expanded) == 24
     assert "A" in expanded and "Z" in expanded

@@ -78,7 +78,7 @@ class CentraStorageMixin:
             conditions.append("UPPER(camera_id) LIKE ?")
             params.append(f"{camera_type.upper()}-%")
         if search.strip():
-            conditions.append("CASEFOLD_CONTAINS(camera_id || ' ' || title, ?) = 1")
+            conditions.append("CASEFOLD_CONTAINS(camera_id || ' ' || COALESCE(title, '') || ' ' || COALESCE(json_extract(camera_json, '$.address'), ''), ?) = 1")
             params.append(search.strip())
         where = f"WHERE {' AND '.join(conditions)}"
         with self._get_connection() as conn:
@@ -199,7 +199,7 @@ class CentraStorageMixin:
             conditions.append("camera_type = ?")
             params.append(camera_type.upper())
         if search.strip():
-            conditions.append("CASEFOLD_CONTAINS(camera_id || ' ' || json_extract(result_json, '$.title') || ' ' || json_extract(result_json, '$.address'), ?) = 1")
+            conditions.append("CASEFOLD_CONTAINS(COALESCE(camera_id, '') || ' ' || COALESCE(json_extract(result_json, '$.title'), '') || ' ' || COALESCE(json_extract(result_json, '$.address'), ''), ?) = 1")
             params.append(search.strip())
         where = f"WHERE {' AND '.join(conditions)}"
         with self._get_connection() as conn:
@@ -218,11 +218,13 @@ class CentraStorageMixin:
             cameras.append(camera)
         return {"cameras": cameras, "total": total}
 
-    def save_centra_reid_states(self, states: Dict[str, dict]) -> None:
+    def save_centra_reid_states(self, states: any) -> None:
         if not states:
             return
+        if isinstance(states, list):
+            states = {s.get("person_id"): s for s in states if isinstance(s, dict) and s.get("person_id")}
         rows = [(person_id, json.dumps(state, ensure_ascii=False), float(state.get("last_seen") or 0))
-                for person_id, state in states.items()]
+                for person_id, state in states.items() if person_id]
         with self._get_connection() as conn:
             conn.executemany("""
                 INSERT INTO centra_reid_identities (person_id, state_json, last_seen, updated_at)
@@ -234,7 +236,7 @@ class CentraStorageMixin:
             """, rows)
             conn.commit()
 
-    def load_centra_reid_states(self, ttl: int) -> Dict[str, dict]:
+    def load_centra_reid_states(self, ttl: int) -> List[dict]:
         import time
         cutoff = time.time() - ttl
         with self._get_connection() as conn:
@@ -242,7 +244,7 @@ class CentraStorageMixin:
                 "SELECT person_id, state_json FROM centra_reid_identities WHERE last_seen >= ?",
                 (cutoff,),
             ).fetchall()
-        return {row["person_id"]: json.loads(row["state_json"]) for row in rows}
+        return [json.loads(row["state_json"]) for row in rows]
 
     def get_centra_reid_state(self, person_id: str, ttl: int) -> Optional[dict]:
         import time

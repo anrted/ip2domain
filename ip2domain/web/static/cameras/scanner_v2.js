@@ -1,14 +1,14 @@
-/* Camera Scanner v2 — Frontend Client
-   Handles: v1/v2 switcher, scan form, SSE-style polling, results rendering,
-   stream selection & preview capture (supports 300+ streams per camera)
-*/
-
+/* Camera Scanner v2 Client (Auto-bundled from scanner_v2/) */
 'use strict';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// State
-// ─────────────────────────────────────────────────────────────────────────────
-const V2State = {
+
+// ════════════════════════════════════════════════════════════════
+// MODULE: scanner_v2/targets.js
+// ════════════════════════════════════════════════════════════════
+
+// ── Camera Scanner v2: Targets, CIDR Math, Tools & Credentials ─────────
+
+const V2State = window.V2State || {
     currentJobId: null,
     isStarting: false,
     pollTimer: null,
@@ -35,11 +35,8 @@ const V2State = {
         { user: 'service', password: 'service' },
     ],
 };
+window.V2State = V2State;
 
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Target counting & CIDR/Range calculation (Pure JS)
-// ─────────────────────────────────────────────────────────────────────────────
 const MAX_V2_TARGETS = 5000000;
 
 function _ipToInt(ip) {
@@ -169,11 +166,6 @@ async function loadAsnPrefixesForV2() {
 }
 window.loadAsnPrefixesForV2 = loadAsnPrefixesForV2;
 
-
-
-// ─────────────────────────────────────────────────────────────────────────────
-// v1 / v2 switcher
-// ─────────────────────────────────────────────────────────────────────────────
 function switchCameraVersion(version) {
     const v1Tabs   = document.querySelectorAll('.camera-tab');
     const v1Panels = document.querySelectorAll('.camera-tab-panel');
@@ -184,35 +176,36 @@ function switchCameraVersion(version) {
     if (version === 'v2') {
         v1Tabs.forEach(t => t.style.display = 'none');
         v1Panels.forEach(p => { p.style.display = 'none'; p.classList.remove('active'); });
-        v2Panel.classList.add('v2-active');
-        btn1.classList.remove('active');
-        btn2.classList.add('active', 'active-v2');
+        if (v2Panel) v2Panel.classList.add('v2-active');
+        if (btn1) btn1.classList.remove('active');
+        if (btn2) btn2.classList.add('active', 'active-v2');
         localStorage.setItem('ip2domain_cam_version', 'v2');
         v2OnActivate();
     } else {
         v1Tabs.forEach(t => t.style.display = '');
-        v2Panel.classList.remove('v2-active');
-        btn1.classList.add('active');
-        btn2.classList.remove('active', 'active-v2');
+        if (v2Panel) v2Panel.classList.remove('v2-active');
+        if (btn1) btn1.classList.add('active');
+        if (btn2) btn2.classList.remove('active', 'active-v2');
         localStorage.setItem('ip2domain_cam_version', 'v1');
         const activeTab = document.querySelector('.camera-tab.active');
         if (activeTab) {
             const tabId = activeTab.id.replace('camera-', '').replace('-tab', '');
-            switchCameraTab(tabId);
+            if (window.switchCameraTab) switchCameraTab(tabId);
         } else {
-            switchCameraTab('go2rtc');
+            if (window.switchCameraTab) switchCameraTab('go2rtc');
         }
     }
 }
+window.switchCameraVersion = switchCameraVersion;
 
 function v2OnActivate() {
     v2LoadTools();
     v2RenderCredentials();
-    v2LoadStoredResults();
+    if (window.v2LoadStoredResults) v2LoadStoredResults();
     v2CheckActiveScan();
     v2CalculateTargetsCount();
 }
-
+window.v2OnActivate = v2OnActivate;
 
 async function v2CheckActiveScan() {
     let savedJobId = localStorage.getItem('ip2domain_v2_active_job');
@@ -229,44 +222,41 @@ async function v2CheckActiveScan() {
         } catch (e) {}
     }
     if (!savedJobId) {
-        v2SetScanState('idle');
-        v2LoadStoredResults();
+        if (window.v2SetScanState) v2SetScanState('idle');
+        if (window.v2LoadStoredResults) v2LoadStoredResults();
         return;
     }
     try {
         const resp = await fetch(`/api/v2/scan/${savedJobId}`);
         if (!resp.ok) {
             localStorage.removeItem('ip2domain_v2_active_job');
-            v2SetScanState('idle');
-            v2LoadStoredResults();
+            if (window.v2SetScanState) v2SetScanState('idle');
+            if (window.v2LoadStoredResults) v2LoadStoredResults();
             return;
         }
         const job = await resp.json();
         if (['queued', 'running'].includes(job.status)) {
             V2State.currentJobId = savedJobId;
-            v2ShowProgress();
-            v2SetScanState('running');
-            v2UpdateProgress(job);
-            v2MergeResults(job.results || []);
-            v2StartPolling();
+            if (window.v2ShowProgress) v2ShowProgress();
+            if (window.v2SetScanState) v2SetScanState('running');
+            if (window.v2UpdateProgress) v2UpdateProgress(job);
+            if (window.v2MergeResults) v2MergeResults(job.results || []);
+            if (window.v2StartPolling) v2StartPolling();
         } else {
             localStorage.removeItem('ip2domain_v2_active_job');
-            v2SetScanState('idle');
-            if (job.results && job.results.length) {
+            if (window.v2SetScanState) v2SetScanState('idle');
+            if (job.results && job.results.length && window.v2MergeResults) {
                 v2MergeResults(job.results);
             }
-            v2LoadStoredResults();
+            if (window.v2LoadStoredResults) v2LoadStoredResults();
         }
     } catch (e) {
-        v2SetScanState('idle');
-        v2LoadStoredResults();
+        if (window.v2SetScanState) v2SetScanState('idle');
+        if (window.v2LoadStoredResults) v2LoadStoredResults();
     }
 }
+window.v2CheckActiveScan = v2CheckActiveScan;
 
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Tools status
-// ─────────────────────────────────────────────────────────────────────────────
 async function v2LoadTools() {
     const container = document.getElementById('v2-tools-status');
     if (!container) return;
@@ -296,6 +286,7 @@ async function v2LoadTools() {
         container.innerHTML = '<span class="v2-tool-badge warn">Ошибка проверки</span>';
     }
 }
+window.v2LoadTools = v2LoadTools;
 
 function v2ToolBadge(name, ok, cls) {
     const c = cls || (ok ? 'ok' : 'missing');
@@ -303,9 +294,6 @@ function v2ToolBadge(name, ok, cls) {
     return `<span class="v2-tool-badge ${c}">${icon} ${name}</span>`;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Credentials management
-// ─────────────────────────────────────────────────────────────────────────────
 function v2RenderCredentials() {
     const list = document.getElementById('v2-creds-list');
     if (!list) return;
@@ -319,11 +307,13 @@ function v2RenderCredentials() {
         </div>
     `).join('');
 }
+window.v2RenderCredentials = v2RenderCredentials;
 
 function v2RemoveCred(idx) {
     V2State.credentials.splice(idx, 1);
     v2RenderCredentials();
 }
+window.v2RemoveCred = v2RemoveCred;
 
 function v2AddCred() {
     V2State.credentials.push({ user: '', password: '' });
@@ -331,23 +321,26 @@ function v2AddCred() {
     const inputs = document.querySelectorAll('#v2-creds-list .v2-cred-row input[type="text"]');
     if (inputs.length) inputs[inputs.length - 1].focus();
 }
+window.v2AddCred = v2AddCred;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Rate slider
-// ─────────────────────────────────────────────────────────────────────────────
 function v2OnRateChange(val) {
     const display = document.getElementById('v2-rate-display');
     if (display) display.textContent = Number(val).toLocaleString() + ' pps';
 }
+window.v2OnRateChange = v2OnRateChange;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Start scan
-// ─────────────────────────────────────────────────────────────────────────────
+
+// ════════════════════════════════════════════════════════════════
+// MODULE: scanner_v2/scan.js
+// ════════════════════════════════════════════════════════════════
+
+// ── Camera Scanner v2: Scan Lifecycle, Polling, Stages & Logs ──────────
+
 async function v2StartScan(event) {
     if (event) event.preventDefault();
 
     const startBtn = document.getElementById('v2-start-btn');
-    if (V2State.isStarting || V2State.currentJobId || (startBtn && startBtn.disabled)) {
+    if (window.V2State.isStarting || window.V2State.currentJobId || (startBtn && startBtn.disabled)) {
         alert('Сканирование уже выполняется. Дождитесь его завершения или нажмите «Отмена».');
         return;
     }
@@ -359,7 +352,7 @@ async function v2StartScan(event) {
     }
 
     // Immediately lock state & UI to prevent double click
-    V2State.isStarting = true;
+    window.V2State.isStarting = true;
     v2SetScanState('running');
 
     const engine = document.querySelector('input[name="v2-engine"]:checked')?.value || 'auto';
@@ -378,7 +371,7 @@ async function v2StartScan(event) {
         port_timeout: 1.2,
         stage2_concurrency: 20,
         protocols,
-        credentials: V2State.credentials.filter(c => c.user),
+        credentials: window.V2State.credentials.filter(c => c.user),
         capture_frames: captureFrames,
         local_discovery: localDiscovery,
     };
@@ -391,48 +384,49 @@ async function v2StartScan(event) {
         });
         const data = await resp.json();
         if (!resp.ok) {
-            V2State.isStarting = false;
+            window.V2State.isStarting = false;
             v2SetScanState('idle');
             alert('Ошибка запуска: ' + (data.detail || resp.status));
             return;
         }
-        V2State.currentJobId = data.job_id;
+        window.V2State.currentJobId = data.job_id;
         localStorage.setItem('ip2domain_v2_active_job', data.job_id);
-        V2State.results = [];
+        window.V2State.results = [];
 
         v2ShowProgress();
         v2SetScanState('running');
         v2StartPolling();
     } catch (err) {
-        V2State.isStarting = false;
+        window.V2State.isStarting = false;
         v2SetScanState('idle');
         alert('Ошибка сети: ' + err.message);
     } finally {
-        V2State.isStarting = false;
+        window.V2State.isStarting = false;
     }
 }
+window.v2StartScan = v2StartScan;
 
 function v2SetScanState(state) {
-
     const startBtn = document.getElementById('v2-start-btn');
     const cancelBtn = document.getElementById('v2-cancel-btn');
     const spinner = document.getElementById('v2-start-spinner');
     if (state === 'running') {
-        startBtn.disabled = true;
-        cancelBtn.classList.add('visible');
+        if (startBtn) startBtn.disabled = true;
+        if (cancelBtn) cancelBtn.classList.add('visible');
         if (spinner) spinner.style.display = 'inline-block';
     } else {
-        startBtn.disabled = false;
-        cancelBtn.classList.remove('visible');
+        if (startBtn) startBtn.disabled = false;
+        if (cancelBtn) cancelBtn.classList.remove('visible');
         if (spinner) spinner.style.display = 'none';
     }
 }
+window.v2SetScanState = v2SetScanState;
 
 async function v2CancelScan() {
-    if (!V2State.currentJobId) return;
-    const jid = V2State.currentJobId;
+    if (!window.V2State.currentJobId) return;
+    const jid = window.V2State.currentJobId;
     localStorage.removeItem('ip2domain_v2_active_job');
-    V2State.currentJobId = null;
+    window.V2State.currentJobId = null;
     v2StopPolling();
     v2SetScanState('idle');
     try {
@@ -440,31 +434,31 @@ async function v2CancelScan() {
         v2AddLog('Сканирование отменено пользователем.', 'warn');
     } catch (e) {}
 }
+window.v2CancelScan = v2CancelScan;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Polling
-// ─────────────────────────────────────────────────────────────────────────────
 function v2StartPolling() {
     v2StopPolling();
-    V2State.pollTimer = setInterval(v2Poll, V2State.pollInterval);
+    window.V2State.pollTimer = setInterval(v2Poll, window.V2State.pollInterval);
     v2Poll();
 }
+window.v2StartPolling = v2StartPolling;
 
 function v2StopPolling() {
-    if (V2State.pollTimer) {
-        clearInterval(V2State.pollTimer);
-        V2State.pollTimer = null;
+    if (window.V2State.pollTimer) {
+        clearInterval(window.V2State.pollTimer);
+        window.V2State.pollTimer = null;
     }
 }
+window.v2StopPolling = v2StopPolling;
 
 async function v2Poll() {
-    if (!V2State.currentJobId) return;
+    if (!window.V2State.currentJobId) return;
     try {
-        const resp = await fetch(`/api/v2/scan/${V2State.currentJobId}`);
+        const resp = await fetch(`/api/v2/scan/${window.V2State.currentJobId}`);
         if (!resp.ok) {
             if (resp.status === 404) {
                 localStorage.removeItem('ip2domain_v2_active_job');
-                V2State.currentJobId = null;
+                window.V2State.currentJobId = null;
                 v2StopPolling();
                 v2SetScanState('idle');
             }
@@ -472,11 +466,11 @@ async function v2Poll() {
         }
         const job = await resp.json();
         v2UpdateProgress(job);
-        v2MergeResults(job.results || []);
+        if (window.v2MergeResults) v2MergeResults(job.results || []);
 
         if (['completed', 'cancelled', 'error'].includes(job.status)) {
             localStorage.removeItem('ip2domain_v2_active_job');
-            V2State.currentJobId = null;
+            window.V2State.currentJobId = null;
             v2StopPolling();
             v2SetScanState('idle');
             if (job.status === 'completed') {
@@ -484,28 +478,33 @@ async function v2Poll() {
             } else if (job.status === 'error') {
                 v2AddLog(`✗ Ошибка: ${job.error}`, 'err');
             }
-            v2LoadStoredResults();
+            if (window.v2LoadStoredResults) v2LoadStoredResults();
         }
     } catch (e) {}
 }
+window.v2Poll = v2Poll;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Progress rendering
-// ─────────────────────────────────────────────────────────────────────────────
 function v2ShowProgress() {
-    document.getElementById('v2-progress-card').classList.add('visible');
-    document.getElementById('v2-results-card').classList.add('visible');
-    document.getElementById('v2-log-panel').innerHTML = '';
+    const pCard = document.getElementById('v2-progress-card');
+    const rCard = document.getElementById('v2-results-card');
+    const lPanel = document.getElementById('v2-log-panel');
+    if (pCard) pCard.classList.add('visible');
+    if (rCard) rCard.classList.add('visible');
+    if (lPanel) lPanel.innerHTML = '';
     v2ResetStages();
 }
+window.v2ShowProgress = v2ShowProgress;
 
 function v2ResetStages() {
     ['discovery', 'port_sweep', 'fingerprint', 'capture'].forEach(s => {
         v2SetStageStatus(s, 'pending');
     });
-    document.getElementById('v2-progress-fill').style.width = '0%';
-    document.getElementById('v2-progress-pct').textContent = '0%';
+    const fill = document.getElementById('v2-progress-fill');
+    const pct = document.getElementById('v2-progress-pct');
+    if (fill) fill.style.width = '0%';
+    if (pct) pct.textContent = '0%';
 }
+window.v2ResetStages = v2ResetStages;
 
 const _STAGE_IDS = {
     discovery: 'v2-stage-discovery',
@@ -527,6 +526,7 @@ function v2SetStageStatus(stageName, status, value) {
     if (icon) icon.textContent = _STATUS_ICONS[status] || '';
     if (val && value !== undefined) val.textContent = value;
 }
+window.v2SetStageStatus = v2SetStageStatus;
 
 function v2UpdateProgress(job) {
     const stages = job.stages || {};
@@ -541,8 +541,10 @@ function v2UpdateProgress(job) {
         stages.capture?.completed > 0 ? `${stages.capture.completed} кадров` : '—');
 
     const pct = job.progress_pct || 0;
-    document.getElementById('v2-progress-fill').style.width = pct + '%';
-    document.getElementById('v2-progress-pct').textContent = pct + '%';
+    const fill = document.getElementById('v2-progress-fill');
+    const pctEl = document.getElementById('v2-progress-pct');
+    if (fill) fill.style.width = pct + '%';
+    if (pctEl) pctEl.textContent = pct + '%';
 
     const stageText = document.getElementById('v2-progress-stage-text');
     if (stageText) stageText.textContent = job.stage || '';
@@ -566,6 +568,7 @@ function v2UpdateProgress(job) {
         logPanel.scrollTop = logPanel.scrollHeight;
     }
 }
+window.v2UpdateProgress = v2UpdateProgress;
 
 function v2AddLog(msg, cls) {
     const logPanel = document.getElementById('v2-log-panel');
@@ -576,31 +579,36 @@ function v2AddLog(msg, cls) {
     logPanel.appendChild(div);
     logPanel.scrollTop = logPanel.scrollHeight;
 }
+window.v2AddLog = v2AddLog;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Results
-// ─────────────────────────────────────────────────────────────────────────────
+
+// ════════════════════════════════════════════════════════════════
+// MODULE: scanner_v2/results.js
+// ════════════════════════════════════════════════════════════════
+
+// ── Camera Scanner v2: Results, Cards, Badges & Frame Previews ─────────
+
 function v2MergeResults(incoming) {
     if (!incoming || !incoming.length) return;
     let changed = false;
-    const existingMap = new Map(V2State.results.map((r, i) => [r.ip, i]));
+    const existingMap = new Map(window.V2State.results.map((r, i) => [r.ip, i]));
     for (const cam of incoming) {
         if (!existingMap.has(cam.ip)) {
-            V2State.results.push(cam);
-            existingMap.set(cam.ip, V2State.results.length - 1);
+            window.V2State.results.push(cam);
+            existingMap.set(cam.ip, window.V2State.results.length - 1);
             changed = true;
         } else {
             const idx = existingMap.get(cam.ip);
-            const oldCam = V2State.results[idx];
+            const oldCam = window.V2State.results[idx];
             const oldStreamsJson = JSON.stringify(oldCam.streams || []);
             const newStreamsJson = JSON.stringify(cam.streams || []);
             if (oldStreamsJson !== newStreamsJson || oldCam.brand !== cam.brand || oldCam.model !== cam.model) {
-                if (V2State.previewCache[cam.ip]) {
+                if (window.V2State.previewCache[cam.ip]) {
                     for (const s of (cam.streams || [])) {
-                        if (!s.screenshot) s.screenshot = V2State.previewCache[cam.ip];
+                        if (!s.screenshot) s.screenshot = window.V2State.previewCache[cam.ip];
                     }
                 }
-                V2State.results[idx] = cam;
+                window.V2State.results[idx] = cam;
                 changed = true;
             }
         }
@@ -610,18 +618,19 @@ function v2MergeResults(incoming) {
         v2RenderResults();
     }
 }
-
+window.v2MergeResults = v2MergeResults;
 
 function v2UpdateResultsCount(filteredCount) {
     const el = document.getElementById('v2-results-count');
     if (!el) return;
-    const total = V2State.results.length;
+    const total = (window.V2State.results || []).length;
     if (filteredCount !== undefined && filteredCount !== total) {
         el.textContent = `${filteredCount} из ${total} камер`;
     } else {
         el.textContent = `${total} камер`;
     }
 }
+window.v2UpdateResultsCount = v2UpdateResultsCount;
 
 async function v2LoadStoredResults() {
     try {
@@ -629,7 +638,7 @@ async function v2LoadStoredResults() {
         if (!resp.ok) return;
         const data = await resp.json();
         const results = data.results || [];
-        V2State.results = results;
+        window.V2State.results = results;
         v2UpdateResultsCount();
         v2RenderResults();
         const card = document.getElementById('v2-results-card');
@@ -640,7 +649,7 @@ async function v2LoadStoredResults() {
         console.error('[v2] Error loading stored results:', e);
     }
 }
-
+window.v2LoadStoredResults = v2LoadStoredResults;
 
 function _cameraScore(cam) {
     let score = 0;
@@ -664,12 +673,12 @@ function v2UpdateGeoDropdown() {
     const select = document.getElementById('v2-filter-geo');
     if (!select) return;
 
-    const curVal = V2State.filterGeo || 'all';
+    const curVal = window.V2State.filterGeo || 'all';
     const citiesMap = new Map();
     const regionsMap = new Map();
     let ruCount = 0, byCount = 0, noGeoCount = 0;
 
-    (V2State.results || []).forEach(cam => {
+    (window.V2State.results || []).forEach(cam => {
         if (cam.city) {
             citiesMap.set(cam.city, (citiesMap.get(cam.city) || 0) + 1);
         }
@@ -718,34 +727,35 @@ function v2UpdateGeoDropdown() {
         select.value = 'all';
     }
 }
+window.v2UpdateGeoDropdown = v2UpdateGeoDropdown;
 
 function v2RenderResults() {
     const grid = document.getElementById('v2-camera-grid');
     if (!grid) return;
 
-    let filtered = V2State.results;
-    if (V2State.filterBrand !== 'all') {
-        filtered = filtered.filter(c => (c.brand || '').toLowerCase().includes(V2State.filterBrand.toLowerCase()));
+    let filtered = window.V2State.results;
+    if (window.V2State.filterBrand !== 'all') {
+        filtered = filtered.filter(c => (c.brand || '').toLowerCase().includes(window.V2State.filterBrand.toLowerCase()));
     }
-    if (V2State.filterProtocol !== 'all') {
-        filtered = filtered.filter(c => (c.protocols || []).includes(V2State.filterProtocol));
+    if (window.V2State.filterProtocol !== 'all') {
+        filtered = filtered.filter(c => (c.protocols || []).includes(window.V2State.filterProtocol));
     }
-    if (V2State.filterGeo && V2State.filterGeo !== 'all') {
-        if (V2State.filterGeo === '__no_geo__') {
+    if (window.V2State.filterGeo && window.V2State.filterGeo !== 'all') {
+        if (window.V2State.filterGeo === '__no_geo__') {
             filtered = filtered.filter(c => !c.city && !c.region);
-        } else if (V2State.filterGeo.startsWith('country:')) {
-            const cCode = V2State.filterGeo.replace('country:', '').toUpperCase();
+        } else if (window.V2State.filterGeo.startsWith('country:')) {
+            const cCode = window.V2State.filterGeo.replace('country:', '').toUpperCase();
             filtered = filtered.filter(c => (c.country_code || '').toUpperCase() === cCode);
-        } else if (V2State.filterGeo.startsWith('region:')) {
-            const reg = V2State.filterGeo.replace('region:', '').toLowerCase();
+        } else if (window.V2State.filterGeo.startsWith('region:')) {
+            const reg = window.V2State.filterGeo.replace('region:', '').toLowerCase();
             filtered = filtered.filter(c => (c.region || '').toLowerCase() === reg);
-        } else if (V2State.filterGeo.startsWith('city:')) {
-            const cit = V2State.filterGeo.replace('city:', '').toLowerCase();
+        } else if (window.V2State.filterGeo.startsWith('city:')) {
+            const cit = window.V2State.filterGeo.replace('city:', '').toLowerCase();
             filtered = filtered.filter(c => (c.city || '').toLowerCase() === cit);
         }
     }
-    if (V2State.geoSearch && V2State.geoSearch.trim()) {
-        const q = V2State.geoSearch.trim().toLowerCase();
+    if (window.V2State.geoSearch && window.V2State.geoSearch.trim()) {
+        const q = window.V2State.geoSearch.trim().toLowerCase();
         filtered = filtered.filter(c =>
             (c.city || '').toLowerCase().includes(q) ||
             (c.region || '').toLowerCase().includes(q) ||
@@ -761,7 +771,7 @@ function v2RenderResults() {
         grid.innerHTML = `<div class="v2-empty-state" style="grid-column:1/-1">
             <div class="v2-empty-icon">📷</div>
             <p>Камеры не найдены по выбранным фильтрам.</p>
-            ${V2State.filterGeo !== 'all' || V2State.geoSearch ? `<button type="button" class="v2-btn-small" onclick="v2ClearGeoFilter()" style="margin-top:0.5rem">Сбросить гео-фильтр</button>` : ''}
+            ${window.V2State.filterGeo !== 'all' || window.V2State.geoSearch ? `<button type="button" class="v2-btn-small" onclick="v2ClearGeoFilter()" style="margin-top:0.5rem">Сбросить гео-фильтр</button>` : ''}
         </div>`;
         return;
     }
@@ -772,6 +782,7 @@ function v2RenderResults() {
     grid.innerHTML = filtered.map(cam => v2RenderCameraCard(cam)).join('');
     initV2LazyLoading();
 }
+window.v2RenderResults = v2RenderResults;
 
 let v2ImageObserver = null;
 function initV2LazyLoading() {
@@ -818,9 +829,6 @@ function initV2LazyLoading() {
 }
 window.initV2LazyLoading = initV2LazyLoading;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Camera Card (Handles 300+ streams gracefully & on-demand previews)
-// ─────────────────────────────────────────────────────────────────────────────
 function _streamScore(s) {
     let score = 0;
     if (s.screenshot && String(s.screenshot).trim().length > 0) score += 1000;
@@ -840,25 +848,23 @@ function v2RenderCameraCard(cam) {
 
     // Determine current selected stream URL for this camera (always prioritize stream with real screenshot)
     const bestStream = streams[0];
-    const curSelected = V2State.selectedStreams[cam.ip];
+    const curSelected = window.V2State.selectedStreams[cam.ip];
     const curStreamObj = streams.find(s => s.url === curSelected);
 
     if (!curSelected || (!curStreamObj?.screenshot && bestStream?.screenshot)) {
-        V2State.selectedStreams[cam.ip] = bestStream?.url || '';
+        window.V2State.selectedStreams[cam.ip] = bestStream?.url || '';
     }
-    const currentStreamUrl = V2State.selectedStreams[cam.ip];
+    const currentStreamUrl = window.V2State.selectedStreams[cam.ip];
     const currentStreamObj = streams.find(s => s.url === currentStreamUrl) || streams[0];
 
     // Find screenshot: first check selected stream, then any stream that has a screenshot, or cached preview
-    const cachedBlobUrl = V2State.previewCache[cam.ip] || '';
+    const cachedBlobUrl = window.V2State.previewCache[cam.ip] || '';
     const streamWithScreen = (currentStreamObj?.screenshot ? currentStreamObj : null)
         || streams.find(s => s.screenshot && s.screenshot.length > 0);
     const screenshotPath = streamWithScreen?.screenshot || cachedBlobUrl;
 
     // Preview area HTML
     let previewHtml = '';
-
-
     let imgSrc = '';
     if (screenshotPath) {
         if (screenshotPath.startsWith('blob:') || screenshotPath.startsWith('/api/') || screenshotPath.startsWith('http')) {
@@ -867,7 +873,6 @@ function v2RenderCameraCard(cam) {
             imgSrc = `/api/v2/capture?path=${encodeURIComponent(screenshotPath)}`;
         }
     }
-
 
     if (imgSrc) {
         previewHtml = `
@@ -887,7 +892,6 @@ function v2RenderCameraCard(cam) {
             </div>
         `;
     } else {
-
         previewHtml = `
             <div class="v2-preview-wrapper" id="v2-preview-box-${safeIp}">
                 <div class="v2-camera-screenshot-placeholder">
@@ -943,7 +947,6 @@ function v2RenderCameraCard(cam) {
         `;
     }
 
-
     const inGo2rtc = cam.in_go2rtc;
     const goBtn = `<button class="v2-camera-btn go2rtc-btn ${inGo2rtc ? 'added' : ''}"
         onclick="v2AddToGo2rtc('${_esc(cam.ip)}')"
@@ -981,7 +984,7 @@ function v2RenderCameraCard(cam) {
         </div>
     </div>`;
 }
-
+window.v2RenderCameraCard = v2RenderCameraCard;
 
 function _formatShortStreamUrl(url) {
     if (!url) return '';
@@ -1020,19 +1023,15 @@ function _protoLabel(p) {
     return MAP[p] || p.toUpperCase().slice(0, 11);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Stream change & Live capture actions
-// ─────────────────────────────────────────────────────────────────────────────
 function v2OnStreamChange(ip, streamUrl) {
     if (streamUrl === '__open_modal__') {
         v2OpenStreamModal(ip);
-        // Reset select to previous value
         const sel = document.getElementById(`v2-select-${ip.replace(/\./g, '_')}`);
-        if (sel && V2State.selectedStreams[ip]) sel.value = V2State.selectedStreams[ip];
+        if (sel && window.V2State.selectedStreams[ip]) sel.value = window.V2State.selectedStreams[ip];
         return;
     }
-    V2State.selectedStreams[ip] = streamUrl;
-    const cam = V2State.results.find(c => c.ip === ip);
+    window.V2State.selectedStreams[ip] = streamUrl;
+    const cam = (window.V2State.results || []).find(c => c.ip === ip);
     if (cam) {
         const safeIp = ip.replace(/\./g, '_');
         const cardEl = document.getElementById(`v2-cam-${safeIp}`);
@@ -1044,13 +1043,13 @@ function v2OnStreamChange(ip, streamUrl) {
         }
     }
 }
-
+window.v2OnStreamChange = v2OnStreamChange;
 
 async function v2CapturePreview(ip, event) {
     if (event) event.stopPropagation();
     const safeIp = ip.replace(/\./g, '_');
     const box = document.getElementById(`v2-preview-box-${safeIp}`);
-    const streamUrl = V2State.selectedStreams[ip] || '';
+    const streamUrl = window.V2State.selectedStreams[ip] || '';
 
     if (!streamUrl) {
         alert('Нет URL потока для захвата кадра');
@@ -1066,7 +1065,7 @@ async function v2CapturePreview(ip, event) {
         `;
     }
 
-    const cam = V2State.results.find(c => c.ip === ip);
+    const cam = (window.V2State.results || []).find(c => c.ip === ip);
     const user = cam?.credentials?.user || 'admin';
     const pass = cam?.credentials?.password || '';
 
@@ -1087,10 +1086,9 @@ async function v2CapturePreview(ip, event) {
             return;
         }
 
-        // Cache update in local model
         const blob = await resp.blob();
         const objUrl = URL.createObjectURL(blob);
-        V2State.previewCache[ip] = objUrl;
+        window.V2State.previewCache[ip] = objUrl;
 
         if (cam) {
             for (const s of (cam.streams || [])) {
@@ -1101,7 +1099,6 @@ async function v2CapturePreview(ip, event) {
             }
         }
 
-
         if (box) {
             box.innerHTML = `
                 <img class="v2-camera-screenshot" src="${objUrl}" alt="${_esc(ip)}">
@@ -1109,7 +1106,6 @@ async function v2CapturePreview(ip, event) {
             `;
         }
 
-        // Mark Live badge
         const card = document.getElementById(`v2-cam-${safeIp}`);
         if (card && !card.querySelector('.v2-verified-badge')) {
             const badge = document.createElement('span');
@@ -1118,8 +1114,7 @@ async function v2CapturePreview(ip, event) {
             card.appendChild(badge);
         }
 
-        // Auto-enrich city for camera with preview if missing
-        const camObj = V2State.results.find(c => c.ip === ip);
+        const camObj = (window.V2State.results || []).find(c => c.ip === ip);
         if (camObj && !camObj.city) {
             fetch(`/api/geo/lookup?ip=${encodeURIComponent(ip)}`)
                 .then(r => r.json())
@@ -1146,20 +1141,22 @@ async function v2CapturePreview(ip, event) {
         }
     }
 }
+window.v2CapturePreview = v2CapturePreview;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Stream Modal Browser (Handles 300+ streams with live search)
-// ─────────────────────────────────────────────────────────────────────────────
+
+// ════════════════════════════════════════════════════════════════
+// MODULE: scanner_v2/player.js
+// ════════════════════════════════════════════════════════════════
+
+// ── Camera Scanner v2: Stream Modal & Video Player Dialog ──────────────
+
 function v2OpenStreamModal(ip) {
-    const cam = V2State.results.find(c => c.ip === ip);
+    const cam = (window.V2State.results || []).find(c => c.ip === ip);
     if (!cam) return;
 
-    // Remove existing modal if any
     document.getElementById('v2-stream-modal-overlay')?.remove();
 
     const streams = cam.streams || [];
-    const safeIp = cam.ip.replace(/\./g, '_');
-
     const overlay = document.createElement('div');
     overlay.className = 'v2-modal-overlay';
     overlay.id = 'v2-stream-modal-overlay';
@@ -1188,6 +1185,7 @@ function v2OpenStreamModal(ip) {
     document.body.appendChild(overlay);
     document.getElementById('v2-modal-search-input')?.focus();
 }
+window.v2OpenStreamModal = v2OpenStreamModal;
 
 function _renderModalStreamItems(cam, streams) {
     if (!streams.length) {
@@ -1219,7 +1217,7 @@ function _renderModalStreamItems(cam, streams) {
 }
 
 function v2FilterModalStreams(ip, query) {
-    const cam = V2State.results.find(c => c.ip === ip);
+    const cam = (window.V2State.results || []).find(c => c.ip === ip);
     if (!cam) return;
     const list = document.getElementById('v2-modal-stream-list');
     if (!list) return;
@@ -1228,24 +1226,23 @@ function v2FilterModalStreams(ip, query) {
     const filtered = (cam.streams || []).filter(s => (s.url || '').toLowerCase().includes(q) || (s.type || s.stream_type || '').toLowerCase().includes(q));
     list.innerHTML = _renderModalStreamItems(cam, filtered);
 }
+window.v2FilterModalStreams = v2FilterModalStreams;
 
 async function v2CaptureFromModal(ip, streamUrl, btn) {
     const origText = btn.textContent;
     btn.textContent = '⏳...';
     btn.disabled = true;
-    V2State.selectedStreams[ip] = streamUrl;
-    await v2CapturePreview(ip);
+    window.V2State.selectedStreams[ip] = streamUrl;
+    if (window.v2CapturePreview) await v2CapturePreview(ip);
     btn.textContent = '✓ Готово';
     setTimeout(() => { btn.textContent = origText; btn.disabled = false; }, 2000);
 }
+window.v2CaptureFromModal = v2CaptureFromModal;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Real-Time Live Stream Test Player Dialog
-// ─────────────────────────────────────────────────────────────────────────────
 function v2OpenSelectedStreamPlayer(ip) {
-    const cam = V2State.results.find(c => c.ip === ip);
+    const cam = (window.V2State.results || []).find(c => c.ip === ip);
     if (!cam || !cam.streams || !cam.streams.length) return;
-    let streamUrl = V2State.selectedStreams[ip] || '';
+    let streamUrl = window.V2State.selectedStreams[ip] || '';
     if (!streamUrl || streamUrl.startsWith('ws://') || streamUrl.includes('.jpg') || streamUrl.includes('.jpeg') || streamUrl.includes('snapshot')) {
         const playable = cam.streams.find(s => (s.url || '').startsWith('rtsp://') || (s.url || '').startsWith('rtmp://') || (s.url || '').includes('.mjpg') || (s.url || '').includes('video.cgi') || (s.url || '').includes('.m3u8'));
         if (playable) {
@@ -1259,15 +1256,13 @@ function v2OpenSelectedStreamPlayer(ip) {
 }
 window.v2OpenSelectedStreamPlayer = v2OpenSelectedStreamPlayer;
 
-
 async function v2OpenStreamPlayer(srcUrl, camName, ip, currentIdx = 0) {
     if (!srcUrl) return;
 
-    const cam = V2State.results.find(c => c.ip === ip);
+    const cam = (window.V2State.results || []).find(c => c.ip === ip);
     const streams = cam?.streams || [];
     const totalStreams = streams.length;
 
-    // Create or reuse modal dialog
     let dialog = document.getElementById('v2-player-dialog');
     if (!dialog) {
         dialog = document.createElement('dialog');
@@ -1298,7 +1293,6 @@ async function v2OpenStreamPlayer(srcUrl, camName, ip, currentIdx = 0) {
         document.body.appendChild(dialog);
     }
 
-    // Clean up previous temp stream if switching inside open dialog
     const prevTempName = dialog.dataset.tempStreamName;
     if (prevTempName) {
         fetch(`/api/go2rtc/streams/${encodeURIComponent(prevTempName)}`, { method: "DELETE" }).catch(() => {});
@@ -1307,7 +1301,6 @@ async function v2OpenStreamPlayer(srcUrl, camName, ip, currentIdx = 0) {
     const tempName = `temp_v2_${Date.now()}`;
     dialog.dataset.tempStreamName = tempName;
 
-    // Navigation indexes
     const prevIdx = (currentIdx - 1 + totalStreams) % totalStreams;
     const nextIdx = (currentIdx + 1) % totalStreams;
     const prevStream = totalStreams > 1 ? streams[prevIdx] : null;
@@ -1392,10 +1385,8 @@ async function v2OpenStreamPlayer(srcUrl, camName, ip, currentIdx = 0) {
             return;
         }
 
-        // RTSP / RTMP stream via go2rtc WebRTC/MSE
         let actualSrcUrl = srcUrl;
         if (actualSrcUrl.startsWith('ws://') || actualSrcUrl.startsWith('wss://')) {
-            // Translate WebSocket endpoint (e.g. Axis rtsp-over-websocket) to canonical RTSP stream for go2rtc
             const u = cam?.credentials?.user || '';
             const p = cam?.credentials?.password || '';
             const credsPart = u ? `${encodeURIComponent(u)}:${encodeURIComponent(p)}@` : '';
@@ -1445,11 +1436,14 @@ async function v2OpenStreamPlayer(srcUrl, camName, ip, currentIdx = 0) {
 window.v2OpenStreamPlayer = v2OpenStreamPlayer;
 
 
-// ─────────────────────────────────────────────────────────────────────────────
-// go2rtc integration
-// ─────────────────────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════
+// MODULE: scanner_v2/export.js
+// ════════════════════════════════════════════════════════════════
+
+// ── Camera Scanner v2: Export, Go2rtc Sync, Filtering & Helpers ────────
+
 async function v2AddToGo2rtc(ip) {
-    const streamUrl = V2State.selectedStreams[ip];
+    const streamUrl = window.V2State.selectedStreams[ip];
     if (!streamUrl) {
         alert('Нет выбранного RTSP URL для добавления');
         return;
@@ -1474,6 +1468,7 @@ async function v2AddToGo2rtc(ip) {
         alert('Ошибка: ' + e.message);
     }
 }
+window.v2AddToGo2rtc = v2AddToGo2rtc;
 
 async function v2AddSpecificStreamToGo2rtc(ip, streamUrl, channelIdx) {
     const safeIp = ip.replace(/\./g, '_');
@@ -1492,9 +1487,10 @@ async function v2AddSpecificStreamToGo2rtc(ip, streamUrl, channelIdx) {
         alert('Ошибка сети: ' + e.message);
     }
 }
+window.v2AddSpecificStreamToGo2rtc = v2AddSpecificStreamToGo2rtc;
 
 async function v2ExportAllToGo2rtc() {
-    const cameras = V2State.results.filter(c => !c.in_go2rtc);
+    const cameras = (window.V2State.results || []).filter(c => !c.in_go2rtc);
     if (!cameras.length) {
         alert('Все камеры уже добавлены в go2rtc или результатов нет');
         return;
@@ -1503,7 +1499,7 @@ async function v2ExportAllToGo2rtc() {
 
     let success = 0;
     for (const cam of cameras) {
-        const streamUrl = V2State.selectedStreams[cam.ip] || cam.streams?.[0]?.url;
+        const streamUrl = window.V2State.selectedStreams[cam.ip] || cam.streams?.[0]?.url;
         if (streamUrl) {
             try {
                 const safeIp = cam.ip.replace(/\./g, '_');
@@ -1515,14 +1511,16 @@ async function v2ExportAllToGo2rtc() {
         }
     }
     alert(`Добавлено ${success} из ${cameras.length} камер`);
-    v2LoadStoredResults();
+    if (window.v2LoadStoredResults) v2LoadStoredResults();
 }
+window.v2ExportAllToGo2rtc = v2ExportAllToGo2rtc;
 
 function v2CopySelectedUrl(ip) {
-    const url = V2State.selectedStreams[ip];
+    const url = window.V2State.selectedStreams[ip];
     if (!url) { alert('URL недоступен'); return; }
     v2CopyUrl(url);
 }
+window.v2CopySelectedUrl = v2CopySelectedUrl;
 
 function v2CopyUrl(url) {
     if (!url) { alert('URL недоступен'); return; }
@@ -1534,32 +1532,36 @@ function v2CopyUrl(url) {
         setTimeout(() => toast.remove(), 2200);
     });
 }
+window.v2CopyUrl = v2CopyUrl;
 
 function v2ShowDetails(ip) {
-    const cam = V2State.results.find(c => c.ip === ip);
+    const cam = (window.V2State.results || []).find(c => c.ip === ip);
     if (!cam) return;
-    v2OpenStreamModal(ip);
+    if (window.v2OpenStreamModal) v2OpenStreamModal(ip);
 }
+window.v2ShowDetails = v2ShowDetails;
 
 function v2ExportJson() {
-    const json = JSON.stringify(V2State.results, null, 2);
+    const json = JSON.stringify(window.V2State.results, null, 2);
     const blob = new Blob([json], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = `v2_cameras_${Date.now()}.json`;
     a.click();
 }
+window.v2ExportJson = v2ExportJson;
 
 async function v2ClearResults() {
     if (!confirm('Удалить все результаты v2 из базы данных?')) return;
     await fetch('/api/v2/results', { method: 'DELETE' });
-    V2State.results = [];
-    v2RenderResults();
-    v2UpdateResultsCount();
+    window.V2State.results = [];
+    if (window.v2RenderResults) v2RenderResults();
+    if (window.v2UpdateResultsCount) v2UpdateResultsCount();
 }
+window.v2ClearResults = v2ClearResults;
 
 async function v2ResolveAllGeo(btn) {
-    if (!V2State.results || !V2State.results.length) {
+    if (!window.V2State.results || !window.V2State.results.length) {
         alert('Сначала выполните сканирование или загрузите список камер.');
         return;
     }
@@ -1578,8 +1580,8 @@ async function v2ResolveAllGeo(btn) {
         if (resp.ok) {
             const data = await resp.json();
             if (data.results && data.results.length) {
-                V2State.results = data.results;
-                v2RenderResults();
+                window.V2State.results = data.results;
+                if (window.v2RenderResults) v2RenderResults();
                 _showV2Toast(`✓ Геолокация определена для ${data.updated_count || data.results.length} камер!`);
                 if (btn) {
                     btn.disabled = false;
@@ -1593,7 +1595,7 @@ async function v2ResolveAllGeo(btn) {
     }
 
     // 2. Client-side parallel batch resolution via /api/geo/lookup?ip=...
-    const cams = V2State.results;
+    const cams = window.V2State.results;
     const batchSize = 10;
     for (let i = 0; i < cams.length; i += batchSize) {
         const chunk = cams.slice(i, i + batchSize);
@@ -1612,7 +1614,7 @@ async function v2ResolveAllGeo(btn) {
                 }
             } catch (err) {}
         }));
-        v2RenderResults();
+        if (window.v2RenderResults) v2RenderResults();
     }
 
     _showV2Toast(`✓ Геолокация определена для ${updatedCount} из ${cams.length} камер!`);
@@ -1631,58 +1633,53 @@ function _showV2Toast(msg) {
     setTimeout(() => toast.remove(), 3000);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Filters
-// ─────────────────────────────────────────────────────────────────────────────
 function v2SetFilter(type, value) {
-    V2State[type === 'brand' ? 'filterBrand' : 'filterProtocol'] = value;
+    window.V2State[type === 'brand' ? 'filterBrand' : 'filterProtocol'] = value;
     const prefix = type === 'brand' ? 'v2-filter-brand-' : 'v2-filter-proto-';
     document.querySelectorAll(`.v2-filter-btn[id^="${prefix}"]`).forEach(btn => {
         btn.classList.toggle('active', btn.dataset.value === value);
     });
-    v2RenderResults();
+    if (window.v2RenderResults) v2RenderResults();
 }
+window.v2SetFilter = v2SetFilter;
 
 function v2SetGeoFilter(val) {
-    V2State.filterGeo = val;
+    window.V2State.filterGeo = val;
     const select = document.getElementById('v2-filter-geo');
     if (select && select.value !== val) {
         select.value = val;
     }
     _updateGeoClearBtn();
-    v2RenderResults();
+    if (window.v2RenderResults) v2RenderResults();
 }
 window.v2SetGeoFilter = v2SetGeoFilter;
 
 function v2SetGeoSearch(val) {
-    V2State.geoSearch = val;
+    window.V2State.geoSearch = val;
     _updateGeoClearBtn();
-    v2RenderResults();
+    if (window.v2RenderResults) v2RenderResults();
 }
 window.v2SetGeoSearch = v2SetGeoSearch;
 
 function v2ClearGeoFilter() {
-    V2State.filterGeo = 'all';
-    V2State.geoSearch = '';
+    window.V2State.filterGeo = 'all';
+    window.V2State.geoSearch = '';
     const select = document.getElementById('v2-filter-geo');
     if (select) select.value = 'all';
     const searchInput = document.getElementById('v2-geo-search-input');
     if (searchInput) searchInput.value = '';
     _updateGeoClearBtn();
-    v2RenderResults();
+    if (window.v2RenderResults) v2RenderResults();
 }
 window.v2ClearGeoFilter = v2ClearGeoFilter;
 
 function _updateGeoClearBtn() {
     const btn = document.getElementById('v2-geo-clear-btn');
     if (!btn) return;
-    const hasActive = (V2State.filterGeo && V2State.filterGeo !== 'all') || (V2State.geoSearch && V2State.geoSearch.trim().length > 0);
+    const hasActive = (window.V2State.filterGeo && window.V2State.filterGeo !== 'all') || (window.V2State.geoSearch && window.V2State.geoSearch.trim().length > 0);
     btn.style.display = hasActive ? 'block' : 'none';
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
 function _esc(str) {
     if (!str && str !== 0) return '';
     return String(str)
@@ -1692,32 +1689,32 @@ function _esc(str) {
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
 }
+window._esc = _esc;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Init on page load (restore version preference)
-// ─────────────────────────────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-    v2LoadTools();
-    v2RenderCredentials();
-    v2LoadStoredResults();
+if (typeof document !== 'undefined') {
+    document.addEventListener('DOMContentLoaded', () => {
+        if (window.v2LoadTools) v2LoadTools();
+        if (window.v2RenderCredentials) v2RenderCredentials();
+        if (window.v2LoadStoredResults) v2LoadStoredResults();
 
-    const savedVersion = localStorage.getItem('ip2domain_cam_version');
-    if (savedVersion === 'v2') {
-        setTimeout(() => {
-            const v2Btn = document.getElementById('cam-ver-btn-v2');
-            if (v2Btn) {
-                switchCameraVersion('v2');
-            }
-        }, 50);
-    }
-});
+        const savedVersion = localStorage.getItem('ip2domain_cam_version');
+        if (savedVersion === 'v2') {
+            setTimeout(() => {
+                const v2Btn = document.getElementById('cam-ver-btn-v2');
+                if (v2Btn && window.switchCameraVersion) {
+                    switchCameraVersion('v2');
+                }
+            }, 50);
+        }
+    });
+}
 
 function v2CheckVersionOnTabOpen() {
     const savedVersion = localStorage.getItem('ip2domain_cam_version');
     if (savedVersion === 'v2') {
-        switchCameraVersion('v2');
+        if (window.switchCameraVersion) switchCameraVersion('v2');
     } else {
-        v2LoadStoredResults();
+        if (window.v2LoadStoredResults) v2LoadStoredResults();
     }
 }
-
+window.v2CheckVersionOnTabOpen = v2CheckVersionOnTabOpen;

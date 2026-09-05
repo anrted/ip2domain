@@ -41,3 +41,34 @@ def test_snapshot_cache_keys_do_not_use_untrusted_external_id(tmp_path):
     path = cache.path("generic-ip", "../../camera/one")
     assert path.is_relative_to(tmp_path)
     assert "camera" not in path.name
+
+
+def test_orion_provider_normalize_and_capabilities():
+    from ip2domain.cameras.orion import OrionProvider
+    provider = OrionProvider()
+    camera = provider.normalize({
+        "id": "1", "title": "9 мая - Водопьянова", "latitude": 56.058, "longitude": 92.913
+    })
+    assert camera.provider_id == "orion"
+    assert camera.external_id == "1"
+    assert camera.latitude == 56.058
+    assert camera.longitude == 92.913
+    assert any(ep.kind == "hls" and "fluserver.orionnet.online" in ep.url for ep in camera.endpoints)
+    assert provider.validate_url("http://fluserver.orionnet.online/cam1/index.m3u8") is True
+    assert provider.validate_url("http://evil.com/cam1") is False
+
+
+def test_a42_provider_normalize_and_capabilities():
+    from ip2domain.cameras.a42 import A42Provider
+    provider = A42Provider()
+    camera = provider.normalize({
+        "id": "40418", "city": "Новокузнецк", "title": "Новокузнецк, Рокоссовского",
+        "coordinates": [53.9005, 87.1257], "sldp": "wss://roadcam02.video.goodline.info:443/main/rcam_45"
+    })
+    assert camera.provider_id == "a42"
+    assert camera.external_id == "40418"
+    assert camera.latitude == 53.9005
+    assert camera.longitude == 87.1257
+    assert any(ep.kind == "rtsp" for ep in camera.endpoints)
+    assert provider.validate_url("wss://roadcam02.video.goodline.info:443/main/rcam_45") is True
+    assert provider.validate_url("https://malicious.com/stream") is False

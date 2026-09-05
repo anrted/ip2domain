@@ -110,8 +110,12 @@ async def _run_vuln_scan_job(vuln_job_id: str, target: str, tech_stack: Optional
 
 @router.post("/api/vuln/scan")
 async def start_vuln_scan(req: VulnScanRequest, background_tasks: BackgroundTasks):
+    import sys
+    app_mod = sys.modules.get("ip2domain.web.app")
+    _validate = getattr(app_mod, "validate_network_target", validate_network_target)
+    _run_job = getattr(app_mod, "_run_vuln_scan_job", _run_vuln_scan_job)
     target_clean = req.target.strip()
-    allowed, normalized = await validate_network_target(target_clean)
+    allowed, normalized = await _validate(target_clean)
     if not allowed:
         raise HTTPException(status_code=400, detail=normalized)
     target_clean = normalized
@@ -155,7 +159,7 @@ async def start_vuln_scan(req: VulnScanRequest, background_tasks: BackgroundTask
         "error": None,
     })
 
-    background_tasks.add_task(_run_vuln_scan_job, vuln_job_id, target_clean, tech_stack, open_ports)
+    background_tasks.add_task(_run_job, vuln_job_id, target_clean, tech_stack, open_ports)
     return {"status": "queued", "job_id": vuln_job_id, "tech_stack": tech_stack, "open_ports": open_ports}
 
 @router.get("/api/vuln/scan/{job_id}")
@@ -172,7 +176,10 @@ def get_vuln_scan_status(job_id: str):
 
 @router.get("/api/vuln/check/{target}")
 async def check_vuln_scan_target(target: str):
-    allowed, target_clean = await validate_network_target(target)
+    import sys
+    app_mod = sys.modules.get("ip2domain.web.app")
+    _validate = getattr(app_mod, "validate_network_target", validate_network_target)
+    allowed, target_clean = await _validate(target)
     if not allowed:
         raise HTTPException(status_code=400, detail=target_clean)
 

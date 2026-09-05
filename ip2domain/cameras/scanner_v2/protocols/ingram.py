@@ -78,6 +78,31 @@ _RULES: List[Tuple[str, str, str, str]] = [
     # xiongmai
     ("xiongmai", "/",          "title",   "NETSurveillance WEB"),
     ("xiongmai", "/",          "title",   "NetSurveillance WEB"),
+    # beward
+    ("beward",   "/",          "title",   "beward"),
+    ("beward",   "/",          "headers", "beward"),
+    ("beward",   "/cgi-bin/images_cgi", "headers", "beward"),
+    # 2n
+    ("2n",       "/",          "title",   "2N"),
+    ("2n",       "/",          "headers", "2N"),
+    ("2n",       "/api/camera/snapshot", "headers", "2N"),
+    # grandstream
+    ("grandstream", "/",       "title",   "Grandstream"),
+    ("grandstream", "/",       "headers", "Grandstream"),
+    ("grandstream", "/jpeg/view.html", "headers", "Grandstream"),
+    # hanwha / wisenet
+    ("hanwha",   "/",          "title",   "Hanwha"),
+    ("hanwha",   "/",          "title",   "Wisenet"),
+    ("hanwha",   "/",          "headers", "Wisenet"),
+    # milesight
+    ("milesight", "/",         "title",   "Milesight"),
+    ("milesight", "/",         "headers", "Milesight"),
+    # dahua
+    ("dahua",    "/",          "title",   "WEB SERVICE"),
+    ("dahua",    "/",          "headers", "DH_RPC"),
+    # vivotek
+    ("vivotek",  "/",          "title",   "VIVOTEK"),
+    ("vivotek",  "/",          "headers", "VIVOTEK"),
     # dlink (older)
     ("dlink",  "/",            "title",   "D-LINK"),
 ]
@@ -100,6 +125,13 @@ _BRAND_NAMES: Dict[str, str] = {
     "tenda":      "Tenda",
     "uniview":    "Uniview",
     "xiongmai":   "Xiongmai",
+    "beward":     "Beward",
+    "2n":         "2N Intercom",
+    "grandstream":"Grandstream GDS",
+    "hanwha":     "Hanwha / Wisenet",
+    "milesight":  "Milesight",
+    "dahua":      "Dahua",
+    "vivotek":    "Vivotek",
 }
 
 # ---------------------------------------------------------------------------
@@ -123,6 +155,12 @@ _BRAND_CREDS: Dict[str, List[Tuple[str, str]]] = {
     "tenda":     [("admin", "admin"), ("admin", ""), ("admin", "123456"), ("admin", "12345")],
     "uniview":   [("admin", "admin"), ("admin", "12345"), ("admin", "123456"), ("admin", "admin123"), ("admin", "12345admin"), ("admin", "")],
     "xiongmai":  [("admin", ""), ("admin", "admin"), ("admin", "12345"), ("admin", "123456"), ("default", "")],
+    "beward":    [("admin", "admin"), ("admin", ""), ("admin", "12345"), ("admin", "123456")],
+    "2n":        [("admin", "2n"), ("admin", "admin"), ("admin", "")],
+    "grandstream": [("admin", "admin"), ("admin", ""), ("admin", "123456")],
+    "hanwha":    [("admin", "4321"), ("admin", "admin"), ("admin", "12345"), ("admin", "admin123")],
+    "milesight": [("admin", "ms1234"), ("admin", "admin"), ("admin", "123456")],
+    "vivotek":   [("root", ""), ("root", "root"), ("admin", "admin")],
 }
 
 
@@ -213,6 +251,40 @@ _BRAND_STREAMS: Dict[str, List[Tuple[str, str]]] = {
         ("/JPGStream",                                                       "mjpeg"),
         ("/cam0_0.jpg",                                                      "http_snapshot"),
         ("/MultiStream",                                                     "mjpeg"),
+    ],
+    "beward": [
+        ("/cgi-bin/images_cgi?channel=0",                                    "http_snapshot"),
+        ("/cgi-bin/images_cgi?channel=1",                                    "http_snapshot"),
+        ("/cgi-bin/images_cgi",                                              "http_snapshot"),
+    ],
+    "2n": [
+        ("/api/camera/snapshot?width=640&height=480",                        "http_snapshot"),
+        ("/api/camera/snapshot",                                             "http_snapshot"),
+        ("/api/camera/snapshot?width=640&height=480&fps=15",                 "mjpeg"),
+    ],
+    "grandstream": [
+        ("/jpeg/view.html",                                                  "http_snapshot"),
+        ("/snapshot/view.jpg",                                               "http_snapshot"),
+        ("/jpeg/stream=0",                                                   "mjpeg"),
+        ("/jpeg/mjpeg.html",                                                 "mjpeg"),
+    ],
+    "hanwha": [
+        ("/stw-cgi/video.cgi?msubmenu=snapshot&action=view&Profile=1&Channel=0", "http_snapshot"),
+        ("/stw-cgi/video.cgi?msubmenu=snapshot&action=view",                 "http_snapshot"),
+        ("/stw-cgi/video.cgi?msubmenu=stream&action=view&Profile=1&CodecType=MJPEG", "mjpeg"),
+    ],
+    "milesight": [
+        ("/cgi-bin/operator/snapshot.cgi?mainstream",                        "http_snapshot"),
+        ("/cgi-bin/operator/snapshot.cgi?substream",                         "http_snapshot"),
+    ],
+    "dahua": [
+        ("/cgi-bin/snapshot.cgi?channel=1",                                  "http_snapshot"),
+        ("/cgi-bin/snapshot.cgi",                                            "http_snapshot"),
+        ("/cgi-bin/mjpg/video.cgi",                                          "mjpeg"),
+    ],
+    "vivotek": [
+        ("/cgi-bin/viewer/video.jpg",                                        "http_snapshot"),
+        ("/video/mjpg.cgi",                                                  "mjpeg"),
     ],
 }
 

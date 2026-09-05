@@ -17,8 +17,9 @@ class BaseStorage:
         self._init_db()
 
     def _get_connection(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=10.0)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout=5000;")
         def natural_key(value):
             return [int(part) if part.isdigit() else part.casefold()
                     for part in re.split(r"(\d+)", str(value or "").strip())]
@@ -32,6 +33,7 @@ class BaseStorage:
 
     def _init_db(self):
         with self._get_connection() as conn:
+            conn.execute("PRAGMA journal_mode=WAL;")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS scan_history (
                     id TEXT PRIMARY KEY,
@@ -171,6 +173,9 @@ class BaseStorage:
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_centra_cameras_updated ON centra_cameras(updated_at);")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_centra_scan_checks_filter ON centra_scan_checks(camera_type, building_id, entrance, found);")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_centra_person_type ON centra_person_results(camera_type, detected_at);")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS camera_catalog (
                     camera_uid TEXT PRIMARY KEY,

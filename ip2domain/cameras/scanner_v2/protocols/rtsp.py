@@ -43,6 +43,8 @@ _HIK_PATHS = [
     "/Streaming/Channels/202",
     "/Streaming/Channels/1",
     "/Streaming/Channels/2",
+    "/Streaming/channels/101",
+    "/Streaming/channels/102",
     "/h264/ch1/main/av_stream",
     "/h264/ch1/sub/av_stream",
     "/ISAPI/Streaming/channels/101",
@@ -69,6 +71,7 @@ _AXIS_PATHS = [
     "/axis-media/media.amp?camera=1",
     "/axis-media/media.amp?camera=2",
     "/axis-media/media.3gp",
+    "/onvif-media/media.amp",
     "/mpeg4/media.amp",
     "/mpeg4/1/media.amp",
     "/mjpg/media.amp",
@@ -90,6 +93,14 @@ _REOLINK_PATHS = [
     "/h264Preview_01_sub",
     "/preview_01_main",
     "/preview_01_sub",
+]
+
+# Beward / Av0 (Russian intercoms & IP cameras)
+_BEWARD_PATHS = [
+    "/av0_0",
+    "/av0_1",
+    "/tcp/av0_0",
+    "/tcp/av0_1",
 ]
 
 # Topsvision / Topsee / Jovision
@@ -133,13 +144,43 @@ _PANASONIC_PATHS = [
 
 # Samsung / Hanwha / Wisenet
 _SAMSUNG_PATHS = [
+    "/0/profile2/media.smp",
+    "/1/profile2/media.smp",
+    "/0/profile1/media.smp",
     "/profile1/media.smp",
     "/profile2/media.smp",
     "/onvif/profile1/media.smp",
 ]
 
+# 2N Helios / IP Intercoms
+_2N_PATHS = [
+    "/h264_stream",
+    "/mjpeg_stream",
+    "/mpeg4_stream",
+    "/",
+]
+
+# Grandstream GDS3710 / GDS3712 / IP Cameras
+_GRANDSTREAM_PATHS = [
+    "/0",
+    "/4",
+    "/8",
+    "/1",
+    "/channel1",
+]
+
+# Milesight
+_MILESIGHT_PATHS = [
+    "/main",
+    "/sub",
+]
+
 # Tiandy / Grandstream / Foscam / Generic / Other DVR
 _GENERIC_PATHS = [
+    "/av0_0",
+    "/av0_1",
+    "/live/ch0",
+    "/axis-media/media.amp",
     "/profile1",
     "/profile2",
     "/profile3",
@@ -150,7 +191,6 @@ _GENERIC_PATHS = [
     "/h264.sdp",
     "/h265",
     "/h265.sdp",
-    "/live/ch0",
     "/live/ch1",
     "/live/main",
     "/live/sub",
@@ -197,6 +237,11 @@ _GENERIC_PATHS = [
 ]
 
 _RTSP_BRAND_PATTERNS = [
+    (r"beward", "Beward"),
+    (r"2n|helios|verso", "2N"),
+    (r"grandstream|gds", "Grandstream"),
+    (r"rubetek", "Rubetek"),
+    (r"milesight", "Milesight"),
     (r"topsvision|topsee", "Topsvision"),
     (r"jovision", "Jovision"),
     (r"h264dvr|xiongmai|xm|netip", "Xiongmai"),
@@ -367,7 +412,17 @@ async def probe_rtsp_direct(
             db_brand_paths = _get_brand_rtsp_paths(result["brand"]) if result["brand"] else []
 
             # Select primary candidate paths based on vendor
-            if result["brand"] == "Topsvision":
+            if result["brand"] == "Beward":
+                probe_paths = _BEWARD_PATHS + [p for p in db_brand_paths if p not in _BEWARD_PATHS]
+            elif result["brand"] == "2N":
+                probe_paths = _2N_PATHS + [p for p in db_brand_paths if p not in _2N_PATHS]
+            elif result["brand"] == "Grandstream":
+                probe_paths = _GRANDSTREAM_PATHS + [p for p in db_brand_paths if p not in _GRANDSTREAM_PATHS]
+            elif result["brand"] == "Milesight":
+                probe_paths = _MILESIGHT_PATHS + [p for p in db_brand_paths if p not in _MILESIGHT_PATHS]
+            elif result["brand"] == "Rubetek":
+                probe_paths = ["/av0_0", "/av0_1", "/live/ch0", "/live/main", "/profile1"] + [p for p in db_brand_paths if p not in _BEWARD_PATHS]
+            elif result["brand"] == "Topsvision":
                 probe_paths = _TOPSVISION_PATHS + [p for p in db_brand_paths if p not in _TOPSVISION_PATHS]
             elif result["brand"] == "Jovision":
                 probe_paths = ["/0", "/1", "/ch0", "/ch1", "/profile1", "/profile2"] + db_brand_paths
@@ -395,7 +450,9 @@ async def probe_rtsp_direct(
                 probe_paths = db_brand_paths[:25]
             else:
                 top_db = _get_compiled_db().get("top_rtsp", [])
-                probe_paths = (top_db[:30] if top_db else []) or _GENERIC_PATHS[:30]
+                base_probe = (top_db[:35] if top_db else []) or _GENERIC_PATHS[:35]
+                priority_paths = ["/av0_0", "/av0_1", "/live/ch0", "/axis-media/media.amp"]
+                probe_paths = priority_paths + [p for p in base_probe if p not in priority_paths]
 
             found_urls: List[str] = []
             failed_auth_paths = 0

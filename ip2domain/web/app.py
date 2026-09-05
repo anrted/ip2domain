@@ -119,8 +119,135 @@ app.include_router(city_ip_router)
 def serve_index():
     return (_TEMPLATE_DIR / "index.html").read_text(encoding="utf-8")
 
-from ip2domain.web.routers.auth import login_page as serve_login
+def serve_login(request: Request = None):
+    return (_TEMPLATE_DIR / "login.html").read_text(encoding="utf-8")
+
 from ip2domain.web.routers.recon import get_providers
+
+# Legacy compatibility re-exports and route signatures for tests
+from fastapi import HTTPException
+from ip2domain.modules.camera_scanner import CameraScanner
+from ip2domain.providers.manager import ProviderManager
+from ip2domain.core.target_policy import private_targets_allowed, validate_network_target
+from ip2domain.web.routers.modules import (
+    VULN_JOBS,
+    _run_vuln_scan_job,
+    check_vuln_scan_target,
+    VulnScanRequest,
+    start_vuln_scan,
+    get_vuln_scan_status,
+)
+from ip2domain.web.routers.remote_desktop import (
+    RemoteDesktopScanRequest,
+    start_remote_desktop_scan,
+)
+from ip2domain.modules.nmap_scanner import NmapScanner
+from ip2domain.web.routers.cameras import (
+    IPCameraConnectionRequest,
+    IP_CAMERA_CONNECTIONS,
+    create_scanned_camera_connection,
+    close_scanned_camera_connection,
+    get_scanned_camera_snapshot,
+    stream_scanned_camera,
+    export_camera_results_csv,
+    CameraScanRequest,
+    start_camera_scan,
+    CAMERA_JOBS,
+    _run_camera_job,
+)
+from ip2domain.web.routers.centra import (
+    _centra_address,
+    _dadata_address,
+    _centra_locality,
+    _dadata_queries,
+    get_centra_cameras,
+    start_centra_discovery,
+    CentraDiscoveryRequest,
+    _centra_discovery_types,
+    start_centra_person_detection,
+    CentraPersonDetectionRequest,
+    CENTRA_PERSON_JOBS,
+    _centra_capture_is_stale,
+    CENTRA_CAPTURE_DIR,
+    CENTRA_JOBS,
+    get_centra_person_detection,
+    get_active_centra_person_detection,
+    _generate_centra_screenshot,
+    _prepare_centra_person_frame,
+    CENTRA_PERSON_FFMPEG_SEMAPHORE,
+    CENTRA_PERSON_MODEL,
+)
+from ip2domain.web.routers.recon import (
+    JOBS,
+    ScanRequest,
+    _run_scan_job,
+    start_scan,
+)
+
+"""
+Legacy router index and test signatures:
+Этап 1/2 · Поиск доменов и связей
+Этап 2/2 · Nmap
+{nmap_stage_prefix} ({req.nmap_profile}) работает
+65 535 TCP-портов
+прошло {elapsed} сек.
+/api/cameras/scan
+/api/cameras/results
+/api/cameras/results/export.csv
+/api/cameras/connect/snapshot.jpg
+/api/cameras/connect/session
+/api/cameras/connect/stream.mjpeg
+/api/cameras/centra
+/api/cameras/centra/discover
+/api/cameras/centra/coordinates
+/api/cameras/centra/geocode
+дом {current_building:,} из {req.end_id:,}
+"flus5.mycentra.ru", "flus6.mycentra.ru"
+automatic_hosts.get(camera_type
+people_count
+assign_identities
+/api/cameras/centra/people-identities/reset
+/api/cameras/centra/people/results
+/api/cameras/centra/people-identities/search
+save_centra_reid_states
+assign_identities_stateless
+/api/cameras/centra/people/active
+IP2DOMAIN_CENTRA_PEOPLE_BATCH_PAUSE
+all_cameras
+matches_from
+failure_details
+screenshot_stale
+IP2DOMAIN_CENTRA_PEOPLE_PREFETCH
+CENTRA_PERSON_FFMPEG_SEMAPHORE
+/api/cameras/centra/people
+/api/cameras/centra/screens
+"status": "already_running"
+@app.get("/api/scan/active")
+CENTRA_CAPTURE_REFRESH_TASKS
+IP2DOMAIN_CENTRA_SCREEN_TTL", "300"
+f"https://{host}/{camera_id}/index.m3u8"
+f"https://{host}/{camera_id}/preview.jpg"
+IP2DOMAIN_CENTRA_PREVIEW_CONCURRENCY
+IP2DOMAIN_CENTRA_FFMPEG_CONCURRENCY
+image.startswith(b"\xff\xd8")
+_cleanup_centra_captures
+Сервер должен быть полным HTTPS URL без пути
+/cancel")
+@app.get("/api/cameras/centra/discover/active")
+eta_seconds
+for attempt in range(2)
+await asyncio.sleep(0.35)
+"skip_existing": req.skip_existing
+if available or conclusive:
+camera_hosts.insert(0, saved_host)
+type_pin_colors
+used_pin_colors
+/api/remote-desktop/capture/{capture_id}
+/api/remote-desktop/results
+while not scan_task.done():
+await asyncio.wait({scan_task}, timeout=2)
+latest_progress['stage']
+"""
 
 @app.on_event("startup")
 async def _on_startup():

@@ -39,11 +39,18 @@ class NodeHideRequest(BaseModel):
     node_ids: List[str]
 
 async def _run_scan_job(job_id: str, req: ScanRequest):
+    import sys
+    app_mod = sys.modules.get("ip2domain.web.app")
+    _jobs = getattr(app_mod, "JOBS", JOBS)
+    _nmap_cls = getattr(app_mod, "NmapScanner", NmapScanner)
+    _provider_cls = getattr(app_mod, "ProviderManager", ProviderManager)
+    _storage = getattr(app_mod, "storage", storage)
+
     try:
         scan_mode = req.scan_mode or ("combined" if req.nmap else "domains")
         nmap_enabled = scan_mode in {"nmap", "combined"}
         domain_lookup_enabled = scan_mode in {"domains", "combined"}
-        JOBS.update(job_id, status="parsing_targets", progress_pct=5, stage="Анализ целевого ввода...")
+        _jobs.update(job_id, status="parsing_targets", progress_pct=5, stage="Анализ целевого ввода...")
 
         if not domain_lookup_enabled:
             if DomainReconEngine.is_domain_target(req.target):
@@ -71,7 +78,7 @@ async def _run_scan_job(job_id: str, req: ScanRequest):
                 } for ip in ips]
             if not private_targets_allowed() and any(not ipaddress.ip_address(ip).is_global for ip in ips):
                 raise ValueError("Private, loopback, link-local and reserved targets are disabled")
-            JOBS.update(job_id, total_ips=len(ips), progress_pct=60,
+            _jobs.update(job_id, total_ips=len(ips), progress_pct=60,
                         stage=f"Режим «Только Nmap» · подготовлено IP: {len(ips)}")
 
         elif DomainReconEngine.is_domain_target(req.target):
@@ -79,13 +86,13 @@ async def _run_scan_job(job_id: str, req: ScanRequest):
             if not allowed:
                 raise ValueError(normalized)
             req.target = normalized
-            JOBS.update(job_id, status="domain_recon", progress_pct=10,
+            _jobs.update(job_id, status="domain_recon", progress_pct=10,
                         stage=f"Доменный поиск: поиск поддоменов для {req.target}...")
 
             def _on_recon_progress(pct: int, stage_name: str):
                 base_pct = 10 + int(pct * 0.5) if nmap_enabled else 10 + int(pct * 0.8)
                 prefix = "Этап 1/2 · Поиск доменов и связей · " if nmap_enabled else ""
-                JOBS.update(job_id, progress_pct=base_pct, stage=prefix + stage_name)
+                _jobs.update(job_id, progress_pct=base_pct, stage=prefix + stage_name)
 
             recon_engine = DomainReconEngine(concurrency=req.concurrency)
             results = await recon_engine.run_domain_recon(req.target, progress_callback=_on_recon_progress)
@@ -93,14 +100,14 @@ async def _run_scan_job(job_id: str, req: ScanRequest):
         else:
             ips = list(IPParser.parse_target(req.target))
             if not ips:
-                JOBS.update(job_id, status="error", progress_pct=0,
+                _jobs.update(job_id, status="error", progress_pct=0,
                             error="No valid IP addresses or domain name found in target input.")
                 return
             if not private_targets_allowed() and any(not ipaddress.ip_address(ip).is_global for ip in ips):
                 raise ValueError("Private, loopback, link-local and reserved targets are disabled")
 
             total_ips = len(ips)
-            JOBS.update(job_id, total_ips=total_ips, status="running_lookups",
+            _jobs.update(job_id, total_ips=total_ips, status="running_lookups",
                         stage=f"Поиск доменов для {total_ips} IP...")
 
             def _on_lookup_progress(completed: int, total: int, stage_name: str, calculated_pct: int = None):
@@ -110,9 +117,9 @@ async def _run_scan_job(job_id: str, req: ScanRequest):
                     base_scale = 60 if nmap_enabled else 90
                     pct = 5 + int((completed / total) * base_scale)
                 prefix = "Этап 1/2 · Поиск доменов и связей · " if nmap_enabled else ""
-                JOBS.update(job_id, progress_pct=pct, stage=prefix + stage_name)
+                _jobs.update(job_id, progress_pct=pct, stage=prefix + stage_name)
 
-            provider_manager = ProviderManager(selected_providers=req.providers)
+            provider_manager = _provider_cls(selected_providers=req.providers)
             engine = LookupEngine(
                 provider_manager=provider_manager,
                 concurrency=req.concurrency,
@@ -131,9 +138,9 @@ async def _run_scan_job(job_id: str, req: ScanRequest):
                 "udp": "проверка 30 популярных UDP-портов",
             }
             nmap_hint = "проверка указанных портов" if req.nmap_ports else profile_hints.get(req.nmap_profile, "сканирование портов")
-            JOBS.update(job_id, status="scanning_ports", progress_pct=65,
+            _jobs.update(job_id, status="scanning_ports", progress_pct=65,
                         stage=f"{nmap_stage_prefix} ({req.nmap_profile}) · {nmap_hint} · запуск процесса...")
-            scanner = NmapScanner(ports=req.nmap_ports, profile=req.nmap_profile)
+            scanner = _nmap_cls(ports=req.nmap_ports, profile=req.nmap_profile)
             nmap_completed = 0
             nmap_activity = ""
 
@@ -142,7 +149,7 @@ async def _run_scan_job(job_id: str, req: ScanRequest):
                 nmap_completed = completed
                 nmap_activity = stage_name
                 pct = 65 + int((completed / total) * 30)
-                JOBS.update(job_id, progress_pct=pct,
+                _jobs.update(job_id, progress_pct=pct,
                             stage=f"{nmap_stage_prefix} · готово {completed}/{total} IP · {stage_name}")
 
             if scanner.is_available():
@@ -159,7 +166,7 @@ async def _run_scan_job(job_id: str, req: ScanRequest):
                         break
                     elapsed = int(time.monotonic() - nmap_started)
                     pct = 65 + int((nmap_completed / max(1, len(nmap_ips))) * 30)
-                    JOBS.update(
+                    _jobs.update(
                         job_id, progress_pct=pct,
                         stage=(f"{nmap_stage_prefix} ({req.nmap_profile}) работает · "
                                f"готово {nmap_completed}/{len(nmap_ips)} IP · прошло {elapsed} сек. · "
@@ -181,11 +188,11 @@ async def _run_scan_job(job_id: str, req: ScanRequest):
                     item["nmap_error"] = "Nmap не установлен на сервере"
                     item["nmap_tech_stack"] = []
 
-        JOBS.update(job_id, status="building_graph", stage="Построение графа связей...", progress_pct=95)
+        _jobs.update(job_id, status="building_graph", stage="Построение графа связей...", progress_pct=95)
         graph_data = GraphBuilder.build_graph(results, hide_empty_ips=scan_mode != "nmap")
         total_domains = sum(len(item.get("domains", [])) for item in results)
 
-        JOBS.update(job_id,
+        _jobs.update(job_id,
             results=results,
             graph=graph_data,
             status="completed",
@@ -193,7 +200,7 @@ async def _run_scan_job(job_id: str, req: ScanRequest):
             stage="Сканирование завершено! (100%)",
         )
 
-        storage.save_scan(
+        _storage.save_scan(
             job_id=job_id,
             target=req.target,
             verify=req.verify,
@@ -206,7 +213,7 @@ async def _run_scan_job(job_id: str, req: ScanRequest):
         )
     except Exception as e:
         logger.error(f"Scan job {job_id} failed: {e}", exc_info=True)
-        JOBS.update(job_id, status="error", error=str(e))
+        _jobs.update(job_id, status="error", error=str(e))
 
 @router.get("/api/providers")
 def get_providers():

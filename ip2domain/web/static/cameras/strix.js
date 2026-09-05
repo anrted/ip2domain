@@ -1,7 +1,12 @@
+/* Strix Cameras Client (Auto-bundled from strix/) */
 'use strict';
-// ── Strix Scanner Client Implementation ───────────────────────
-let activeStrixJobId = null;
-let strixPresetsLoaded = false;
+
+
+// ════════════════════════════════════════════════════════════════
+// MODULE: strix/targets.js
+// ════════════════════════════════════════════════════════════════
+
+// ── Strix Scanner: Targets & Database Presets ───────────────────
 
 function refreshStrixGraphTargets() {
     const container = document.getElementById('strix-graph-targets');
@@ -163,6 +168,7 @@ async function insertStrixDbTargets(type = 'not_in_go2rtc') {
 }
 window.insertStrixDbTargets = insertStrixDbTargets;
 
+let strixPresetsLoaded = false;
 async function loadStrixPresets() {
     if (strixPresetsLoaded) return;
     const select = document.getElementById('strix-preset');
@@ -196,6 +202,15 @@ async function loadStrixPresets() {
     } catch (_) {}
 }
 window.loadStrixPresets = loadStrixPresets;
+
+
+// ════════════════════════════════════════════════════════════════
+// MODULE: strix/scan.js
+// ════════════════════════════════════════════════════════════════
+
+// ── Strix Scanner: Scan Execution, ETA Tracker, and Polling ─────
+
+let activeStrixJobId = null;
 
 async function startStrixScan(event) {
     event.preventDefault();
@@ -342,7 +357,7 @@ async function pollStrixScan(jobId) {
             if (window._strixLastRenderedCount !== currentTotal || window._strixLastResultsLen !== job.results.length) {
                 window._strixLastRenderedCount = currentTotal;
                 window._strixLastResultsLen = job.results.length;
-                renderStrixResults(job.results);
+                if (window.renderStrixResults) renderStrixResults(job.results);
             }
         }
 
@@ -387,7 +402,7 @@ async function restoreStrixScan() {
             pollStrixScan(savedJobId);
         } else {
             localStorage.removeItem('ip2domain_strix_job');
-            if (job.results && job.results.length) {
+            if (job.results && job.results.length && window.renderStrixResults) {
                 renderStrixResults(job.results);
             }
         }
@@ -395,37 +410,33 @@ async function restoreStrixScan() {
 }
 window.restoreStrixScan = restoreStrixScan;
 
-let strixCachedItems = [];
-let strixActiveGo2rtcStreams = new Set();
-let strixActiveGo2rtcUrls = new Set();
-let strixActiveGo2rtcIps = new Set();
-
 async function refreshStrixGo2rtcState() {
     try {
         const response = await fetch('/api/go2rtc/streams');
         if (response.ok) {
             const data = await response.json();
             const streams = data.streams || {};
-            strixActiveGo2rtcStreams = new Set(Object.keys(streams));
-            strixActiveGo2rtcUrls = new Set();
-            strixActiveGo2rtcIps = new Set();
+            window.strixActiveGo2rtcStreams = new Set(Object.keys(streams));
+            window.strixActiveGo2rtcUrls = new Set();
+            window.strixActiveGo2rtcIps = new Set();
             for (const name in streams) {
                 const s = streams[name] || {};
                 const prods = s.producers || [];
                 prods.forEach(p => {
                     if (p.url) {
                         const cleanUrl = p.url.trim().toLowerCase();
-                        strixActiveGo2rtcUrls.add(cleanUrl);
+                        window.strixActiveGo2rtcUrls.add(cleanUrl);
                         const match = cleanUrl.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/);
-                        if (match) strixActiveGo2rtcIps.add(match[0]);
+                        if (match) window.strixActiveGo2rtcIps.add(match[0]);
                     }
                 });
                 const nameMatch = name.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/);
-                if (nameMatch) strixActiveGo2rtcIps.add(nameMatch[0]);
+                if (nameMatch) window.strixActiveGo2rtcIps.add(nameMatch[0]);
             }
         }
     } catch (_) {}
 }
+window.refreshStrixGo2rtcState = refreshStrixGo2rtcState;
 
 async function loadStrixResults() {
     const container = document.getElementById('strix-results');
@@ -435,9 +446,9 @@ async function loadStrixResults() {
         const response = await fetch('/api/strix/results');
         if (!response.ok) return;
         const data = await response.json();
-        strixCachedItems = data.results || [];
-        renderStrixResults(strixCachedItems);
-        updateStrixDbCounts();
+        window.strixCachedItems = data.results || [];
+        if (window.renderStrixResults) renderStrixResults(window.strixCachedItems);
+        if (window.updateStrixDbCounts) updateStrixDbCounts();
     } catch (_) {}
 }
 window.loadStrixResults = loadStrixResults;
@@ -446,11 +457,23 @@ async function clearStrixResults() {
     if (!confirm('Очистить сохранённые результаты Strix?')) return;
     try {
         await fetch('/api/strix/results', {method: 'DELETE'});
-        strixCachedItems = [];
+        window.strixCachedItems = [];
         loadStrixResults();
     } catch (_) {}
 }
 window.clearStrixResults = clearStrixResults;
+
+
+// ════════════════════════════════════════════════════════════════
+// MODULE: strix/results.js
+// ════════════════════════════════════════════════════════════════
+
+// ── Strix Scanner: Results Rendering, Filtering, and Garbage Tagging ────
+
+window.strixCachedItems = window.strixCachedItems || [];
+window.strixActiveGo2rtcStreams = window.strixActiveGo2rtcStreams || new Set();
+window.strixActiveGo2rtcUrls = window.strixActiveGo2rtcUrls || new Set();
+window.strixActiveGo2rtcIps = window.strixActiveGo2rtcIps || new Set();
 
 let strixResultsSearchQuery = '';
 let strixStatusFilter = 'all'; // 'all', 'in_go2rtc', 'not_in_go2rtc', 'garbage'
@@ -458,30 +481,30 @@ let strixHideGarbage = true;   // by default hide junk cameras unless 'garbage' 
 
 function filterStrixResultsBySearch(query) {
     strixResultsSearchQuery = (query || '').toLowerCase().trim();
-    renderStrixResults(strixCachedItems);
+    renderStrixResults(window.strixCachedItems);
 }
 window.filterStrixResultsBySearch = filterStrixResultsBySearch;
 
 function setStrixStatusFilter(filter) {
     strixStatusFilter = filter;
-    renderStrixResults(strixCachedItems);
+    renderStrixResults(window.strixCachedItems);
 }
 window.setStrixStatusFilter = setStrixStatusFilter;
 
 function toggleStrixHideGarbage(hide) {
     strixHideGarbage = hide;
-    renderStrixResults(strixCachedItems);
+    renderStrixResults(window.strixCachedItems);
 }
 window.toggleStrixHideGarbage = toggleStrixHideGarbage;
 
 async function toggleStrixGarbage(ip, isCurrentlyGarbage) {
     const newStatus = !isCurrentlyGarbage;
     // Optimistic UI update
-    const item = strixCachedItems.find(i => i.ip === ip);
+    const item = window.strixCachedItems.find(i => i.ip === ip);
     if (item) {
         item.is_garbage = newStatus;
     }
-    renderStrixResults(strixCachedItems);
+    renderStrixResults(window.strixCachedItems);
 
     try {
         const resp = await fetch(`/api/strix/results/${encodeURIComponent(ip)}/garbage`, {
@@ -497,7 +520,7 @@ async function toggleStrixGarbage(ip, isCurrentlyGarbage) {
         alert(`Не удалось изменить статус для ${ip}: ${err.message}`);
         if (item) {
             item.is_garbage = isCurrentlyGarbage;
-            renderStrixResults(strixCachedItems);
+            renderStrixResults(window.strixCachedItems);
         }
     }
 }
@@ -506,33 +529,34 @@ window.toggleStrixGarbage = toggleStrixGarbage;
 function isStreamInGo2rtc(srcUrl, camName) {
     if (!srcUrl) return false;
     const cleanUrl = srcUrl.trim().toLowerCase();
-    if (strixActiveGo2rtcUrls.has(cleanUrl)) return true;
+    if (window.strixActiveGo2rtcUrls && window.strixActiveGo2rtcUrls.has(cleanUrl)) return true;
     const noAuthUrl = cleanUrl.replace(/:\/\/[^@]+@/, '://');
-    if (strixActiveGo2rtcUrls.has(noAuthUrl)) return true;
-    if (camName && strixActiveGo2rtcStreams.has(camName)) return true;
+    if (window.strixActiveGo2rtcUrls && window.strixActiveGo2rtcUrls.has(noAuthUrl)) return true;
+    if (camName && window.strixActiveGo2rtcStreams && window.strixActiveGo2rtcStreams.has(camName)) return true;
     return false;
 }
+window.isStreamInGo2rtc = isStreamInGo2rtc;
 
 function renderStrixResults(items) {
     const container = document.getElementById('strix-results');
     if (!container) return;
     
-    // Merge items into strixCachedItems without duplicates
+    // Merge items into window.strixCachedItems without duplicates
     if (items && items.length) {
         items.forEach(newItem => {
-            const existingIdx = strixCachedItems.findIndex(ci => ci.ip === newItem.ip);
+            const existingIdx = window.strixCachedItems.findIndex(ci => ci.ip === newItem.ip);
             if (existingIdx >= 0) {
-                strixCachedItems[existingIdx] = {
+                window.strixCachedItems[existingIdx] = {
                     ...newItem,
-                    is_garbage: newItem.is_garbage !== undefined ? newItem.is_garbage : strixCachedItems[existingIdx].is_garbage
+                    is_garbage: newItem.is_garbage !== undefined ? newItem.is_garbage : window.strixCachedItems[existingIdx].is_garbage
                 };
             } else {
-                strixCachedItems.unshift(newItem);
+                window.strixCachedItems.unshift(newItem);
             }
         });
     }
 
-    const allItems = strixCachedItems.length ? strixCachedItems : (items || []);
+    const allItems = window.strixCachedItems.length ? window.strixCachedItems : (items || []);
     if (!allItems || !allItems.length) {
         container.innerHTML = '<div class="empty-state">Нет обнаруженных камер или потоков</div>';
         return;
@@ -569,7 +593,7 @@ function renderStrixResults(items) {
     let countGarbage = 0;
 
     ipGroups.forEach((group, ip) => {
-        let hasGo2rtc = strixActiveGo2rtcIps.has(ip);
+        let hasGo2rtc = window.strixActiveGo2rtcIps && window.strixActiveGo2rtcIps.has(ip);
         if (!hasGo2rtc) {
             hasGo2rtc = (group.streams || []).some((st, idx) => {
                 const camName = `strix_${ip.replace(/[^a-zA-Z0-9]/g, '_')}_${idx+1}`;
@@ -814,6 +838,7 @@ function renderStrixResults(items) {
     // Attach IntersectionObserver for lazy loading images viewport-only
     initStrixLazyLoading();
 }
+window.renderStrixResults = renderStrixResults;
 
 let strixImageObserver = null;
 function initStrixLazyLoading() {
@@ -863,6 +888,7 @@ function initStrixLazyLoading() {
         });
     });
 }
+window.initStrixLazyLoading = initStrixLazyLoading;
 
 function toggleAllStrixGroups(open) {
     document.querySelectorAll('#strix-results details').forEach(d => d.open = open);
@@ -879,6 +905,13 @@ function copyToClipboard(text) {
 }
 window.copyToClipboard = copyToClipboard;
 
+
+// ════════════════════════════════════════════════════════════════
+// MODULE: strix/player.js
+// ════════════════════════════════════════════════════════════════
+
+// ── Strix Scanner: Stream Player Dialog, Quick Go2rtc, and PTZ ──
+
 async function quickAddGo2rtc(name, url) {
     try {
         const response = await fetch("/api/go2rtc/streams", {
@@ -888,11 +921,11 @@ async function quickAddGo2rtc(name, url) {
         });
         const data = await response.json();
         if (!response.ok) throw new Error(data.detail || "Ошибка добавления в go2rtc");
-        if (name) strixActiveGo2rtcStreams.add(name);
-        if (url) strixActiveGo2rtcUrls.add(url.trim().toLowerCase());
+        if (name && window.strixActiveGo2rtcStreams) window.strixActiveGo2rtcStreams.add(name);
+        if (url && window.strixActiveGo2rtcUrls) window.strixActiveGo2rtcUrls.add(url.trim().toLowerCase());
         alert(`Камера "${name}" успешно добавлена в go2rtc!`);
         if (window.loadGo2rtcStreams) loadGo2rtcStreams();
-        renderStrixResults(strixCachedItems);
+        if (window.renderStrixResults && window.strixCachedItems) renderStrixResults(window.strixCachedItems);
     } catch (err) {
         alert(err.message);
     }
@@ -904,7 +937,7 @@ async function openStrixStreamPlayer(srcUrl, camName, ip, currentIdx = 0) {
     
     // Find all streams for this IP group to enable switching
     let ipGroupStreams = [];
-    const ipItem = strixCachedItems.find(item => item.ip === ip);
+    const ipItem = (window.strixCachedItems || []).find(item => item.ip === ip);
     if (ipItem && ipItem.streams && ipItem.streams.length > 0) {
         ipGroupStreams = ipItem.streams;
     }
@@ -1136,10 +1169,9 @@ window.sendPTZ = sendPTZ;
 if (typeof document !== 'undefined') {
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', () => {
-            updateStrixDbCounts();
+            if (window.updateStrixDbCounts) updateStrixDbCounts();
         });
     } else {
-        updateStrixDbCounts();
+        if (window.updateStrixDbCounts) updateStrixDbCounts();
     }
 }
-

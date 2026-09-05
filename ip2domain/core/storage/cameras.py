@@ -99,6 +99,15 @@ class CamerasStorageMixin:
             """, rows)
             conn.commit()
 
+    def delete_cameras(self, provider_id: str) -> int:
+        provider_id = provider_id.strip().lower()
+        if not provider_id:
+            return 0
+        with self._get_connection() as conn:
+            cursor = conn.execute("DELETE FROM camera_catalog WHERE provider_id = ?", (provider_id,))
+            conn.commit()
+            return cursor.rowcount
+
     def get_camera(self, provider_id: str, external_id: str) -> Optional[Dict[str, any]]:
         with self._get_connection() as conn:
             row = conn.execute("""
