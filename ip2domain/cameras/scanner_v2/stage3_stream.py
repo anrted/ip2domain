@@ -133,29 +133,49 @@ async def capture_stream_frame(
     return False, "", "", 0, 0
 
 
-def _is_safe_snapshot_url(url: str) -> bool:
-    """Validate snapshot URL to prevent SSRF against cloud metadata or prohibited targets."""
-    if not url or not isinstance(url, str):
-        return False
+def _build_safe_snapshot_url(raw_url: str) -> Optional[str]:
+    """Validate snapshot URL and reconstruct from sanitized components to prevent SSRF."""
+    if not raw_url or not isinstance(raw_url, str):
+        return None
     try:
-        parsed = urllib.parse.urlparse(url)
+        parsed = urllib.parse.urlsplit(raw_url)
         if parsed.scheme not in ("http", "https"):
-            return False
+            return None
         host = parsed.hostname
         if not host:
-            return False
-        host_lower = host.lower().strip("[]")
-        if host_lower in ("metadata.google.internal", "metadata", "instance-data", "169.254.169.254"):
-            return False
+            return None
+        host_clean = host.strip("[]").lower()
+        if host_clean in ("metadata.google.internal", "metadata", "instance-data", "169.254.169.254", "localhost"):
+            return None
         try:
-            ip_obj = ipaddress.ip_address(host_lower)
-            if ip_obj.is_link_local:
-                return False
+            ip_obj = ipaddress.ip_address(host_clean)
+            if ip_obj.is_loopback or ip_obj.is_link_local or ip_obj.is_multicast or ip_obj.is_reserved:
+                return None
+            if ip_obj.version == 4:
+                n = int(ip_obj)
+                clean_host = f"{(n >> 24) & 0xFF}.{(n >> 16) & 0xFF}.{(n >> 8) & 0xFF}.{n & 0xFF}"
+            else:
+                clean_host = f"[{ip_obj}]"
         except ValueError:
-            pass
-        return True
+            if not re.fullmatch(r"^[a-zA-Z0-9]([a-zA-Z0-9\-\.]{0,61}[a-zA-Z0-9])?$", host_clean):
+                return None
+            if any(b in host_clean for b in ("metadata", "internal", "localhost")):
+                return None
+            clean_host = host_clean
+
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        clean_port = int(port) if 1 <= int(port) <= 65535 else (443 if parsed.scheme == "https" else 80)
+
+        clean_path = parsed.path if parsed.path.startswith("/") else f"/{parsed.path}"
+        if not re.fullmatch(r"^/[a-zA-Z0-9/_.\-~%]*$", clean_path):
+            return None
+
+        reconstructed = f"{parsed.scheme}://{clean_host}:{clean_port}{clean_path}"
+        if parsed.query and re.fullmatch(r"^[a-zA-Z0-9/_.\-~%=&+]*$", parsed.query):
+            reconstructed += f"?{parsed.query}"
+        return reconstructed
     except Exception:
-        return False
+        return None
 
 
 async def _download_http_snapshot(
@@ -164,13 +184,14 @@ async def _download_http_snapshot(
     credentials: Optional[dict] = None,
 ) -> Optional[str]:
     """Download JPEG snapshot from HTTP camera and save locally."""
-    if not _is_safe_snapshot_url(url):
+    safe_url = _build_safe_snapshot_url(url)
+    if not safe_url:
         logger.debug("[v2 Stage3] Prohibited or invalid snapshot URL: %s", url)
         return None
 
     import httpx
     capture_dir.mkdir(parents=True, exist_ok=True)
-    out_path = _capture_path(capture_dir, url)
+    out_path = _capture_path(capture_dir, safe_url)
 
     user = credentials.get("user") if credentials else ""
     password = credentials.get("password", "") if credentials else ""
@@ -178,9 +199,9 @@ async def _download_http_snapshot(
     try:
         async with httpx.AsyncClient(verify=False, timeout=4.0, follow_redirects=True) as client:
             auth = httpx.DigestAuth(user, password) if user else None
-            resp = await client.get(url, auth=auth)
+            resp = await client.get(safe_url, auth=auth)
             if resp.status_code == 401 and user:
-                resp = await client.get(url, auth=(user, password))
+                resp = await client.get(safe_url, auth=(user, password))
             content = resp.content or b""
             # Must be a real image with at least 1 KB of data
             is_valid_image = (

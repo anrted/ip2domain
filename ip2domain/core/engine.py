@@ -140,6 +140,8 @@ class LookupEngine:
                         ctx = ssl.create_default_context()
                         ctx.check_hostname = False
                         ctx.verify_mode = ssl.CERT_NONE
+                        if hasattr(ssl, "TLSVersion"):
+                            ctx.minimum_version = ssl.TLSVersion.TLSv1_2
                         with socket.create_connection((ip, port), timeout=2.0) as sock:
                             with ctx.wrap_socket(sock, server_hostname=server_name) as ssock:
                                 der = ssock.getpeercert(binary_form=True)

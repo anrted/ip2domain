@@ -59,6 +59,6 @@ def test_explicit_subdomain_different_from_wildcard_is_kept(monkeypatch):
         )
         assert resolved["example.com"] == {"203.0.113.10"}
         assert resolved["real.example.com"] == {"203.0.113.20"}
-        assert "ghost.example.com" in rejected
+        assert any(d == "ghost.example.com" for d in rejected)
 
     asyncio.run(_test())

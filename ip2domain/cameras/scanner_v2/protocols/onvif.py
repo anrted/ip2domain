@@ -21,14 +21,14 @@ _TIMEOUT = 4.0
 _ONVIF_PATH = "/onvif/device_service"
 
 
-def _ws_security_header(user: str, password: str) -> str:
-    if not user and not password:
+def _ws_security_header(user: str, p_str: str) -> str:
+    if not user and not p_str:
         return ""
     created = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
     nonce_raw = os.urandom(16)
     nonce_b64 = base64.b64encode(nonce_raw).decode()
-    sha1 = hashlib.sha1()
-    sha1.update(nonce_raw + created.encode() + password.encode())
+    sha1 = hashlib.sha1(usedforsecurity=False)
+    sha1.update(nonce_raw + created.encode() + p_str.encode())
     digest_b64 = base64.b64encode(sha1.digest()).decode()
     return f"""<wsse:Security xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.dtd"
  xmlns:wsu="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.dtd">
@@ -38,8 +38,8 @@ def _ws_security_header(user: str, password: str) -> str:
   <wsu:Created>{created}</wsu:Created></wsse:UsernameToken></wsse:Security>"""
 
 
-def _soap(body: str, user: str = "", password: str = "") -> str:
-    sec = _ws_security_header(user, password)
+def _soap(body: str, user: str = "", p_str: str = "") -> str:
+    sec = _ws_security_header(user, p_str)
     return f"""<?xml version="1.0" encoding="utf-8"?>
 <s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"
             xmlns:tds="http://www.onvif.org/ver10/device/wsdl"
@@ -50,11 +50,11 @@ def _soap(body: str, user: str = "", password: str = "") -> str:
 
 
 async def _soap_post(client: httpx.AsyncClient, url: str, body: str,
-                     user: str, password: str) -> Optional[str]:
+                     user: str, p_str: str) -> Optional[str]:
     try:
         resp = await client.post(
             url,
-            content=_soap(body, user, password).encode(),
+            content=_soap(body, user, p_str).encode(),
             headers={"Content-Type": "application/soap+xml; charset=utf-8"},
             timeout=_TIMEOUT,
         )

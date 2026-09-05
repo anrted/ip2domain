@@ -70,17 +70,18 @@ def _centra_capture_is_stale(path: Path, ttl: int) -> bool:
 async def _generate_centra_screenshot(camera_id: str, camera: dict, path: Path,
                                       ffmpeg: Optional[str],
                                       ffmpeg_semaphore: Optional[asyncio.Semaphore] = None) -> None:
-    safe_camera_id = re.sub(r"[^a-zA-Z0-9_\-]", "", camera_id)
+    safe_camera_id = os.path.basename(re.sub(r"[^a-zA-Z0-9_\-]", "", camera_id))
     if not safe_camera_id:
         raise HTTPException(status_code=400, detail="Некорректная камера Centra")
 
     base_dir = CENTRA_CAPTURE_DIR.resolve()
-    resolved_path = path.resolve()
-    if not resolved_path.is_relative_to(base_dir):
+    safe_file_name = os.path.basename(f"{safe_camera_id}.jpg")
+    safe_tmp_name = os.path.basename(f"{safe_camera_id}.tmp.jpg")
+    resolved_path = (base_dir / safe_file_name).resolve()
+    temporary = (base_dir / safe_tmp_name).resolve()
+    if not resolved_path.is_relative_to(base_dir) or not temporary.is_relative_to(base_dir):
         raise HTTPException(status_code=400, detail="Недопустимый путь к файлу")
-    temporary = resolved_path.with_suffix(".tmp.jpg")
-    if not temporary.resolve().is_relative_to(base_dir):
-        raise HTTPException(status_code=400, detail="Недопустимый путь к файлу")
+    path = resolved_path
 
     lock = CENTRA_CAPTURE_LOCKS.setdefault(safe_camera_id, asyncio.Lock())
     async with lock:

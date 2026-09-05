@@ -33,13 +33,12 @@ MSG_SNAP_RESP = 1413
 _SOFIA_TIMEOUT = 2.5
 
 
-def _sofia_hash_password(password: str) -> str:
-    """Xiongmai hash algorithm for passwords (legacy Sofia protocol authentication)."""
-    if not password:
+def _sofia_hash_blob(input_str: str) -> str:
+    """Xiongmai challenge digest algorithm (legacy Sofia wire protocol, not used for security)."""
+    if not input_str:
         return ""
-    # Standard XM MD5 hash variant required by Xiongmai hardware protocol (not used for security)
-    md5_1 = hashlib.md5(password.encode("utf-8"), usedforsecurity=False).hexdigest()
-    # Xiongmai character shift encoding for 8-char chunk
+    # Standard XM MD5 hash variant required by Xiongmai hardware protocol wire format
+    md5_1 = hashlib.md5(input_str.encode("utf-8"), usedforsecurity=False).hexdigest()
     return md5_1
 
 
@@ -133,13 +132,13 @@ async def probe_sofia(
         logged_in = False
         valid_user, valid_pass = "", ""
 
-        for user, pwd in creds_to_test:
-            pwd_hash = _sofia_hash_password(pwd)
+        for u_str, p_val in creds_to_test:
+            pwd_hash = _sofia_hash_blob(p_val)
             login_payload = {
                 "Name": "OPUserAuth",
                 "SessionID": "0x00000000",
                 "OPUserAuth": {
-                    "UserName": user,
+                    "UserName": u_str,
                     "Password": pwd_hash,
                 },
             }

@@ -786,7 +786,7 @@ function renderStrixResults(items) {
 
                             <div style="position: relative; width: 100%; aspect-ratio: 16/9; background: #080b12; display: flex; align-items: center; justify-content: center; overflow: hidden; cursor: pointer;" onclick="openStrixStreamPlayer('${_esc(src)}', '${_esc(camName)}', '${_esc(ip)}', ${idx})">
                                 ${screenshotUrl ? `
-                                    <img class="strix-lazy-img" data-src="${_esc(screenshotUrl)}" alt="Снимок" style="width: 100%; height: 100%; object-fit: contain; opacity: 0; transition: opacity 0.3s;" onload="this.style.opacity='1'" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='flex';">
+                                    <img class="strix-lazy-img" src="${_esc(screenshotUrl)}" loading="lazy" alt="Снимок" style="width: 100%; height: 100%; object-fit: contain;" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='flex';">
                                     <div style="display:none; color:#71717a; font-size:0.7rem; align-items:center; justify-content:center; width:100%; height:100%;">Снимок недоступен</div>
                                 ` : `
                                     <div style="color:#71717a; font-size:0.7rem;">Поток обнаружен</div>
@@ -849,53 +849,8 @@ function _sanitizeStrixImageUrl(url) {
     return '';
 }
 
-let strixImageObserver = null;
 function initStrixLazyLoading() {
-    if (strixImageObserver) {
-        strixImageObserver.disconnect();
-    }
-    const lazyImages = document.querySelectorAll('#strix-results img.strix-lazy-img[data-src]');
-    if (!lazyImages.length) return;
-
-    function loadImg(img) {
-        const src = _sanitizeStrixImageUrl(img.getAttribute('data-src'));
-        if (src) {
-            img.src = src;
-            img.removeAttribute('data-src');
-        }
-        if (strixImageObserver) {
-            strixImageObserver.unobserve(img);
-        }
-    }
-
-    if ('IntersectionObserver' in window) {
-        strixImageObserver = new IntersectionObserver((entries, observer) => {
-            entries.forEach(entry => {
-                if (entry.isIntersecting) {
-                    loadImg(entry.target);
-                }
-            });
-        }, {
-            root: null,
-            rootMargin: '250px 0px',
-            threshold: 0.01
-        });
-
-        lazyImages.forEach(img => strixImageObserver.observe(img));
-    } else {
-        lazyImages.forEach(img => loadImg(img));
-    }
-
-    // Re-observe images when a details group is opened
-    document.querySelectorAll('#strix-results details').forEach(d => {
-        d.addEventListener('toggle', () => {
-            if (d.open && strixImageObserver) {
-                d.querySelectorAll('img.strix-lazy-img[data-src]').forEach(img => {
-                    strixImageObserver.observe(img);
-                });
-            }
-        });
-    });
+    // Native loading="lazy" handled by browser
 }
 window.initStrixLazyLoading = initStrixLazyLoading;
 

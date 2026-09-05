@@ -399,16 +399,18 @@ def get_centra_screens(offset: int = Query(default=0, ge=0),
 
 @router.get("/api/cameras/centra/screens/{camera_id}.jpg")
 async def get_centra_screenshot(camera_id: str, refresh: bool = False):
-    if not re.fullmatch(r"[A-Z]-\d+-\d+", camera_id, re.IGNORECASE):
+    safe_name = os.path.basename(camera_id)
+    if not re.fullmatch(r"^[A-Za-z0-9_\-]+$", safe_name) or ".." in safe_name:
         raise HTTPException(status_code=404, detail="Камера не найдена")
-    safe_camera_id = re.sub(r"[^A-Za-z0-9_\-]", "", camera_id).upper()
+    safe_camera_id = safe_name.upper()
     camera = storage.get_centra_camera(safe_camera_id)
     if not camera or not camera.get("available", True):
         raise HTTPException(status_code=404, detail="Камера не найдена")
     _cleanup_centra_captures()
     ffmpeg = shutil.which("ffmpeg")
     base_dir = CENTRA_CAPTURE_DIR.resolve()
-    resolved_path = (base_dir / f"{safe_camera_id}.jpg").resolve()
+    safe_filename = os.path.basename(f"{safe_camera_id}.jpg")
+    resolved_path = (base_dir / safe_filename).resolve()
     if not resolved_path.is_relative_to(base_dir):
         raise HTTPException(status_code=400, detail="Некорректный путь")
     path = resolved_path
@@ -577,9 +579,12 @@ def reset_centra_person_identities():
 
 @router.get("/api/remote-desktop/capture/{capture_id}")
 def get_remote_desktop_capture(capture_id: str):
-    if not re.fullmatch(r"[a-f0-9]{32}", capture_id):
+    safe_name = os.path.basename(capture_id)
+    if not re.fullmatch(r"[a-f0-9]{32}", safe_name) or ".." in safe_name:
         raise HTTPException(status_code=404, detail="Снимок не найден")
-    path = REMOTE_CAPTURE_DIR / f"{capture_id}.png"
-    if not path.is_file():
+    base_dir = REMOTE_CAPTURE_DIR.resolve()
+    safe_filename = os.path.basename(f"{safe_name}.png")
+    path = (base_dir / safe_filename).resolve()
+    if not path.is_relative_to(base_dir) or not path.is_file():
         raise HTTPException(status_code=404, detail="Снимок не найден")
-    return FileResponse(path, media_type="image/png", headers={"Cache-Control": "private, no-store"})
+    return FileResponse(str(path), media_type="image/png", headers={"Cache-Control": "private, no-store"})

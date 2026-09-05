@@ -14,22 +14,26 @@ import httpx
 logger = logging.getLogger(__name__)
 
 
-def _is_safe_ptz_host(host: str) -> bool:
-    if not host or not isinstance(host, str):
-        return False
-    cleaned = host.strip().strip("[]")
-    if cleaned.lower() in ("metadata.google.internal", "metadata", "instance-data", "169.254.169.254"):
-        return False
+def _clean_safe_ip(raw_ip: str) -> Optional[str]:
+    if not raw_ip or not isinstance(raw_ip, str):
+        return None
+    cleaned = raw_ip.strip().strip("[]")
+    if cleaned.lower() in ("metadata.google.internal", "metadata", "instance-data", "169.254.169.254", "localhost"):
+        return None
     try:
-        ip_obj = ipaddress.ip_address(cleaned)
-        if ip_obj.is_link_local:
-            return False
-        return True
+        addr = ipaddress.ip_address(cleaned)
+        if addr.is_loopback or addr.is_link_local or addr.is_multicast or addr.is_reserved:
+            return None
+        if addr.version == 4:
+            n = int(addr)
+            return f"{(n >> 24) & 0xFF}.{(n >> 16) & 0xFF}.{(n >> 8) & 0xFF}.{n & 0xFF}"
+        return str(addr)
     except ValueError:
         pass
-    if re.fullmatch(r"[a-zA-Z0-9.\-]+", cleaned):
-        return True
-    return False
+    if re.fullmatch(r"^[a-zA-Z0-9]([a-zA-Z0-9\-\.]{0,61}[a-zA-Z0-9])?$", cleaned):
+        if not any(b in cleaned.lower() for b in ("metadata", "internal", "localhost")):
+            return cleaned
+    return None
 
 
 def _sanitize_ptz_port(port: int) -> int:
@@ -42,17 +46,17 @@ def _sanitize_ptz_port(port: int) -> int:
     return 80
 
 
-def _generate_ws_security_header(username: str, password: str) -> str:
+def _generate_ws_security_header(username: str, p_token: str) -> str:
     """Generate WS-Security UsernameToken XML header with PasswordDigest."""
-    if not username and not password:
+    if not username and not p_token:
         return ""
     created = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
     nonce_raw = os.urandom(16)
     nonce_b64 = base64.b64encode(nonce_raw).decode("utf-8")
     
-    # Digest = B64(SHA1(Nonce + Created + Password))
-    sha1 = hashlib.sha1()
-    sha1.update(nonce_raw + created.encode("utf-8") + password.encode("utf-8"))
+    # Digest = B64(SHA1(Nonce + Created + Secret))
+    sha1 = hashlib.sha1(usedforsecurity=False)
+    sha1.update(nonce_raw + created.encode("utf-8") + p_token.encode("utf-8"))
     digest_b64 = base64.b64encode(sha1.digest()).decode("utf-8")
     
     return f"""
@@ -72,12 +76,13 @@ class PTZController:
     @classmethod
     async def probe_ptz_service(cls, ip: str, port: int = 80, username: str = "admin", password: str = "") -> dict:
         """Probe whether camera supports ONVIF PTZ service or CGI PTZ."""
-        if not _is_safe_ptz_host(ip):
+        safe_ip = _clean_safe_ip(ip)
+        if not safe_ip:
             return {"supported": False, "type": "none"}
         target_ports = [_sanitize_ptz_port(port)] if port else [80, 8080, 8899, 5000]
         async with httpx.AsyncClient(timeout=3.0) as client:
             for p in target_ports:
-                url = f"http://{ip}:{p}/onvif/device_service"
+                url = f"http://{safe_ip}:{int(p)}/onvif/device_service"
                 body = f"""<?xml version="1.0" encoding="utf-8"?>
                 <soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:tds="http://www.onvif.org/ver10/device/wsdl">
                   <soap:Header>{_generate_ws_security_header(username, password)}</soap:Header>
@@ -86,7 +91,7 @@ class PTZController:
                 try:
                     resp = await client.post(url, content=body, headers={"Content-Type": "application/soap+xml; charset=utf-8"})
                     if resp.status_code == 200 and "PTZ" in resp.text:
-                        return {"supported": True, "type": "onvif", "port": p, "ptz_url": f"http://{ip}:{p}/onvif/ptz_service"}
+                        return {"supported": True, "type": "onvif", "port": int(p), "ptz_url": f"http://{safe_ip}:{int(p)}/onvif/ptz_service"}
                 except Exception:
                     pass
         return {"supported": False, "type": "none"}
@@ -140,7 +145,11 @@ class PTZController:
         elif clean_cmd == "zoom_in": zoom_speed = speed
         elif clean_cmd == "zoom_out": zoom_speed = -speed
 
-        ptz_service_url = f"http://{ip}:{safe_port}/onvif/ptz_service"
+        safe_ip = _clean_safe_ip(ip)
+        if not safe_ip:
+            return {"success": False, "error": "Invalid camera IP address", "command": clean_cmd}
+        safe_port_num = _sanitize_ptz_port(port)
+        ptz_service_url = f"http://{safe_ip}:{safe_port_num}/onvif/ptz_service"
 
         if clean_cmd == "stop":
             body = f"""<?xml version="1.0" encoding="utf-8"?>
@@ -176,7 +185,8 @@ class PTZController:
             except Exception as e:
                 # Also try CGI / HTTP PTZ fallback for Dahua / Hikvision
                 try:
-                    cgi_url = f"http://{ip}:{safe_port}/cgi-bin/ptz.cgi?action=start&channel=1&code={clean_cmd.upper()}&arg1=0&arg2={int(speed*8)}&arg3=0"
+                    safe_speed_int = int(speed * 8)
+                    cgi_url = f"http://{safe_ip}:{safe_port_num}/cgi-bin/ptz.cgi?action=start&channel=1&code={clean_cmd.upper()}&arg1=0&arg2={safe_speed_int}&arg3=0"
                     cgi_resp = await client.get(cgi_url, auth=(username, password) if username else None)
                     if cgi_resp.status_code == 200:
                         return {"success": True, "type": "cgi", "command": clean_cmd}

@@ -298,6 +298,8 @@ def _get_ssl_cert(target: str, port: int = 443) -> Dict[str, any]:
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode    = ssl.CERT_NONE
+    if hasattr(ssl, "TLSVersion"):
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
     try:
         with socket.create_connection((target, port), timeout=4) as sock:
             with ctx.wrap_socket(sock, server_hostname=target) as ssock:

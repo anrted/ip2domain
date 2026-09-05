@@ -38,7 +38,7 @@ def test_stack_adaptation():
     tech_stack = ["ASP.NET", "Bitrix", "IIS", "Microsoft-IIS", "PHP"]
     adapted = scanner.configure_for_stack(tech_stack)
 
-    assert "ASP.NET" in adapted or "asp.net" in [a.lower() for a in adapted]
+    assert any(a.upper() == "ASP.NET" for a in adapted)
     assert "http-iis-short-name-brute" in scanner.nmap_args
     assert "http-vuln-cve2015-1635" in scanner.nmap_args
     assert "-Tuning" in scanner.nikto_args

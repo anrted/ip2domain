@@ -169,24 +169,13 @@ def main():
         from ip2domain.web.app import app
         print(f"[*] Starting ip2domain Web UI server on http://{args.host}:{args.port}")
         print(f"[*] Access the Web UI in your browser at: http://localhost:{args.port} (or http://SERVER_IP:{args.port})")
-        if generated_token or (admin_credentials and admin_credentials[2]):
-            from pathlib import Path
-            secret_file = Path(".admin_bootstrap_secret")
-            lines = []
-            if admin_credentials:
-                username, password, generated = admin_credentials
-                print(f"[*] Created Web UI administrator: {username}")
-                if generated:
-                    lines.append(f"Admin Username: {username}")
-                    lines.append(f"Admin Password: {password}")
-            if generated_token:
-                lines.append(f"API Token: {generated_token}")
-            secret_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
-            try:
-                os.chmod(secret_file, 0o600)
-            except OSError:
-                pass
-            print(f"[*] Bootstrap credentials securely saved to {secret_file.resolve()} (chmod 600).")
+        if admin_credentials:
+            username, password, generated = admin_credentials
+            print(f"[*] Web UI administrator: {username}")
+            if generated:
+                print(f"[*] Generated password: {password}")
+        if generated_token:
+            print(f"[*] Generated API Token: {generated_token}")
         uvicorn.run("ip2domain.web.app:app", host=args.host, port=args.port)
         sys.exit(0)
 

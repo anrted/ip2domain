@@ -405,8 +405,18 @@ async def get_strix_stream_preview(url: str = Query(..., description="RTSP / HTT
 @router.get("/api/strix/screenshot/{session_id}/{index}")
 async def proxy_strix_screenshot(session_id: str, index: int):
     """Proxy screenshot from Strix test session or fallback to saved stream capture."""
-    safe_session = re.sub(r'[^a-zA-Z0-9_-]', '_', session_id)
-    cache_file = STRIX_CAPTURE_DIR / f"{safe_session}_{index}.jpg"
+    safe_session = os.path.basename(session_id)
+    if not re.fullmatch(r"^[a-zA-Z0-9_\-]+$", safe_session) or ".." in safe_session:
+        raise HTTPException(status_code=400, detail="Invalid session_id")
+    safe_index = int(index)
+    if safe_index < 0 or safe_index > 10000:
+        raise HTTPException(status_code=400, detail="Invalid index")
+
+    base_dir = STRIX_CAPTURE_DIR.resolve()
+    safe_cache_name = os.path.basename(f"{safe_session}_{safe_index}.jpg")
+    cache_file = (base_dir / safe_cache_name).resolve()
+    if not cache_file.is_relative_to(base_dir):
+        raise HTTPException(status_code=400, detail="Invalid path")
 
     if cache_file.exists() and cache_file.stat().st_size > 0:
         return Response(
@@ -417,7 +427,7 @@ async def proxy_strix_screenshot(session_id: str, index: int):
 
     try:
         async with httpx.AsyncClient(timeout=6.0) as client:
-            resp = await client.get(f"{STRIX_API_URL}/api/test/screenshot", params={"id": session_id, "i": index})
+            resp = await client.get(f"{STRIX_API_URL}/api/test/screenshot", params={"id": safe_session, "i": safe_index})
             if resp.status_code == 200 and len(resp.content) > 0:
                 try:
                     cache_file.write_bytes(resp.content)
@@ -435,17 +445,20 @@ async def proxy_strix_screenshot(session_id: str, index: int):
     try:
         db_results = storage.get_strix_results()
         for item in db_results:
-            if item.get("session_id") == session_id:
+            if item.get("session_id") == safe_session:
                 streams = item.get("streams") or []
-                if 0 <= index < len(streams):
-                    stream_url = streams[index].get("source")
+                if 0 <= safe_index < len(streams):
+                    stream_url = streams[safe_index].get("source")
                     break
     except Exception:
         pass
 
     if stream_url:
-        url_hash = hashlib.md5(stream_url.encode('utf-8')).hexdigest()
-        hash_file = STRIX_CAPTURE_DIR / f"{url_hash}.jpg"
+        url_hash = hashlib.md5(stream_url.encode('utf-8'), usedforsecurity=False).hexdigest()
+        safe_hash_name = os.path.basename(f"{url_hash}.jpg")
+        hash_file = (base_dir / safe_hash_name).resolve()
+        if not hash_file.is_relative_to(base_dir):
+            raise HTTPException(status_code=400, detail="Invalid path")
         if hash_file.exists() and hash_file.stat().st_size > 0:
             try:
                 cache_file.write_bytes(hash_file.read_bytes())

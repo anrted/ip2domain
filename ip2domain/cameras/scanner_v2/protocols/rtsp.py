@@ -349,7 +349,7 @@ def _format_rtsp_url(ip: str, port: int, path: str, user: str = "", password: st
     return f"rtsp://{ip}:{port}{path}"
 
 
-def _build_digest_header(user: str, password: str, method: str, url: str, www_auth: str) -> str:
+def _build_digest_header(user: str, cred_val: str, method: str, url: str, www_auth: str) -> str:
     """Build RFC 2617 RTSP Digest Authorization header from 401 WWW-Authenticate challenge."""
     realm_m = re.search(r'realm=["\']?([^"\',\r\n]+)["\']?', www_auth, re.IGNORECASE)
     nonce_m = re.search(r'nonce=["\']?([^"\',\r\n]+)["\']?', www_auth, re.IGNORECASE)
@@ -357,10 +357,9 @@ def _build_digest_header(user: str, password: str, method: str, url: str, www_au
         return ""
     realm = realm_m.group(1).strip()
     nonce = nonce_m.group(1).strip()
-    import hashlib
     def md5(s: str) -> str:
-        return hashlib.md5(s.encode()).hexdigest()
-    ha1 = md5(f"{user}:{realm}:{password}")
+        return hashlib.md5(s.encode(), usedforsecurity=False).hexdigest()
+    ha1 = md5(f"{user}:{realm}:{cred_val}")
     ha2 = md5(f"{method}:{url}")
     resp = md5(f"{ha1}:{nonce}:{ha2}")
     return f'Authorization: Digest username="{user}", realm="{realm}", nonce="{nonce}", uri="{url}", response="{resp}"\r\n'
@@ -481,13 +480,13 @@ async def probe_rtsp_direct(
                 # If 401 or WWW-Authenticate header, try Digest and Basic credentials
                 if "401" in desc or "WWW-Authenticate" in desc:
                     authed = False
-                    for user, password in (credentials or [("admin", "admin"), ("admin", "12345"), ("admin", "123456"), ("admin", ""), ("root", "root"), ("root", "")])[:4]:
+                    for u_item, p_item in (credentials or [("admin", "admin"), ("admin", "12345"), ("admin", "123456"), ("admin", ""), ("root", "root"), ("root", "")])[:4]:
                         headers_to_try = []
                         if "digest" in desc.lower():
-                            d_hdr = _build_digest_header(user, password, "DESCRIBE", url, desc)
+                            d_hdr = _build_digest_header(u_item, p_item, "DESCRIBE", url, desc)
                             if d_hdr:
                                 headers_to_try.append(d_hdr)
-                        token = base64.b64encode(f"{user}:{password}".encode()).decode()
+                        token = base64.b64encode(f"{u_item}:{p_item}".encode()).decode()
                         headers_to_try.append(f"Authorization: Basic {token}\r\n")
 
                         for auth_hdr in headers_to_try:

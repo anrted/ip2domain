@@ -244,9 +244,11 @@ async def add_to_go2rtc(
 @router.get("/capture")
 async def serve_capture(path: str = Query(...)):
     """Serve a v2 screenshot by path or filename."""
-    filename = Path(path).name
+    safe_name = os.path.basename(path)
+    if not re.fullmatch(r"^[a-zA-Z0-9_\-\.]+\.(jpg|jpeg|png)$", safe_name) or ".." in safe_name:
+        raise HTTPException(status_code=400, detail="Screenshot not found or invalid")
     base_dir = _V2_CAPTURE_DIR.resolve()
-    target = (base_dir / filename).resolve()
+    target = (base_dir / safe_name).resolve()
     if not target.is_relative_to(base_dir) or not target.is_file():
         raise HTTPException(status_code=404, detail="Screenshot not found or invalid")
     if target.stat().st_size < 1000:
