@@ -1,8 +1,10 @@
 """go2rtc WebRTC and WebSocket streaming proxy endpoints."""
 import asyncio
 import hashlib
+import logging
 import re
 import shutil
+import urllib.parse
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query, Request, Response, WebSocket
 from fastapi.responses import HTMLResponse
@@ -11,6 +13,7 @@ import websockets
 
 from ip2domain.web.routers.common import GO2RTC_API_URL, GO2RTC_WS_URL, STRIX_CAPTURE_DIR, STRIX_FFMPEG_SEMAPHORE
 
+logger = logging.getLogger(__name__)
 router = APIRouter(tags=["go2rtc"])
 
 async def _extract_frame_fallback(stream_url: str, output_file: Path) -> bool:
@@ -107,7 +110,8 @@ async def get_go2rtc_status():
             resp = await client.get(f"{GO2RTC_API_URL}/api/streams")
             return {"online": resp.status_code == 200, "url": GO2RTC_API_URL}
     except Exception as exc:
-        return {"online": False, "url": GO2RTC_API_URL, "error": str(exc)}
+        logger.debug("go2rtc status check failed: %s", exc)
+        return {"online": False, "url": GO2RTC_API_URL, "error": "Connection failed"}
 
 @router.get("/api/go2rtc/streams")
 async def get_go2rtc_streams():
@@ -121,9 +125,12 @@ async def get_go2rtc_streams():
                     "streams": streams,
                     "meta": meta,
                 }
-            raise HTTPException(status_code=resp.status_code, detail=resp.text)
+            raise HTTPException(status_code=resp.status_code, detail="Failed to fetch streams")
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        logger.warning("Failed to retrieve go2rtc streams: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to retrieve go2rtc streams")
 
 @router.post("/api/go2rtc/streams")
 async def add_go2rtc_stream(req: Request):
@@ -149,20 +156,18 @@ async def add_go2rtc_stream(req: Request):
     for u in url_list:
         candidates = [u]
         
-        # Strip empty/broken creds: admin:@, :@
-        no_empty_creds = re.sub(r'rtsp://[a-zA-Z0-9_-]+:@', 'rtsp://', u)
-        no_empty_creds = re.sub(r'rtsp://:@', 'rtsp://', no_empty_creds)
-        if no_empty_creds not in candidates:
-            candidates.append(no_empty_creds)
-            
-        # Completely anonymous candidate (without any user/password)
-        no_creds = re.sub(r'rtsp://[^@]+@', 'rtsp://', u)
-        if no_creds not in candidates:
-            candidates.append(no_creds)
-            
-        # If credentials were admin: or empty, test admin:admin
-        if 'admin:@' in u or 'rtsp://' in no_creds:
-            admin_admin = re.sub(r'rtsp://([^@]+@)?', 'rtsp://admin:admin@', no_creds)
+        parsed = urllib.parse.urlsplit(u)
+        if parsed.scheme in ("rtsp", "rtsps"):
+            netloc = parsed.netloc
+            host_port = netloc.split("@")[-1]
+
+            # Completely anonymous candidate (without any user/password)
+            anon_url = urllib.parse.urlunsplit((parsed.scheme, host_port, parsed.path, parsed.query, parsed.fragment))
+            if anon_url not in candidates:
+                candidates.append(anon_url)
+
+            # admin:admin candidate
+            admin_admin = urllib.parse.urlunsplit((parsed.scheme, f"admin:admin@{host_port}", parsed.path, parsed.query, parsed.fragment))
             if admin_admin not in candidates:
                 candidates.append(admin_admin)
 
@@ -209,7 +214,8 @@ async def add_go2rtc_stream(req: Request):
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        logger.warning("Failed to add go2rtc stream: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to add go2rtc stream")
 
 @router.delete("/api/go2rtc/streams/{name}")
 async def delete_go2rtc_stream(name: str):
@@ -218,7 +224,8 @@ async def delete_go2rtc_stream(name: str):
             resp = await client.delete(f"{GO2RTC_API_URL}/api/streams", params={"src": name})
             return {"success": True}
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        logger.warning("Failed to delete go2rtc stream: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to delete go2rtc stream")
 
 @router.get("/api/go2rtc/player/{filename:path}")
 async def proxy_go2rtc_player_asset(filename: str, src: str = Query(default="")):
@@ -238,7 +245,8 @@ async def proxy_go2rtc_player_asset(filename: str, src: str = Query(default=""))
                 return HTMLResponse(html, status_code=resp.status_code)
             return Response(content=content, status_code=resp.status_code, media_type=media_type)
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"go2rtc недоступен: {exc}")
+        logger.debug("go2rtc player asset proxy failed: %s", exc)
+        raise HTTPException(status_code=502, detail="go2rtc service unavailable")
 
 @router.post("/api/go2rtc/proxy/api/webrtc")
 async def proxy_go2rtc_webrtc(req: Request):
@@ -250,7 +258,8 @@ async def proxy_go2rtc_webrtc(req: Request):
             resp = await client.post(target_url, content=body, headers={"Content-Type": req.headers.get("content-type", "application/x-www-form-urlencoded")})
             return Response(content=resp.content, status_code=resp.status_code, media_type=resp.headers.get("content-type"))
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=str(exc))
+        logger.warning("WebRTC proxy error: %s", exc)
+        raise HTTPException(status_code=502, detail="WebRTC proxy error")
 
 @router.get("/api/go2rtc/frame/{name:path}")
 async def proxy_go2rtc_frame(name: str):
@@ -273,7 +282,7 @@ async def proxy_go2rtc_frame(name: str):
                 producers = stream_info.get("producers", [])
                 src_url = producers[0].get("url") if producers else None
                 if src_url and not src_url.startswith("ffmpeg:"):
-                    url_hash = hashlib.md5(src_url.encode('utf-8')).hexdigest()
+                    url_hash = hashlib.md5(src_url.encode('utf-8'), usedforsecurity=False).hexdigest()
                     cache_file = STRIX_CAPTURE_DIR / f"{url_hash}.jpg"
                     if cache_file.exists() and cache_file.stat().st_size > 0:
                         return Response(
@@ -291,7 +300,8 @@ async def proxy_go2rtc_frame(name: str):
 
             return Response(status_code=resp.status_code if resp.status_code != 200 else 503, content=b"")
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=str(exc))
+        logger.warning("Frame capture error: %s", exc)
+        raise HTTPException(status_code=502, detail="Frame capture error")
 
 @router.websocket("/api/go2rtc/proxy/api/ws")
 async def proxy_go2rtc_ws(websocket: WebSocket):

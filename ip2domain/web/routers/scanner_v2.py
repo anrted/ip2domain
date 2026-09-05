@@ -15,6 +15,7 @@ Endpoints:
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import time
 import uuid
@@ -27,6 +28,7 @@ from pydantic import BaseModel
 
 from .common import storage
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v2", tags=["scanner_v2"])
 
 # Capture directory for v2 screenshots
@@ -76,7 +78,8 @@ async def get_tools():
         from ip2domain.cameras.scanner_v2.stage1_sweep import check_tools
         tools = check_tools()
     except Exception as exc:
-        tools = {"error": str(exc)}
+        logger.warning("Error checking scanning tools: %s", exc)
+        tools = {"error": "Failed to check scanning tools"}
     return JSONResponse(content=tools)
 
 
@@ -234,7 +237,8 @@ async def add_to_go2rtc(
                 return {"success": True, "stream_name": stream_name}
             return {"success": False, "status_code": resp.status_code}
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=str(exc))
+        logger.warning("Error adding stream to go2rtc: %s", exc)
+        raise HTTPException(status_code=502, detail="Failed to add stream to go2rtc")
 
 
 @router.get("/capture")

@@ -37,7 +37,8 @@ async def get_strix_status():
             resp = await client.get(f"{STRIX_API_URL}/")
             return {"online": resp.status_code == 200, "url": STRIX_API_URL}
     except Exception as exc:
-        return {"online": False, "url": STRIX_API_URL, "error": str(exc)}
+        logger.debug("Strix status check failed: %s", exc)
+        return {"online": False, "url": STRIX_API_URL, "error": "Connection failed"}
 
 @router.get("/api/strix/presets")
 async def get_strix_presets():
@@ -50,7 +51,8 @@ async def get_strix_presets():
                 return {"results": data.get("results", [])}
             return {"results": []}
     except Exception as exc:
-        return {"results": [], "error": str(exc)}
+        logger.debug("Strix presets fetch failed: %s", exc)
+        return {"results": [], "error": "Failed to retrieve presets"}
 
 @router.get("/api/asn/lookup")
 @router.get("/api/strix/asn-prefixes")

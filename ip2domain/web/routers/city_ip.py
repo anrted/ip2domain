@@ -13,6 +13,7 @@ Endpoints:
 from __future__ import annotations
 
 import ipaddress
+import logging
 import re
 from typing import List, Optional
 
@@ -22,6 +23,7 @@ from fastapi.responses import JSONResponse
 
 from ip2domain.data.geo_city_db import geo_city_db
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/geo", tags=["city_ip"])
 
 
@@ -175,6 +177,7 @@ async def get_asn_subnets(asn: str = Query(..., description="ASN e.g. AS12389 or
                     if pref and ":" not in pref:  # IPv4
                         prefixes.append(pref)
     except Exception as exc:
-        return JSONResponse(content={"asn": f"AS{asn_num}", "prefixes": [], "error": str(exc)})
+        logger.warning("RIPE Stat prefix lookup failed for AS%s: %s", asn_num, exc)
+        return JSONResponse(content={"asn": f"AS{asn_num}", "prefixes": [], "error": "RIPE Stat lookup failed"})
 
     return JSONResponse(content={"asn": f"AS{asn_num}", "prefixes": prefixes, "total": len(prefixes)})

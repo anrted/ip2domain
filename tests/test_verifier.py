@@ -20,9 +20,8 @@ def test_live_domain_verifier(monkeypatch):
 
 def test_wildcard_dns_candidates_are_rejected(monkeypatch):
     async def fake_resolve(domain, timeout=5.0):
-        if domain == "ae0.ru":
-            return {"31.135.32.233"}
-        if domain.endswith(".ae0.ru"):
+        parts = domain.split(".")
+        if parts[-2:] == ["ae0", "ru"]:
             return {"31.135.32.233"}
         return set()
 
@@ -45,11 +44,10 @@ def test_wildcard_dns_candidates_are_rejected(monkeypatch):
 
 def test_explicit_subdomain_different_from_wildcard_is_kept(monkeypatch):
     async def fake_resolve(domain, timeout=5.0):
+        parts = domain.split(".")
         if domain == "real.example.com":
             return {"203.0.113.20"}
-        if domain == "example.com":
-            return {"203.0.113.10"}
-        if domain.endswith(".example.com"):
+        if parts[-2:] == ["example", "com"]:
             return {"203.0.113.10"}
         return set()
 

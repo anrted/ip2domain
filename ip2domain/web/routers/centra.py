@@ -242,7 +242,12 @@ async def start_centra_discovery(req: CentraDiscoveryRequest, background_tasks: 
     if req.base_url:
         parsed = urlparse(req.base_url)
         hostname = (parsed.hostname or "").lower()
-        if (parsed.scheme != "https" or not re.fullmatch(r"[a-z0-9-]+\.mycentra\.ru", hostname)
+        is_mycentra = (
+            hostname.endswith(".mycentra.ru")
+            and bool(hostname[:-12])
+            and all(c.isalnum() or c == "-" for c in hostname[:-12])
+        )
+        if (parsed.scheme != "https" or not is_mycentra
                 or parsed.port is not None or parsed.username or parsed.password
                 or parsed.path not in {"", "/"} or parsed.query or parsed.fragment):
             raise HTTPException(status_code=400, detail=(
