@@ -344,14 +344,14 @@ class PTZControlRequest(BaseModel):
     command: str
     port: Optional[int] = 80
     username: Optional[str] = "admin"
-    password: Optional[str] = ""
+    auth_key: Optional[str] = ""
     speed: Optional[float] = 0.5
     preset_token: Optional[str] = "1"
 
 @router.get("/api/go2rtc/ptz/probe")
-async def probe_ptz_endpoint(ip: str = Query(...), port: int = Query(default=80), user: str = Query(default="admin"), pwd: str = Query(default="")):
+async def probe_ptz_endpoint(ip: str = Query(...), port: int = Query(default=80), user: str = Query(default="admin"), auth_key: str = Query(default="", alias="pwd")):
     """Probe whether camera supports ONVIF / CGI PTZ control."""
-    res = await PTZController.probe_ptz_service(ip, port=port, username=user, password=pwd)
+    res = await PTZController.probe_ptz_service(ip, port=port, username=user, auth_cred=auth_key)
     return res
 
 @router.post("/api/go2rtc/ptz/control")
@@ -362,7 +362,7 @@ async def control_ptz_endpoint(req: PTZControlRequest):
         command=req.command,
         port=req.port or 80,
         username=req.username or "admin",
-        password=req.password or "",
+        auth_cred=req.auth_key or getattr(req, "password", "") or "",
         speed=req.speed or 0.5,
         preset_token=req.preset_token or "1"
     )

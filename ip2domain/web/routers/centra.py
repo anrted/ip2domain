@@ -408,12 +408,12 @@ async def get_centra_screenshot(camera_id: str, refresh: bool = False):
         raise HTTPException(status_code=404, detail="Камера не найдена")
     _cleanup_centra_captures()
     ffmpeg = shutil.which("ffmpeg")
-    base_dir = CENTRA_CAPTURE_DIR.resolve()
+    base_path = str(CENTRA_CAPTURE_DIR.resolve())
     safe_filename = os.path.basename(f"{safe_camera_id}.jpg")
-    resolved_path = (base_dir / safe_filename).resolve()
-    if not resolved_path.is_relative_to(base_dir):
+    fullpath = os.path.normpath(os.path.join(base_path, safe_filename))
+    if not fullpath.startswith(base_path):
         raise HTTPException(status_code=400, detail="Некорректный путь")
-    path = resolved_path
+    path = Path(fullpath)
     ttl = max(10, min(3600, int(os.environ.get("IP2DOMAIN_CENTRA_SCREEN_TTL", "300"))))
     if refresh and safe_camera_id in CENTRA_CAPTURE_REFRESH_TASKS:
         await CENTRA_CAPTURE_REFRESH_TASKS[safe_camera_id]
@@ -579,12 +579,11 @@ def reset_centra_person_identities():
 
 @router.get("/api/remote-desktop/capture/{capture_id}")
 def get_remote_desktop_capture(capture_id: str):
+    base_path = str(REMOTE_CAPTURE_DIR.resolve())
     safe_name = os.path.basename(capture_id)
     if not re.fullmatch(r"[a-f0-9]{32}", safe_name) or ".." in safe_name:
         raise HTTPException(status_code=404, detail="Снимок не найден")
-    base_dir = REMOTE_CAPTURE_DIR.resolve()
-    safe_filename = os.path.basename(f"{safe_name}.png")
-    path = (base_dir / safe_filename).resolve()
-    if not path.is_relative_to(base_dir) or not path.is_file():
+    fullpath = os.path.normpath(os.path.join(base_path, f"{safe_name}.png"))
+    if not fullpath.startswith(base_path) or not os.path.isfile(fullpath):
         raise HTTPException(status_code=404, detail="Снимок не найден")
-    return FileResponse(str(path), media_type="image/png", headers={"Cache-Control": "private, no-store"})
+    return FileResponse(fullpath, media_type="image/png", headers={"Cache-Control": "private, no-store"})

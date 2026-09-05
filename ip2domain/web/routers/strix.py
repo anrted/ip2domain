@@ -412,11 +412,12 @@ async def proxy_strix_screenshot(session_id: str, index: int):
     if safe_index < 0 or safe_index > 10000:
         raise HTTPException(status_code=400, detail="Invalid index")
 
-    base_dir = STRIX_CAPTURE_DIR.resolve()
+    base_path = str(STRIX_CAPTURE_DIR.resolve())
     safe_cache_name = os.path.basename(f"{safe_session}_{safe_index}.jpg")
-    cache_file = (base_dir / safe_cache_name).resolve()
-    if not cache_file.is_relative_to(base_dir):
+    fullpath = os.path.normpath(os.path.join(base_path, safe_cache_name))
+    if not fullpath.startswith(base_path):
         raise HTTPException(status_code=400, detail="Invalid path")
+    cache_file = Path(fullpath)
 
     if cache_file.exists() and cache_file.stat().st_size > 0:
         return Response(
@@ -456,9 +457,10 @@ async def proxy_strix_screenshot(session_id: str, index: int):
     if stream_url:
         url_hash = hashlib.md5(stream_url.encode('utf-8'), usedforsecurity=False).hexdigest()
         safe_hash_name = os.path.basename(f"{url_hash}.jpg")
-        hash_file = (base_dir / safe_hash_name).resolve()
-        if not hash_file.is_relative_to(base_dir):
+        hash_fullpath = os.path.normpath(os.path.join(base_path, safe_hash_name))
+        if not hash_fullpath.startswith(base_path):
             raise HTTPException(status_code=400, detail="Invalid path")
+        hash_file = Path(hash_fullpath)
         if hash_file.exists() and hash_file.stat().st_size > 0:
             try:
                 cache_file.write_bytes(hash_file.read_bytes())

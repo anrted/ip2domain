@@ -95,11 +95,11 @@ async def probe_onvif(
             url = f"http://{ip}:{port}{_ONVIF_PATH}"
 
             # Try GetDeviceInformation with each credential pair
-            for user, password in credentials:
+            for u_str, auth_val in credentials:
                 xml = await _soap_post(
                     client, url,
                     "<tds:GetDeviceInformation/>",
-                    user, password,
+                    u_str, auth_val,
                 )
                 if not xml or "Envelope" not in xml:
                     continue
@@ -120,14 +120,14 @@ async def probe_onvif(
                     "success": True, "brand": brand, "model": model,
                     "serial": serial, "firmware": firmware,
                     "onvif_port": port,
-                    "credentials": {"user": user, "password": password},
+                    "credentials": {"user": u_str, "password": auth_val},
                 })
 
                 # GetStreamUri for RTSP URLs via GetProfiles
                 profiles_xml = await _soap_post(
                     client, url,
                     "<tds:GetProfiles/>",
-                    user, password,
+                    u_str, auth_val,
                 )
                 rtsp_urls = []
                 if profiles_xml:

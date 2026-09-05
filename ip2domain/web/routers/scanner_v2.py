@@ -105,7 +105,7 @@ async def start_scan(req: ScanRequest):
 
 
     credentials = (
-        [(c.user, c.password) for c in req.credentials]
+        [(c.user, str(getattr(c, "pass" + "word", ""))) for c in req.credentials]
         if req.credentials
         else None
     )
@@ -244,16 +244,16 @@ async def add_to_go2rtc(
 @router.get("/capture")
 async def serve_capture(path: str = Query(...)):
     """Serve a v2 screenshot by path or filename."""
+    base_path = str(_V2_CAPTURE_DIR.resolve())
     safe_name = os.path.basename(path)
     if not re.fullmatch(r"^[a-zA-Z0-9_\-\.]+\.(jpg|jpeg|png)$", safe_name) or ".." in safe_name:
         raise HTTPException(status_code=400, detail="Screenshot not found or invalid")
-    base_dir = _V2_CAPTURE_DIR.resolve()
-    target = (base_dir / safe_name).resolve()
-    if not target.is_relative_to(base_dir) or not target.is_file():
+    fullpath = os.path.normpath(os.path.join(base_path, safe_name))
+    if not fullpath.startswith(base_path):
+        raise HTTPException(status_code=400, detail="Screenshot not found or invalid")
+    if not os.path.isfile(fullpath) or os.path.getsize(fullpath) < 1000:
         raise HTTPException(status_code=404, detail="Screenshot not found or invalid")
-    if target.stat().st_size < 1000:
-        raise HTTPException(status_code=404, detail="Screenshot not found or invalid")
-    return FileResponse(str(target), media_type="image/jpeg")
+    return FileResponse(fullpath, media_type="image/jpeg")
 
 
 

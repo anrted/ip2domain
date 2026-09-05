@@ -155,8 +155,8 @@ async def probe_sofia(
             ret_code = json_body.get("Ret", 0)
             if ret_code == 100:  # 100 = Success in Sofia protocol
                 logged_in = True
-                valid_user = user
-                valid_pass = pwd
+                valid_user = u_str
+                valid_pass = p_val
                 # Extract SessionID (hex string or int)
                 raw_sess = json_body.get("SessionID", "")
                 if isinstance(raw_sess, str) and raw_sess.startswith("0x"):

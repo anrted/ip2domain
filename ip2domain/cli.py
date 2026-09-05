@@ -170,12 +170,10 @@ def main():
         print(f"[*] Starting ip2domain Web UI server on http://{args.host}:{args.port}")
         print(f"[*] Access the Web UI in your browser at: http://localhost:{args.port} (or http://SERVER_IP:{args.port})")
         if admin_credentials:
-            username, password, generated = admin_credentials
+            username, _, _ = admin_credentials
             print(f"[*] Web UI administrator: {username}")
-            if generated:
-                print(f"[*] Generated password: {password}")
         if generated_token:
-            print(f"[*] Generated API Token: {generated_token}")
+            print("[*] Web UI API Token initialized")
         uvicorn.run("ip2domain.web.app:app", host=args.host, port=args.port)
         sys.exit(0)
 

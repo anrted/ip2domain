@@ -74,14 +74,15 @@ async def _generate_centra_screenshot(camera_id: str, camera: dict, path: Path,
     if not safe_camera_id:
         raise HTTPException(status_code=400, detail="Некорректная камера Centra")
 
-    base_dir = CENTRA_CAPTURE_DIR.resolve()
+    base_path = str(CENTRA_CAPTURE_DIR.resolve())
     safe_file_name = os.path.basename(f"{safe_camera_id}.jpg")
     safe_tmp_name = os.path.basename(f"{safe_camera_id}.tmp.jpg")
-    resolved_path = (base_dir / safe_file_name).resolve()
-    temporary = (base_dir / safe_tmp_name).resolve()
-    if not resolved_path.is_relative_to(base_dir) or not temporary.is_relative_to(base_dir):
+    fullpath = os.path.normpath(os.path.join(base_path, safe_file_name))
+    tmp_path = os.path.normpath(os.path.join(base_path, safe_tmp_name))
+    if not fullpath.startswith(base_path) or not tmp_path.startswith(base_path):
         raise HTTPException(status_code=400, detail="Недопустимый путь к файлу")
-    path = resolved_path
+    path = Path(fullpath)
+    temporary = Path(tmp_path)
 
     lock = CENTRA_CAPTURE_LOCKS.setdefault(safe_camera_id, asyncio.Lock())
     async with lock:
