@@ -286,7 +286,7 @@ function renderCameraCard({ name, stream, srcUrl, camMeta, tags, title, ip }) {
         </div>
         
         <div id="${containerId}" data-stream-name="${_esc(name)}" data-group-ip="${_esc(ip)}" style="position: relative; width: 100%; aspect-ratio: 16/9; background: #080b12; display: flex; align-items: center; justify-content: center; overflow: hidden; cursor: pointer;" onclick="playGo2rtcStream('${containerId}', '${_esc(name)}')">
-            <img class="go2rtc-lazy-img" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 9'%3E%3C/svg%3E" data-src="${frameUrl}" alt="Превью камеры" style="width: 100%; height: 100%; object-fit: contain; opacity: 0; transition: opacity 0.3s;" onload="this.style.opacity='1'; if(this.nextElementSibling) this.nextElementSibling.style.display='none';" onerror="handleGo2rtcFrameError(this, '${_esc(name)}')">
+            <img class="go2rtc-lazy-img" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 9'%3E%3C/svg%3E" data-src="${_esc(frameUrl)}" alt="Превью камеры" style="width: 100%; height: 100%; object-fit: contain; opacity: 0; transition: opacity 0.3s;" onload="this.style.opacity='1'; if(this.nextElementSibling) this.nextElementSibling.style.display='none';" onerror="handleGo2rtcFrameError(this, '${_esc(name)}')">
             <div class="go2rtc-frame-placeholder" style="display: none; width: 100%; height: 100%; position: absolute; inset: 0; align-items: center; justify-content: center; flex-direction: column; gap: 0.35rem; background: #0b0f19; color: #64748b; font-size: 0.7rem; z-index: 2;">
                 <span>Кадр формируется...</span>
                 <button type="button" class="btn btn-ghost btn-small" style="font-size: 0.62rem; padding: 0.08rem 0.35rem;" onclick="event.stopPropagation(); retryGo2rtcFrame(this, '${_esc(name)}')">🔄 Обновить</button>
@@ -318,6 +318,15 @@ function renderCameraCard({ name, stream, srcUrl, camMeta, tags, title, ip }) {
     </div>`;
 }
 
+function _sanitizeGo2rtcImageUrl(url) {
+    if (!url || typeof url !== 'string') return '';
+    const trimmed = url.trim();
+    if (trimmed.startsWith('/') || trimmed.startsWith('data:image/') || trimmed.startsWith('blob:') || /^https?:\/\//i.test(trimmed)) {
+        return trimmed;
+    }
+    return '';
+}
+
 function initLazyImages(container) {
     const lazyImgs = container.querySelectorAll('img.go2rtc-lazy-img[data-src]');
     if ('IntersectionObserver' in window) {
@@ -325,7 +334,7 @@ function initLazyImages(container) {
             entries.forEach(entry => {
                 if (entry.isIntersecting) {
                     const img = entry.target;
-                    const src = img.getAttribute('data-src');
+                    const src = _sanitizeGo2rtcImageUrl(img.getAttribute('data-src'));
                     if (src) {
                         img.src = src;
                         img.removeAttribute('data-src');
@@ -337,8 +346,11 @@ function initLazyImages(container) {
         lazyImgs.forEach(img => observer.observe(img));
     } else {
         lazyImgs.forEach(img => {
-            img.src = img.getAttribute('data-src');
-            img.removeAttribute('data-src');
+            const src = _sanitizeGo2rtcImageUrl(img.getAttribute('data-src'));
+            if (src) {
+                img.src = src;
+                img.removeAttribute('data-src');
+            }
         });
     }
 }

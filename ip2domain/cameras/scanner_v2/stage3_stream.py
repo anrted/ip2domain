@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import ipaddress
 import logging
 import os
+import re
 import shutil
 import urllib.parse
 from pathlib import Path
@@ -131,12 +133,41 @@ async def capture_stream_frame(
     return False, "", "", 0, 0
 
 
+def _is_safe_snapshot_url(url: str) -> bool:
+    """Validate snapshot URL to prevent SSRF against cloud metadata or prohibited targets."""
+    if not url or not isinstance(url, str):
+        return False
+    try:
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return False
+        host = parsed.hostname
+        if not host:
+            return False
+        host_lower = host.lower().strip("[]")
+        if host_lower in ("metadata.google.internal", "metadata", "instance-data", "169.254.169.254"):
+            return False
+        try:
+            ip_obj = ipaddress.ip_address(host_lower)
+            if ip_obj.is_link_local:
+                return False
+        except ValueError:
+            pass
+        return True
+    except Exception:
+        return False
+
+
 async def _download_http_snapshot(
     url: str,
     capture_dir: Path,
     credentials: Optional[dict] = None,
 ) -> Optional[str]:
     """Download JPEG snapshot from HTTP camera and save locally."""
+    if not _is_safe_snapshot_url(url):
+        logger.debug("[v2 Stage3] Prohibited or invalid snapshot URL: %s", url)
+        return None
+
     import httpx
     capture_dir.mkdir(parents=True, exist_ok=True)
     out_path = _capture_path(capture_dir, url)

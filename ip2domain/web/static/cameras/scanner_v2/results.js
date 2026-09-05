@@ -197,6 +197,15 @@ function v2RenderResults() {
 }
 window.v2RenderResults = v2RenderResults;
 
+function _sanitizeV2ImageUrl(url) {
+    if (!url || typeof url !== 'string') return '';
+    const trimmed = url.trim();
+    if (trimmed.startsWith('/') || trimmed.startsWith('data:image/') || trimmed.startsWith('blob:') || /^https?:\/\//i.test(trimmed)) {
+        return trimmed;
+    }
+    return '';
+}
+
 let v2ImageObserver = null;
 function initV2LazyLoading() {
     if (v2ImageObserver) {
@@ -206,7 +215,7 @@ function initV2LazyLoading() {
     if (!lazyImages.length) return;
 
     function loadImg(img) {
-        const src = img.getAttribute('data-src');
+        const src = _sanitizeV2ImageUrl(img.getAttribute('data-src'));
         if (src) {
             img.src = src;
             img.removeAttribute('data-src');
@@ -291,7 +300,7 @@ function v2RenderCameraCard(cam) {
         previewHtml = `
             <div class="v2-preview-wrapper" id="v2-preview-box-${safeIp}">
                 <img class="v2-camera-screenshot v2-lazy-img"
-                     data-src="${imgSrc}"
+                     data-src="${_esc(imgSrc)}"
                      src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 9'%3E%3Crect width='16' height='9' fill='%230b0f19'/%3E%3C/svg%3E"
                      alt="${_esc(cam.ip)}"
                      onerror="this.style.display='none';document.getElementById('v2-ph-${safeIp}').style.display='flex'">

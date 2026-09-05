@@ -12,6 +12,7 @@ Endpoints:
 """
 from __future__ import annotations
 
+import ipaddress
 import re
 from typing import List, Optional
 
@@ -118,7 +119,14 @@ async def lookup_geo(ip: str = Query(..., description="IP address or CIDR to loo
         return JSONResponse(content={"found": True, "source": "local_db", "data": local_info})
 
     # 2. Try online fallback (ip-api / 2ip)
-    clean_ip = re.sub(r"/.*$", "", raw).strip()
+    clean_ip = raw.split("/", 1)[0].strip()
+    try:
+        ip_obj = ipaddress.ip_address(clean_ip)
+        if ip_obj.is_link_local or ip_obj.is_loopback:
+            return JSONResponse(content={"found": False, "source": "none", "data": None, "query": raw})
+    except ValueError:
+        return JSONResponse(content={"found": False, "source": "none", "data": None, "query": raw})
+
     try:
         async with httpx.AsyncClient(timeout=3.5) as client:
             resp = await client.get(f"http://ip-api.com/json/{clean_ip}?lang=ru")

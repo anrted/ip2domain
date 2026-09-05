@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import re
 import shutil
 import time
 from pathlib import Path
@@ -13,6 +14,7 @@ from ip2domain.web.routers.common import (
     storage,
     camera_providers,
     CENTRA_CAPTURE_DIR,
+    CAMERA_CAPTURE_DIR,
     CENTRA_CAPTURE_LOCKS,
     CENTRA_CAPTURE_LAST_CLEANUP,
     CENTRA_PREVIEW_SEMAPHORE,
@@ -68,7 +70,19 @@ def _centra_capture_is_stale(path: Path, ttl: int) -> bool:
 async def _generate_centra_screenshot(camera_id: str, camera: dict, path: Path,
                                       ffmpeg: Optional[str],
                                       ffmpeg_semaphore: Optional[asyncio.Semaphore] = None) -> None:
-    lock = CENTRA_CAPTURE_LOCKS.setdefault(camera_id, asyncio.Lock())
+    safe_camera_id = re.sub(r"[^a-zA-Z0-9_\-]", "", camera_id)
+    if not safe_camera_id:
+        raise HTTPException(status_code=400, detail="Некорректная камера Centra")
+
+    base_dir = CENTRA_CAPTURE_DIR.resolve()
+    resolved_path = path.resolve()
+    if not resolved_path.is_relative_to(base_dir):
+        raise HTTPException(status_code=400, detail="Недопустимый путь к файлу")
+    temporary = resolved_path.with_suffix(".tmp.jpg")
+    if not temporary.resolve().is_relative_to(base_dir):
+        raise HTTPException(status_code=400, detail="Недопустимый путь к файлу")
+
+    lock = CENTRA_CAPTURE_LOCKS.setdefault(safe_camera_id, asyncio.Lock())
     async with lock:
         provider = camera_providers.require("centra")
         try:
@@ -79,7 +93,6 @@ async def _generate_centra_screenshot(camera_id: str, camera: dict, path: Path,
         sources = list(provider.stream_candidates(normalized))
         if not preview_sources or any(not provider.validate_url(url) for url in preview_sources + sources):
             raise HTTPException(status_code=400, detail="Некорректный сервер камеры")
-        temporary = path.with_suffix(".tmp.jpg")
         errors = []
         preview_url = preview_sources[0]
         try:
@@ -143,16 +156,21 @@ async def _prepare_centra_person_frame(camera_id: str, screenshot_ttl: int,
     _generate_fn = getattr(app_mod, "_generate_centra_screenshot", _generate_centra_screenshot)
     _ffmpeg_sem = getattr(app_mod, "CENTRA_PERSON_FFMPEG_SEMAPHORE", CENTRA_PERSON_FFMPEG_SEMAPHORE)
 
-    camera = _storage.get_centra_camera(camera_id)
-    if not camera:
+    safe_camera_id = re.sub(r"[^a-zA-Z0-9_\-]", "", camera_id)
+    if not safe_camera_id or safe_camera_id != camera_id:
         return camera_id, None, None, "Камера отсутствует в базе"
-    path = _capture_dir / f"{camera_id}.jpg"
+    camera = _storage.get_centra_camera(safe_camera_id)
+    if not camera:
+        return safe_camera_id, None, None, "Камера отсутствует в базе"
+    path = (_capture_dir / f"{safe_camera_id}.jpg").resolve()
+    if not path.is_relative_to(_capture_dir.resolve()):
+        return safe_camera_id, None, None, "Недопустимый путь к файлу"
     try:
         if _centra_capture_is_stale(path, screenshot_ttl):
-            await _generate_fn(camera_id, camera, path, ffmpeg, _ffmpeg_sem)
-        return camera_id, camera, path, None
+            await _generate_fn(safe_camera_id, camera, path, ffmpeg, _ffmpeg_sem)
+        return safe_camera_id, camera, path, None
     except Exception as exc:
-        return camera_id, camera, path, str(exc)
+        return safe_camera_id, camera, path, str(exc)
 
 
 async def _generate_generic_ip_screenshot(camera: dict, path: Path) -> None:
@@ -162,9 +180,11 @@ async def _generate_generic_ip_screenshot(camera: dict, path: Path) -> None:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     key = str(camera.get("uid") or normalized.external_id)
-    lock = CAMERA_CAPTURE_LOCKS.setdefault(key, asyncio.Lock())
+    safe_key = re.sub(r"[^a-zA-Z0-9_\-]", "", key) or "default"
+    lock = CAMERA_CAPTURE_LOCKS.setdefault(safe_key, asyncio.Lock())
     async with lock:
-        temporary = path.with_suffix(".tmp.jpg")
+        resolved_path = path.resolve()
+        temporary = resolved_path.with_suffix(".tmp.jpg")
         errors = []
         for endpoint in normalized.endpoints:
             if endpoint.kind == "snapshot":

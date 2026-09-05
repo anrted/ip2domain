@@ -287,8 +287,9 @@ async def start_centra_discovery(req: CentraDiscoveryRequest, background_tasks: 
         )) if req.skip_existing else set()
         if req.skip_existing:
             known_ids.update(camera.get("id") for camera in saved_cameras)
+        escaped_type = re.escape(camera_type)
         skipped = sum(1 for camera_id in known_ids if camera_id and
-            (match := re.fullmatch(rf"{camera_type}-(\d+)-(\d+)", camera_id, re.IGNORECASE)) and
+            (match := re.fullmatch(rf"{escaped_type}-(\d+)-(\d+)", camera_id, re.IGNORECASE)) and
             req.start_id <= int(match.group(1)) <= req.end_id and
             req.entrance_start <= int(match.group(2)) <= req.entrance_end)
         totals.append((camera_type, possible_per_type - skipped, skipped))
@@ -395,28 +396,32 @@ def get_centra_screens(offset: int = Query(default=0, ge=0),
 async def get_centra_screenshot(camera_id: str, refresh: bool = False):
     if not re.fullmatch(r"[A-Z]-\d+-\d+", camera_id, re.IGNORECASE):
         raise HTTPException(status_code=404, detail="Камера не найдена")
-    camera_id = camera_id.upper()
-    camera = storage.get_centra_camera(camera_id)
+    safe_camera_id = re.sub(r"[^A-Za-z0-9_\-]", "", camera_id).upper()
+    camera = storage.get_centra_camera(safe_camera_id)
     if not camera or not camera.get("available", True):
         raise HTTPException(status_code=404, detail="Камера не найдена")
     _cleanup_centra_captures()
     ffmpeg = shutil.which("ffmpeg")
-    path = CENTRA_CAPTURE_DIR / f"{camera_id}.jpg"
+    base_dir = CENTRA_CAPTURE_DIR.resolve()
+    resolved_path = (base_dir / f"{safe_camera_id}.jpg").resolve()
+    if not resolved_path.is_relative_to(base_dir):
+        raise HTTPException(status_code=400, detail="Некорректный путь")
+    path = resolved_path
     ttl = max(10, min(3600, int(os.environ.get("IP2DOMAIN_CENTRA_SCREEN_TTL", "300"))))
-    if refresh and camera_id in CENTRA_CAPTURE_REFRESH_TASKS:
-        await CENTRA_CAPTURE_REFRESH_TASKS[camera_id]
+    if refresh and safe_camera_id in CENTRA_CAPTURE_REFRESH_TASKS:
+        await CENTRA_CAPTURE_REFRESH_TASKS[safe_camera_id]
         if path.is_file():
-            return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=15"})
+            return FileResponse(str(path), media_type="image/jpeg", headers={"Cache-Control": "private, max-age=15"})
     if refresh and path.is_file() and time.time() - path.stat().st_mtime < ttl:
-        return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=15"})
+        return FileResponse(str(path), media_type="image/jpeg", headers={"Cache-Control": "private, max-age=15"})
     if path.is_file() and not refresh:
-        if time.time() - path.stat().st_mtime >= ttl and camera_id not in CENTRA_CAPTURE_REFRESH_TASKS:
-            task = asyncio.create_task(_refresh_centra_screenshot(camera_id, camera, path, ffmpeg))
-            CENTRA_CAPTURE_REFRESH_TASKS[camera_id] = task
-            task.add_done_callback(lambda _task, key=camera_id: CENTRA_CAPTURE_REFRESH_TASKS.pop(key, None))
-        return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=15"})
-    await _generate_centra_screenshot(camera_id, camera, path, ffmpeg)
-    return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=15"})
+        if time.time() - path.stat().st_mtime >= ttl and safe_camera_id not in CENTRA_CAPTURE_REFRESH_TASKS:
+            task = asyncio.create_task(_refresh_centra_screenshot(safe_camera_id, camera, path, ffmpeg))
+            CENTRA_CAPTURE_REFRESH_TASKS[safe_camera_id] = task
+            task.add_done_callback(lambda _task, key=safe_camera_id: CENTRA_CAPTURE_REFRESH_TASKS.pop(key, None))
+        return FileResponse(str(path), media_type="image/jpeg", headers={"Cache-Control": "private, max-age=15"})
+    await _generate_centra_screenshot(safe_camera_id, camera, path, ffmpeg)
+    return FileResponse(str(path), media_type="image/jpeg", headers={"Cache-Control": "private, max-age=15"})
 
 
 @router.get("/api/camera-catalog/{provider_id}/{external_id}/snapshot.jpg")

@@ -6,6 +6,16 @@
 (function () {
     'use strict';
 
+    function _esc(str) {
+        if (str === null || str === undefined) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
     // State
     const state = {
         activeCountry: 'ALL', // 'ALL' | 'RU' | 'BY'
@@ -238,30 +248,30 @@
 
             tr.innerHTML = `
                 <td class="geo-col-select">
-                    <input type="checkbox" class="geo-row-checkbox" data-cidr="${s.cidr}" ${isChecked ? 'checked' : ''}>
+                    <input type="checkbox" class="geo-row-checkbox" data-cidr="${_esc(s.cidr)}" ${isChecked ? 'checked' : ''}>
                 </td>
                 <td class="geo-col-cidr">
-                    <strong class="geo-cidr-text">${s.cidr}</strong>
-                    <button type="button" class="geo-mini-btn" title="Копировать CIDR" onclick="window.CityIpFinder.copyText('${s.cidr}')">📋</button>
+                    <strong class="geo-cidr-text">${_esc(s.cidr)}</strong>
+                    <button type="button" class="geo-mini-btn" title="Копировать CIDR" onclick="window.CityIpFinder.copyText('${_esc(s.cidr)}')">📋</button>
                 </td>
                 <td class="geo-col-location">
-                    <span class="geo-flag-badge" title="${s.country_name}">${flag}</span>
-                    <strong class="geo-city-text">${s.city}</strong>
-                    <div class="geo-region-hint">${s.region}</div>
+                    <span class="geo-flag-badge" title="${_esc(s.country_name)}">${flag}</span>
+                    <strong class="geo-city-text">${_esc(s.city)}</strong>
+                    <div class="geo-region-hint">${_esc(s.region)}</div>
                 </td>
                 <td class="geo-col-isp">
-                    <span class="geo-isp-badge">${s.isp}</span>
-                    <div class="geo-org-hint" title="${s.org || ''}">${s.org || ''}</div>
+                    <span class="geo-isp-badge">${_esc(s.isp)}</span>
+                    <div class="geo-org-hint" title="${_esc(s.org || '')}">${_esc(s.org || '')}</div>
                 </td>
                 <td class="geo-col-asn">
-                    <a href="https://bgp.he.net/${s.asn}" target="_blank" rel="noopener noreferrer" class="geo-asn-link" title="Посмотреть AS в BGP Toolkit">${s.asn}</a>
+                    <a href="https://bgp.he.net/${encodeURIComponent(s.asn || '')}" target="_blank" rel="noopener noreferrer" class="geo-asn-link" title="Посмотреть AS в BGP Toolkit">${_esc(s.asn)}</a>
                 </td>
                 <td class="geo-col-count">
                     <span class="geo-count-badge">~${formatNumber(s.ip_count)} IP</span>
                 </td>
                 <td class="geo-col-actions">
-                    <button type="button" class="geo-btn-table-action" title="Отправить этот CIDR напрямую в Сканер Камер v2" onclick="window.CityIpFinder.sendSingleCidrToV2('${s.cidr}')">📹 В Камеры v2</button>
-                    <button type="button" class="geo-btn-table-action" title="Отправить этот CIDR в RDP/VNC" onclick="window.CityIpFinder.sendSingleCidrToRdp('${s.cidr}')">🖥️ RDP</button>
+                    <button type="button" class="geo-btn-table-action" title="Отправить этот CIDR напрямую в Сканер Камер v2" onclick="window.CityIpFinder.sendSingleCidrToV2('${_esc(s.cidr)}')">📹 В Камеры v2</button>
+                    <button type="button" class="geo-btn-table-action" title="Отправить этот CIDR в RDP/VNC" onclick="window.CityIpFinder.sendSingleCidrToRdp('${_esc(s.cidr)}')">🖥️ RDP</button>
                 </td>
             `;
 
@@ -485,37 +495,37 @@
             if (!json.found || !json.data) {
                 dom.lookupResult.innerHTML = `
                     <div class="geo-lookup-not-found">
-                        Информация для <code>${query}</code> не найдена в базе РФ/РБ.
+                        Информация для <code>${_esc(query)}</code> не найдена в базе РФ/РБ.
                     </div>
                 `;
                 return;
             }
 
             const d = json.data;
-            const flag = d.country_code === 'RU' ? '🇷🇺 Россия' : d.country_code === 'BY' ? '🇧🇾 Беларусь' : d.country_name;
+            const flag = d.country_code === 'RU' ? '🇷🇺 Россия' : d.country_code === 'BY' ? '🇧🇾 Беларусь' : _esc(d.country_name);
 
             dom.lookupResult.innerHTML = `
                 <div class="geo-lookup-card">
                     <div class="geo-lookup-header">
-                        <h4>${flag} • ${d.city || 'Неизвестно'}</h4>
+                        <h4>${flag} • ${_esc(d.city) || 'Неизвестно'}</h4>
                         <span class="geo-source-tag">${json.source === 'local_db' ? 'GeoLite2 РФ/РБ' : 'Online GeoIP'}</span>
                     </div>
                     <div class="geo-lookup-grid">
-                        <div><strong>Подсеть/CIDR:</strong> <code>${d.cidr}</code></div>
-                        <div><strong>Регион:</strong> ${d.region || '—'}</div>
-                        <div><strong>Провайдер (ISP):</strong> ${d.isp || '—'}</div>
-                        <div><strong>ASN:</strong> <a href="https://bgp.he.net/${d.asn}" target="_blank" class="geo-asn-link">${d.asn || '—'}</a></div>
-                        <div><strong>Организация:</strong> ${d.org || '—'}</div>
-                        <div><strong>Координаты:</strong> ${d.lat ? `${d.lat}, ${d.lon}` : '—'}</div>
+                        <div><strong>Подсеть/CIDR:</strong> <code>${_esc(d.cidr)}</code></div>
+                        <div><strong>Регион:</strong> ${_esc(d.region) || '—'}</div>
+                        <div><strong>Провайдер (ISP):</strong> ${_esc(d.isp) || '—'}</div>
+                        <div><strong>ASN:</strong> <a href="https://bgp.he.net/${encodeURIComponent(d.asn || '')}" target="_blank" class="geo-asn-link">${_esc(d.asn) || '—'}</a></div>
+                        <div><strong>Организация:</strong> ${_esc(d.org) || '—'}</div>
+                        <div><strong>Координаты:</strong> ${d.lat ? `${_esc(d.lat)}, ${_esc(d.lon)}` : '—'}</div>
                     </div>
                     <div class="geo-lookup-actions" style="margin-top:8px; display:flex; gap:6px;">
-                        <button type="button" class="btn btn-small" onclick="window.CityIpFinder.filterByCityName('${d.city}')">🔍 Все подсети города ${d.city}</button>
-                        <button type="button" class="btn btn-small btn-ghost" onclick="window.CityIpFinder.sendSingleCidrToV2('${d.cidr}')">📹 В Сканер Камер</button>
+                        <button type="button" class="btn btn-small" onclick="window.CityIpFinder.filterByCityName('${_esc(d.city)}')">🔍 Все подсети города ${_esc(d.city)}</button>
+                        <button type="button" class="btn btn-small btn-ghost" onclick="window.CityIpFinder.sendSingleCidrToV2('${_esc(d.cidr)}')">📹 В Сканер Камер</button>
                     </div>
                 </div>
             `;
         } catch (e) {
-            dom.lookupResult.innerHTML = `<div class="geo-lookup-not-found">Ошибка: ${e.message}</div>`;
+            dom.lookupResult.innerHTML = `<div class="geo-lookup-not-found">Ошибка: ${_esc(e.message)}</div>`;
         } finally {
             if (dom.btnLookup) {
                 dom.btnLookup.disabled = false;

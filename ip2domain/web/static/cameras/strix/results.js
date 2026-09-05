@@ -317,7 +317,7 @@ function renderStrixResults(items) {
 
                             <div style="position: relative; width: 100%; aspect-ratio: 16/9; background: #080b12; display: flex; align-items: center; justify-content: center; overflow: hidden; cursor: pointer;" onclick="openStrixStreamPlayer('${_esc(src)}', '${_esc(camName)}', '${_esc(ip)}', ${idx})">
                                 ${screenshotUrl ? `
-                                    <img class="strix-lazy-img" data-src="${screenshotUrl}" alt="Снимок" style="width: 100%; height: 100%; object-fit: contain; opacity: 0; transition: opacity 0.3s;" onload="this.style.opacity='1'" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='flex';">
+                                    <img class="strix-lazy-img" data-src="${_esc(screenshotUrl)}" alt="Снимок" style="width: 100%; height: 100%; object-fit: contain; opacity: 0; transition: opacity 0.3s;" onload="this.style.opacity='1'" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='flex';">
                                     <div style="display:none; color:#71717a; font-size:0.7rem; align-items:center; justify-content:center; width:100%; height:100%;">Снимок недоступен</div>
                                 ` : `
                                     <div style="color:#71717a; font-size:0.7rem;">Поток обнаружен</div>
@@ -371,6 +371,15 @@ function renderStrixResults(items) {
 }
 window.renderStrixResults = renderStrixResults;
 
+function _sanitizeStrixImageUrl(url) {
+    if (!url || typeof url !== 'string') return '';
+    const trimmed = url.trim();
+    if (trimmed.startsWith('/') || trimmed.startsWith('data:image/') || trimmed.startsWith('blob:') || /^https?:\/\//i.test(trimmed)) {
+        return trimmed;
+    }
+    return '';
+}
+
 let strixImageObserver = null;
 function initStrixLazyLoading() {
     if (strixImageObserver) {
@@ -380,7 +389,7 @@ function initStrixLazyLoading() {
     if (!lazyImages.length) return;
 
     function loadImg(img) {
-        const src = img.getAttribute('data-src');
+        const src = _sanitizeStrixImageUrl(img.getAttribute('data-src'));
         if (src) {
             img.src = src;
             img.removeAttribute('data-src');

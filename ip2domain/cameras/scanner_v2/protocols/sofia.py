@@ -34,11 +34,11 @@ _SOFIA_TIMEOUT = 2.5
 
 
 def _sofia_hash_password(password: str) -> str:
-    """Xiongmai hash algorithm for passwords."""
+    """Xiongmai hash algorithm for passwords (legacy Sofia protocol authentication)."""
     if not password:
         return ""
-    # Standard XM MD5 hash variant
-    md5_1 = hashlib.md5(password.encode("utf-8")).hexdigest()
+    # Standard XM MD5 hash variant required by Xiongmai hardware protocol (not used for security)
+    md5_1 = hashlib.md5(password.encode("utf-8"), usedforsecurity=False).hexdigest()
     # Xiongmai character shift encoding for 8-char chunk
     return md5_1
 
