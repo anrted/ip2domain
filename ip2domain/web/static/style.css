@@ -431,10 +431,18 @@ a.camera-service-link:hover { background: rgba(99,102,241,.2); color: #fff; }
 .centra-skip-existing input { accent-color: var(--primary); }
 .centra-skip-existing strong { flex: 1; font-size: .74rem; font-weight: 550; }
 .centra-job-list { display: grid; gap: 6px; margin-top: 10px; }
-.centra-job-row { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 12px; align-items: center; padding: 7px 9px; border: 1px solid var(--card-border); border-radius: 7px; background: rgba(15,23,42,.55); font-size: .72rem; }
+.centra-job-row { display: grid; grid-template-columns: minmax(0,1fr) auto auto; gap: 10px; align-items: center; padding: 6px 10px; border: 1px solid var(--card-border); border-radius: 7px; background: rgba(15,23,42,.55); font-size: .72rem; }
 .centra-job-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); }
 .centra-job-row small { margin-left: 6px; color: #c7d2fe; }
 .centra-job-row strong { color: #a5b4fc; }
+.centra-job-actions { display: flex; align-items: center; justify-content: flex-end; }
+.centra-job-cancel-btn { padding: 3px 8px; font-size: 0.68rem; font-weight: 500; font-family: inherit; color: #f87171; background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.35); border-radius: 4px; cursor: pointer; transition: all 0.15s ease; white-space: nowrap; line-height: 1.2; }
+.centra-job-cancel-btn:hover:not(:disabled) { background: rgba(239, 68, 68, 0.28); border-color: rgba(239, 68, 68, 0.65); color: #fca5a5; }
+.centra-job-cancel-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.centra-job-status-pill { padding: 2px 7px; font-size: 0.65rem; border-radius: 4px; white-space: nowrap; line-height: 1.2; }
+.centra-job-status-pill.completed { color: #4ade80; background: rgba(34, 197, 94, 0.12); border: 1px solid rgba(34, 197, 94, 0.3); }
+.centra-job-status-pill.cancelled { color: #94a3b8; background: rgba(148, 163, 184, 0.12); border: 1px solid rgba(148, 163, 184, 0.25); }
+.centra-job-status-pill.cancelling { color: #fbbf24; background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.3); }
 .help-tooltip { position: relative; display: inline-grid; place-items: center; width: 16px; height: 16px; margin-left: 4px; border: 1px solid rgba(129,140,248,.55); border-radius: 50%; color: #a5b4fc; font: 700 .68rem/1 inherit; cursor: help; vertical-align: 1px; outline: none; }
 .help-tooltip::after { content: attr(data-tooltip); position: absolute; left: 50%; bottom: calc(100% + 9px); z-index: 1000; width: 250px; padding: 9px 11px; border: 1px solid rgba(129,140,248,.35); border-radius: 8px; background: #111a2e; color: #e5e7eb; box-shadow: 0 10px 30px rgba(0,0,0,.45); font: 400 .74rem/1.4 Inter,sans-serif; white-space: normal; pointer-events: none; opacity: 0; visibility: hidden; transform: translate(-50%,4px); transition: .15s ease; }
 .help-tooltip:hover::after,.help-tooltip:focus::after { opacity: 1; visibility: visible; transform: translate(-50%,0); }
@@ -513,16 +521,16 @@ a.camera-service-link:hover { background: rgba(99,102,241,.2); color: #fff; }
 .centra-people-filters .active { border-color: rgba(34,197,94,.85); color: #86efac; }
 .centra-people-count { position: absolute; top: 7px; right: 7px; z-index: 2; padding: 3px 7px; border-radius: 999px; background: rgba(15,23,42,.88); color: #86efac; font-size: .72rem; font-weight: 700; }
 .centra-screen-info .centra-person-ids { color: #86efac; overflow-wrap: anywhere; }
-.centra-screens-grid { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 12px; }
-.centra-screen-card { width: 100%; overflow: hidden; padding: 0; border: 1px solid var(--card-border); border-radius: 11px; background: rgba(15,23,42,.72); color: var(--text-main); text-align: left; font: inherit; cursor: pointer; transition: border-color .15s ease,transform .15s ease,box-shadow .15s ease; }
+.centra-screens-grid { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 12px; align-items: start; }
+.centra-screen-card { position: relative; display: flex; flex-direction: column; width: 100%; overflow: hidden; padding: 0; border: 1px solid var(--card-border); border-radius: 11px; background: rgba(15,23,42,.72); color: var(--text-main); text-align: left; font: inherit; cursor: pointer; transition: border-color .15s ease,transform .15s ease,box-shadow .15s ease; box-sizing: border-box; }
 .centra-screen-card:hover,.centra-screen-card:focus-visible { border-color: rgba(99,102,241,.7); box-shadow: 0 8px 24px rgba(0,0,0,.25); transform: translateY(-2px); outline: none; }
-.centra-screen-frame { position: relative; aspect-ratio: 16/9; background: #080d18; }
+.centra-screen-image { width: 100%; height: auto; aspect-ratio: 16/9; display: block; object-fit: cover; background: #080d18; }
+.centra-screen-frame { position: relative; aspect-ratio: 16/9; background: #080d18; overflow: hidden; }
 .centra-screen-frame img { width: 100%; height: 100%; display: block; object-fit: cover; }
 .centra-screen-placeholder { position: absolute; inset: 0; display: grid; place-items: center; padding: 16px; color: var(--text-muted); text-align: center; font-size: .76rem; }
-.centra-screen-info { padding: 10px 11px; }
-.centra-screen-info strong,.centra-screen-info small { display: block; }
-.centra-screen-info strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .8rem; }
-.centra-screen-info small { margin-top: 4px; color: var(--text-muted); font-size: .68rem; }
+.centra-screen-meta, .centra-screen-info { padding: 8px 10px; display: flex; flex-direction: column; gap: 3px; box-sizing: border-box; }
+.centra-screen-meta strong, .centra-screen-info strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .78rem; font-weight: 600; color: var(--text-main); line-height: 1.3; }
+.centra-screen-meta small, .centra-screen-info small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .67rem; color: var(--text-muted); line-height: 1.3; }
 .centra-screens-sentinel { display: none; justify-content: center; align-items: center; gap: 8px; min-height: 64px; color: var(--text-muted); }
 @media (max-width: 1100px) {
     .centra-discovery-form { grid-template-columns: repeat(2,minmax(0,1fr)); }

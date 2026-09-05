@@ -32,6 +32,7 @@ function updateCentraTypeFields() {
 window.updateCentraTypeFields = updateCentraTypeFields;
 document.addEventListener('DOMContentLoaded', () => {
     updateCentraTypeFields();
+    if (window.restoreCentraScan) restoreCentraScan();
 });
 
 function updateCentraColorOptions() {
@@ -107,11 +108,14 @@ async function startCentraDiscovery(event) {
         if (!jobIds.length) jobIds.push(...(data.job_ids || [data.job_id]));
         localStorage.setItem('ip2domain_centra_job', JSON.stringify(jobIds));
         activeCentraJobId = jobIds;
+        window.activeCentraJobId = jobIds;
         const cancelButton = document.getElementById('centra-cancel-button');
-        cancelButton.disabled = false;
-        cancelButton.textContent = '■ Остановить';
-        cancelButton.style.display = '';
-        pollCentraDiscovery(jobIds);
+        if (cancelButton) {
+            cancelButton.disabled = false;
+            cancelButton.textContent = '■ Остановить';
+            cancelButton.style.display = '';
+        }
+        pollCentraDiscovery(jobIds, true);
     } catch (error) {
         button.disabled = false;
         progress.innerHTML = `<span style="color:#f87171">${_esc(error.message)}</span>`;
@@ -119,17 +123,46 @@ async function startCentraDiscovery(event) {
 }
 window.startCentraDiscovery = startCentraDiscovery;
 
-function pollCentraDiscovery(jobIds) {
+function pollCentraDiscovery(jobIds, immediate = false) {
     jobIds = Array.isArray(jobIds) ? jobIds : [jobIds];
     activeCentraJobId = jobIds;
-    if (window._centraPoller) clearInterval(window._centraPoller);
-    const timer = setInterval(async () => {
-        const button = document.getElementById('centra-discovery-button');
-        const progress = document.getElementById('centra-discovery-progress');
+    window.activeCentraJobId = jobIds;
+    if (window._centraPoller) {
+        clearInterval(window._centraPoller);
+        window._centraPoller = null;
+    }
+    const button = document.getElementById('centra-discovery-button');
+    const cancelButton = document.getElementById('centra-cancel-button');
+    const progress = document.getElementById('centra-discovery-progress');
+
+    const tick = async () => {
         try {
-            const responses = await Promise.all(jobIds.map((id) => fetch(`/api/cameras/centra/discover/${id}`)));
+            const responses = await Promise.all(jobIds.map((id) => fetch(`/api/cameras/centra/discover/${encodeURIComponent(id)}`)));
+            if (responses.some((response) => response.status === 404)) {
+                const activeRes = await fetch('/api/cameras/centra/discover/active');
+                if (activeRes.ok) {
+                    const activeData = await activeRes.json();
+                    const currentActive = (activeData.jobs || []).map((j) => j.job_id);
+                    if (currentActive.length) {
+                        jobIds = currentActive;
+                        activeCentraJobId = jobIds;
+                        window.activeCentraJobId = jobIds;
+                        localStorage.setItem('ip2domain_centra_job', JSON.stringify(jobIds));
+                        return;
+                    }
+                }
+                clearInterval(window._centraPoller);
+                window._centraPoller = null;
+                localStorage.removeItem('ip2domain_centra_job');
+                activeCentraJobId = null;
+                window.activeCentraJobId = null;
+                if (button) button.disabled = false;
+                if (cancelButton) cancelButton.style.display = 'none';
+                if (progress) progress.innerHTML = '<span style="color:var(--text-muted, #94a3b8)">Сканирование завершено</span>';
+                return;
+            }
+            if (responses.some((response) => !response.ok)) throw new Error('Ошибка получения статуса задания');
             const jobs = await Promise.all(responses.map((response) => response.json()));
-            if (responses.some((response) => !response.ok)) throw new Error('Задание не найдено');
             const total = jobs.reduce((sum, job) => sum + (job.total || 0), 0);
             const checked = jobs.reduce((sum, job) => sum + (job.checked || 0), 0);
             const found = jobs.reduce((sum, job) => sum + (job.found || 0), 0);
@@ -141,28 +174,105 @@ function pollCentraDiscovery(jobIds) {
             const rows = jobs.map((job) => {
                 const jobPct = job.total ? Math.min(100, Math.floor((job.checked || 0) * 100 / job.total)) : (job.progress_pct || 0);
                 const etaValue = job.eta_seconds == null ? NaN : Number(job.eta_seconds);
-                const eta = job.status === 'queued' ? 'в очереди' : `${formatCentraEta(etaValue)} осталось`;
-                return `<div class="centra-job-row"><span>${_esc(job.stage || job.target || job.job_id)} <small>${_esc(eta)}</small></span><strong>${jobPct}%</strong></div>`;
+                const eta = job.status === 'queued' ? 'в очереди' : (job.status === 'completed' ? 'завершено' : (job.status === 'cancelled' ? 'отменено' : `${formatCentraEta(etaValue)} осталось`));
+                let actionHtml = '';
+                if (['queued', 'running'].includes(job.status)) {
+                    actionHtml = `<button type="button" class="centra-job-cancel-btn" onclick="cancelSingleCentraJob('${_esc(job.job_id)}', this, event)" title="Отменить это сканирование">Отменить</button>`;
+                } else if (job.status === 'cancelling') {
+                    actionHtml = `<span class="centra-job-status-pill cancelling">Отменяется...</span>`;
+                } else if (job.status === 'completed') {
+                    actionHtml = `<span class="centra-job-status-pill completed">Готово</span>`;
+                } else if (job.status === 'cancelled') {
+                    actionHtml = `<span class="centra-job-status-pill cancelled">Отменено</span>`;
+                }
+                return `<div class="centra-job-row" data-job-id="${_esc(job.job_id)}">` +
+                       `<span>${_esc(job.stage || job.target || job.job_id)} <small>${_esc(eta)}</small></span>` +
+                       `<strong>${jobPct}%</strong>` +
+                       `<div class="centra-job-actions">${actionHtml}</div>` +
+                       `</div>`;
             }).join('');
-            progress.innerHTML = `<div class="progress-header"><span>Активные сканирования: ${active.length} · проверено ${checked.toLocaleString()} · найдено ${found} · ${formatCentraEta(overallEta)} осталось</span><span>${pct}%</span></div><div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div><div class="centra-job-list">${rows}</div>`;
+            if (progress) {
+                progress.style.display = 'block';
+                progress.innerHTML = `<div class="progress-header"><span>Активные сканирования: ${active.length} · проверено ${checked.toLocaleString()} · найдено ${found} · ${formatCentraEta(overallEta)} осталось</span><span>${pct}%</span></div><div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div><div class="centra-job-list">${rows}</div>`;
+            }
             if (jobs.every((job) => job.status === 'completed')) {
-                clearInterval(timer); button.disabled = false; activeCentraJobId = null;
-                document.getElementById('centra-cancel-button').style.display = 'none';
-                centraCameras = []; await loadCentraCameras();
+                clearInterval(window._centraPoller);
+                window._centraPoller = null;
+                window._centraPollerTick = null;
+                if (button) button.disabled = false;
+                activeCentraJobId = null;
+                window.activeCentraJobId = null;
+                localStorage.removeItem('ip2domain_centra_job');
+                if (cancelButton) cancelButton.style.display = 'none';
+                centraCameras = [];
+                if (window.loadCentraCameras) await loadCentraCameras();
             } else if (jobs.every((job) => ['completed', 'cancelled'].includes(job.status))) {
-                clearInterval(timer); button.disabled = false; activeCentraJobId = null;
-                document.getElementById('centra-cancel-button').style.display = 'none';
-                centraCameras = []; await loadCentraCameras();
+                clearInterval(window._centraPoller);
+                window._centraPoller = null;
+                window._centraPollerTick = null;
+                if (button) button.disabled = false;
+                activeCentraJobId = null;
+                window.activeCentraJobId = null;
+                localStorage.removeItem('ip2domain_centra_job');
+                if (cancelButton) cancelButton.style.display = 'none';
+                centraCameras = [];
+                if (window.loadCentraCameras) await loadCentraCameras();
             } else if (jobs.some((job) => job.status === 'error' || job.status === 'interrupted')) {
+                clearInterval(window._centraPoller);
+                window._centraPoller = null;
+                window._centraPollerTick = null;
+                if (button) button.disabled = false;
+                activeCentraJobId = null;
+                window.activeCentraJobId = null;
+                localStorage.removeItem('ip2domain_centra_job');
+                if (cancelButton) cancelButton.style.display = 'none';
                 throw new Error(jobs.find((job) => job.error)?.error || 'Поиск прерван');
             }
         } catch (error) {
-            clearInterval(timer); button.disabled = false;
-            progress.innerHTML = `<span style="color:#f87171">${_esc(error.message)}</span>`;
+            clearInterval(window._centraPoller);
+            window._centraPoller = null;
+            window._centraPollerTick = null;
+            if (button) button.disabled = false;
+            if (cancelButton) cancelButton.style.display = 'none';
+            if (progress) progress.innerHTML = `<span style="color:#f87171">${_esc(error.message)}</span>`;
         }
-    }, 2000);
-    window._centraPoller = timer;
+    };
+
+    window._centraPollerTick = tick;
+    if (immediate) {
+        tick();
+    }
+    window._centraPoller = setInterval(tick, 2000);
 }
+
+async function cancelSingleCentraJob(jobId, btn, event) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+    if (!jobId) return;
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Остановка...';
+    }
+    try {
+        const response = await fetch(`/api/cameras/centra/discover/${encodeURIComponent(jobId)}/cancel`, {method:'POST'});
+        if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
+            throw new Error(data.detail || 'Не удалось остановить задание');
+        }
+        if (window._centraPollerTick) {
+            window._centraPollerTick();
+        }
+    } catch (err) {
+        console.error('Cancel single job error:', err);
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = 'Отменить';
+        }
+    }
+}
+window.cancelSingleCentraJob = cancelSingleCentraJob;
 
 async function cancelCentraDiscovery() {
     let jobIds = activeCentraJobId;
@@ -170,15 +280,75 @@ async function cancelCentraDiscovery() {
     if (!jobIds) return;
     jobIds = Array.isArray(jobIds) ? jobIds : [jobIds];
     const cancelButton = document.getElementById('centra-cancel-button');
-    cancelButton.disabled = true;
-    cancelButton.textContent = 'Остановка...';
+    if (cancelButton) {
+        cancelButton.disabled = true;
+        cancelButton.textContent = 'Остановка...';
+    }
     try {
-        const responses = await Promise.all(jobIds.map((id) => fetch(`/api/cameras/centra/discover/${id}/cancel`, {method:'POST'})));
+        const responses = await Promise.all(jobIds.map((id) => fetch(`/api/cameras/centra/discover/${encodeURIComponent(id)}/cancel`, {method:'POST'})));
         if (responses.some((response) => !response.ok)) throw new Error('Не удалось остановить поиск');
-        document.getElementById('centra-discovery-progress').style.display = 'block';
+        const progress = document.getElementById('centra-discovery-progress');
+        if (progress) progress.style.display = 'block';
     } catch (error) {
-        cancelButton.disabled = false;
-        cancelButton.textContent = '■ Остановить';
+        if (cancelButton) {
+            cancelButton.disabled = false;
+            cancelButton.textContent = '■ Остановить';
+        }
     }
 }
 window.cancelCentraDiscovery = cancelCentraDiscovery;
+
+async function restoreCentraScan() {
+    try {
+        let jobIds = [];
+        const activeResponse = await fetch('/api/cameras/centra/discover/active');
+        if (activeResponse.ok) {
+            const activeData = await activeResponse.json();
+            jobIds = (activeData.jobs || []).map((j) => j.job_id);
+        }
+        if (!jobIds.length) {
+            try {
+                const stored = JSON.parse(localStorage.getItem('ip2domain_centra_job') || '[]');
+                if (Array.isArray(stored) && stored.length) {
+                    const checks = await Promise.all(stored.map((id) => fetch(`/api/cameras/centra/discover/${encodeURIComponent(id)}`)));
+                    const stillActive = [];
+                    for (let i = 0; i < checks.length; i++) {
+                        if (checks[i].ok) {
+                            const job = await checks[i].json();
+                            if (['queued', 'running', 'cancelling'].includes(job.status)) {
+                                stillActive.push(stored[i]);
+                            }
+                        }
+                    }
+                    if (stillActive.length) {
+                        jobIds = stillActive;
+                    } else {
+                        localStorage.removeItem('ip2domain_centra_job');
+                    }
+                }
+            } catch (_) {}
+        }
+        if (jobIds.length) {
+            localStorage.setItem('ip2domain_centra_job', JSON.stringify(jobIds));
+            activeCentraJobId = jobIds;
+            window.activeCentraJobId = jobIds;
+            const button = document.getElementById('centra-discovery-button');
+            const cancelButton = document.getElementById('centra-cancel-button');
+            const progress = document.getElementById('centra-discovery-progress');
+            if (button) button.disabled = true;
+            if (cancelButton) {
+                cancelButton.disabled = false;
+                cancelButton.textContent = '■ Остановить';
+                cancelButton.style.display = '';
+            }
+            if (progress) {
+                progress.style.display = 'block';
+                progress.innerHTML = '<div class="progress-header"><span>Восстановление активных сканирований...</span></div>';
+            }
+            pollCentraDiscovery(jobIds, true);
+        }
+    } catch (e) {
+        console.warn('Failed to restore centra scan:', e);
+    }
+}
+window.restoreCentraScan = restoreCentraScan;

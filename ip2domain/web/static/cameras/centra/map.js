@@ -114,14 +114,10 @@ function handleCentraClusterClick(objects) {
     const cameraIndexes = objects.map((object) => Number(object.properties.get('centraIndex')))
         .filter((index) => Number.isInteger(index) && centraCameras[index]);
     if (!cameraIndexes.length || !centraMap) return;
-    if (centraMap.getZoom() >= 12) {
-        openCentraClusterList(cameraIndexes);
-        return;
-    }
     const coordinates = cameraIndexes.map((index) => centraCameras[index].coordinates);
     const unique = new Set(coordinates.map((point) => point.map((value) => Number(value).toFixed(7)).join(',')));
-    if (unique.size === 1) {
-        centraMap.setCenter(coordinates[0], 12, {duration: 250});
+    if (unique.size === 1 || centraMap.getZoom() >= 12) {
+        openCentraClusterList(cameraIndexes);
         return;
     }
     const bounds = coordinates.reduce((result, point) => {
@@ -146,7 +142,10 @@ function openCentraClusterList(cameraIndexes) {
     }
     const ordered = [...new Set(cameraIndexes)].sort((left, right) =>
         String(centraCameras[left]?.title || '').localeCompare(String(centraCameras[right]?.title || ''), 'ru', {numeric:true}));
-    dialog.innerHTML = `<div class="centra-player-head"><strong>Камеры в кластере · ${ordered.length}</strong><button class="centra-player-close" type="button" onclick="document.getElementById('centra-cluster-dialog').close()" aria-label="Закрыть">×</button></div><div class="centra-cluster-camera-list">${ordered.map((index) => {
+    const firstCam = centraCameras[ordered[0]];
+    const addr = firstCam?.address ? centraSidebarAddress(firstCam.address) : '';
+    const titleText = addr ? `${_esc(addr)} · ${ordered.length} камер` : `Камеры в доме · ${ordered.length}`;
+    dialog.innerHTML = `<div class="centra-player-head"><strong>${titleText}</strong><button class="centra-player-close" type="button" onclick="document.getElementById('centra-cluster-dialog').close()" aria-label="Закрыть">×</button></div><div class="centra-cluster-camera-list">${ordered.map((index) => {
         const camera = centraCameras[index];
         return `<button type="button" onclick="openCentraClusterCamera(${index})"><span class="centra-cluster-dot" style="background:${_esc(centraClusterCssColor(centraPinColor(camera)))}"></span><strong>${_esc(camera.title || camera.id)}</strong><small>${_esc(camera.id)} · ${_esc(centraCameraType(camera))} · ${_esc(camera.address || '')}</small></button>`;
     }).join('')}</div>`;
@@ -240,8 +239,22 @@ async function loadCentraCameras() {
             clusterIconShape: {type: 'Rectangle', coordinates: [[0, 0], [48, 48]]},
             groupByCoordinates: false,
             clusterDisableClickZoom: true,
+            hasBalloon: false,
             gridSize: 48,
-            maxZoom: 17
+            maxZoom: 23
+        });
+        function syncCentraClusterMode() {
+            if (!centraMap || !clusterer) return;
+            const currentZoom = centraMap.getZoom();
+            const targetGroupBy = currentZoom >= 17;
+            if (clusterer.options.get('groupByCoordinates') !== targetGroupBy) {
+                clusterer.options.set('groupByCoordinates', targetGroupBy);
+            }
+        }
+        centraMap.events.add('boundschange', (event) => {
+            if (event.get('newZoom') !== event.get('oldZoom')) {
+                syncCentraClusterMode();
+            }
         });
         clusterer.events.add('click', (event) => {
             const target = event.get('target');
@@ -265,7 +278,9 @@ async function loadCentraCameras() {
         clusterer.add(placemarks);
         centraMap.geoObjects.add(clusterer);
         if (placemarks.length) {
-            centraMap.setBounds(clusterer.getBounds(), {checkZoomRange: true, zoomMargin: 35});
+            centraMap.setBounds(clusterer.getBounds(), {checkZoomRange: true, zoomMargin: 35}).then(() => {
+                syncCentraClusterMode();
+            });
         }
     } catch (error) {
         mapNode.innerHTML = `<div class="empty-state">${_esc(error.message)}</div>`;

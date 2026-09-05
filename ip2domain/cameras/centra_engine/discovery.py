@@ -205,6 +205,11 @@ async def _run_centra_discovery(job_id: str, req: CentraDiscoveryRequest):
                     retries=retries, started_at=started_at, speed=round(speed, 2), eta_seconds=eta_seconds)
 
     try:
+        if cancellation_requested():
+            CENTRA_JOBS.update(job_id, status="cancelled", progress_pct=0,
+                               stage=f"Поиск типа {camera_type} отменен пользователем",
+                               checked=0, found=0, skipped=skipped)
+            return
         CENTRA_JOBS.update(job_id, status="running", progress_pct=0, started_at=started_at,
                            speed=0, eta_seconds=None,
                            stage=(f"Подготовка типа {camera_type} · {total:,} проверок"

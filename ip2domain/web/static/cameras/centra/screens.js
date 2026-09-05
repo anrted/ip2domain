@@ -39,6 +39,7 @@ function switchCameraTab(tab) {
     if (tab === 'catalog' && !cameraCatalogLoaded) loadCameraCatalogProviders();
     if (tab === 'centra') {
         if (!centraCameras.length && window.loadCentraCameras) loadCentraCameras();
+        if (window.restoreCentraScan) restoreCentraScan();
         setTimeout(resizeCentraMap, 80);
     }
     if (tab === 'screens') {
@@ -89,6 +90,49 @@ function scheduleCameraCatalogSearch() {
 }
 window.scheduleCameraCatalogSearch = scheduleCameraCatalogSearch;
 
+function getScreensTypeSelect() {
+    return document.getElementById('centra-screens-type') || document.getElementById('centra-screen-type');
+}
+window.getScreensTypeSelect = getScreensTypeSelect;
+
+function getScreensSearchInput() {
+    return document.getElementById('centra-screens-search') || document.getElementById('centra-screen-search');
+}
+window.getScreensSearchInput = getScreensSearchInput;
+
+let centraSentinelObserver = null;
+
+function ensureCentraSentinelObserver() {
+    if (centraSentinelObserver || !('IntersectionObserver' in window)) return;
+    const sentinel = document.getElementById('centra-screens-sentinel');
+    if (!sentinel) return;
+    centraSentinelObserver = new IntersectionObserver((entries) => {
+        entries.forEach((entry) => {
+            if (entry.isIntersecting && centraScreensHasMore && !centraScreensLoading) {
+                loadMoreCentraScreens();
+            }
+        });
+    }, {rootMargin: '400px 0px'});
+    centraSentinelObserver.observe(sentinel);
+}
+
+function populateCentraScreensTypes(typesCount) {
+    const select = getScreensTypeSelect();
+    if (!select || !typesCount) return;
+    const currentVal = select.value || '';
+    const availableKeys = Object.keys(typesCount).filter(k => k !== 'all');
+    let html = `<option value="">Все типы (${Number(typesCount['all'] || 0).toLocaleString()})</option>`;
+    availableKeys.forEach((key) => {
+        const count = typesCount[key] || 0;
+        const selected = key === currentVal ? 'selected' : '';
+        html += `<option value="${_esc(key)}" ${selected}>${_esc(key)} (${Number(count).toLocaleString()})</option>`;
+    });
+    select.innerHTML = html;
+    select.value = currentVal;
+    select.dataset.populated = 'true';
+}
+window.populateCentraScreensTypes = populateCentraScreensTypes;
+
 function ensureCentraScreenObserver() {
     if (centraScreenObserver || !('IntersectionObserver' in window)) return;
     centraScreenObserver = new IntersectionObserver((entries) => {
@@ -113,6 +157,8 @@ async function resetCentraScreens() {
     if (grid) grid.innerHTML = '';
     const errorNode = document.getElementById('centra-screens-error');
     if (errorNode) errorNode.textContent = '';
+    const status = document.getElementById('centra-screen-status');
+    if (status) status.textContent = '';
     centraScreensLoaded = true;
     await loadMoreCentraScreens();
 }
@@ -131,19 +177,37 @@ async function loadMoreCentraScreens() {
     centraScreensLoading = true;
     const status = document.getElementById('centra-screen-status');
     const sentinel = document.getElementById('centra-screens-sentinel');
-    const type = document.getElementById('centra-screens-type')?.value || '';
-    const search = document.getElementById('centra-screens-search')?.value.trim() || '';
+    const spinner = document.getElementById('centra-screens-spinner');
+    const sentinelText = document.getElementById('centra-screens-sentinel-text');
+    const loadMoreBtn = document.getElementById('centra-screens-load-more-btn');
+    const typeSelect = getScreensTypeSelect();
+    const searchInput = getScreensSearchInput();
+    const type = typeSelect?.value || '';
+    const search = searchInput?.value.trim() || '';
     const personSearch = (document.getElementById('centra-people-id-search')?.value.trim() || '').toLowerCase();
     const endpoint = personSearch ? '/api/cameras/centra/people-identities/search'
         : window.centraScreensMode === 'people' ? '/api/cameras/centra/people/results' : '/api/cameras/centra/screens';
     const params = personSearch
         ? new URLSearchParams({person_id: personSearch, camera_type: type})
         : new URLSearchParams({offset: String(centraScreensOffset), limit: '100', camera_type: type, search});
-    if (status) status.textContent = 'Загрузка кадров...';
+    
+    if (sentinel) {
+        sentinel.style.display = 'flex';
+        if (spinner) spinner.style.display = 'inline-block';
+        if (sentinelText) sentinelText.textContent = 'Загрузка кадров...';
+        if (loadMoreBtn) loadMoreBtn.style.display = 'none';
+    }
+    if (status && !centraScreenCameras.length) status.textContent = 'Загрузка кадров...';
+
     try {
         const response = await fetch(`${endpoint}?${params}`);
         const data = await response.json();
         if (!response.ok) throw new Error(data.detail || 'Не удалось загрузить кадры');
+        
+        if (data.types_count && !type && !search) {
+            populateCentraScreensTypes(data.types_count);
+        }
+
         const countNode = document.getElementById('centra-screens-count');
         if (countNode) countNode.textContent = `${Number(data.total || 0).toLocaleString()} камер`;
         centraScreensHasMore = Boolean(data.has_more);
@@ -151,14 +215,47 @@ async function loadMoreCentraScreens() {
         centraScreenCameras.push(...(data.cameras || []));
         centraScreensOffset += (data.cameras || []).length;
         renderCentraScreens(data.cameras || [], startIndex);
-        if (status) status.textContent = centraScreensHasMore ? '' : `Показано ${centraScreenCameras.length} камер`;
-        if (sentinel) sentinel.style.display = centraScreensHasMore ? '' : 'none';
+        
+        ensureCentraSentinelObserver();
+
+        if (status) {
+            if (!centraScreenCameras.length) {
+                status.textContent = 'Камеры не найдены';
+            } else if (centraScreensHasMore) {
+                status.textContent = `Показано ${centraScreenCameras.length} из ${data.total}`;
+            } else {
+                status.textContent = `Показаны все ${centraScreenCameras.length} камер`;
+            }
+        }
+
+        if (sentinel) {
+            if (centraScreensHasMore) {
+                sentinel.style.display = 'flex';
+                if (spinner) spinner.style.display = 'none';
+                if (sentinelText) sentinelText.textContent = `Показано ${centraScreenCameras.length} из ${data.total}. Прокрутите вниз или нажмите:`;
+                if (loadMoreBtn) {
+                    loadMoreBtn.style.display = 'inline-block';
+                    loadMoreBtn.textContent = 'Загрузить ещё 100';
+                }
+            } else {
+                sentinel.style.display = 'none';
+            }
+        }
+
         if (data.ffmpeg_available === false) {
             const errorNode = document.getElementById('centra-screens-error');
             if (errorNode) errorNode.textContent = 'FFmpeg не установлен: используются только статические кадры preview.jpg';
         }
     } catch (error) {
         if (status) status.textContent = error.message;
+        if (sentinel && centraScreensHasMore) {
+            if (spinner) spinner.style.display = 'none';
+            if (sentinelText) sentinelText.textContent = `Ошибка загрузки: ${error.message}`;
+            if (loadMoreBtn) {
+                loadMoreBtn.style.display = 'inline-block';
+                loadMoreBtn.textContent = 'Повторить попытку';
+            }
+        }
     } finally {
         centraScreensLoading = false;
     }
@@ -200,6 +297,10 @@ function showAllCentraScreens() {
     window.centraPeopleShowingAllResults = false;
     const searchInput = document.getElementById('centra-people-id-search');
     if (searchInput) searchInput.value = '';
+    const textSearch = getScreensSearchInput();
+    if (textSearch) textSearch.value = '';
+    const typeSelect = getScreensTypeSelect();
+    if (typeSelect) typeSelect.value = '';
     if (window.updateCentraScreensModeButtons) updateCentraScreensModeButtons();
     const btn = document.getElementById('centra-people-show-all-btn');
     if (btn) btn.style.display = 'none';

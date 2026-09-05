@@ -70,21 +70,63 @@ class CentraStorageMixin:
         camera["updated_at"] = row["updated_at"]
         return camera
 
+    def _build_centra_screens_query(self, source: str = "all") -> str:
+        source_val = str(source or "all").strip().lower()
+        parts = []
+        if source_val in {"all", "centra"}:
+            parts.append("""
+                SELECT 
+                    camera_id,
+                    title,
+                    COALESCE(json_extract(camera_json, '$.address'), '') AS address,
+                    UPPER(COALESCE(NULLIF(json_extract(camera_json, '$.camera_type'), ''), CASE WHEN instr(camera_id, '-') > 0 THEN substr(camera_id, 1, instr(camera_id, '-') - 1) ELSE camera_id END, '')) AS c_type,
+                    'centra' AS provider_id,
+                    camera_json,
+                    first_seen,
+                    updated_at
+                FROM centra_cameras
+                WHERE COALESCE(json_extract(camera_json, '$.available'), 1) = 1
+            """)
+        if source_val in {"all", "orion"}:
+            parts.append("""
+                SELECT 
+                    'ORION-' || external_id AS camera_id,
+                    title,
+                    address,
+                    'ORION' AS c_type,
+                    'orion' AS provider_id,
+                    camera_json,
+                    first_seen,
+                    updated_at
+                FROM camera_catalog
+                WHERE provider_id = 'orion' AND available = 1
+            """)
+        if not parts:
+            parts.append("""
+                SELECT camera_id, title, '' AS address, '' AS c_type, 'centra' AS provider_id, camera_json, first_seen, updated_at
+                FROM centra_cameras WHERE 1=0
+            """)
+        return " UNION ALL ".join(parts)
+
     def list_centra_cameras_page(self, offset: int = 0, limit: int = 100,
-                                 camera_type: str = "", search: str = "") -> Dict[str, any]:
-        conditions = ["COALESCE(json_extract(camera_json, '$.available'), 1) = 1"]
+                                 camera_type: str = "", search: str = "",
+                                 source: str = "all") -> Dict[str, any]:
+        base_subquery = self._build_centra_screens_query(source)
+        conditions = []
         params = []
-        if camera_type:
-            conditions.append("UPPER(camera_id) LIKE ?")
-            params.append(f"{camera_type.upper()}-%")
+        if camera_type.strip():
+            c_type_upper = camera_type.strip().upper()
+            conditions.append("(c_type = ? OR UPPER(camera_id) LIKE ?)")
+            params.extend([c_type_upper, f"{c_type_upper}-%"])
         if search.strip():
-            conditions.append("CASEFOLD_CONTAINS(camera_id || ' ' || COALESCE(title, '') || ' ' || COALESCE(json_extract(camera_json, '$.address'), ''), ?) = 1")
+            conditions.append("CASEFOLD_CONTAINS(camera_id || ' ' || COALESCE(title, '') || ' ' || COALESCE(address, ''), ?) = 1")
             params.append(search.strip())
-        where = f"WHERE {' AND '.join(conditions)}"
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         with self._get_connection() as conn:
-            total = conn.execute(f"SELECT COUNT(*) FROM centra_cameras {where}", params).fetchone()[0]
+            total = conn.execute(f"SELECT COUNT(*) FROM ({base_subquery}) {where}", params).fetchone()[0]
             rows = conn.execute(f"""
-                SELECT camera_json, first_seen, updated_at FROM centra_cameras
+                SELECT camera_id, title, address, c_type, provider_id, camera_json, first_seen, updated_at
+                FROM ({base_subquery})
                 {where}
                 ORDER BY title COLLATE NATURAL_NOCASE, camera_id COLLATE NATURAL_NOCASE
                 LIMIT ? OFFSET ?
@@ -94,8 +136,32 @@ class CentraStorageMixin:
             camera = json.loads(row["camera_json"])
             camera["first_seen"] = row["first_seen"]
             camera["updated_at"] = row["updated_at"]
+            if row["provider_id"] == "orion":
+                c_id = str(camera.get("external_id") or camera.get("id"))
+                camera["id"] = f"ORION-{c_id}"
+                camera["external_id"] = c_id
+                camera["camera_type"] = "ORION"
+                camera["provider_id"] = "orion"
+                camera["title"] = camera.get("title") or f"Орион {c_id}"
+                camera["address"] = camera.get("address") or camera.get("title") or ""
+                camera["embed_url"] = f"http://fluserver.orionnet.online/cam{c_id}/embed.html?autoplay=true&dvr=true"
+                camera["stream_url"] = f"http://fluserver.orionnet.online/cam{c_id}/index.m3u8"
+                camera["snapshot_url"] = f"http://fluserver.orionnet.online/cam{c_id}/preview.jpg"
             cameras.append(camera)
         return {"cameras": cameras, "total": total}
+
+    def get_centra_camera_types_count(self, source: str = "all") -> Dict[str, int]:
+        base_subquery = self._build_centra_screens_query(source)
+        with self._get_connection() as conn:
+            rows = conn.execute(f"""
+                SELECT c_type, COUNT(*) FROM ({base_subquery})
+                WHERE c_type != ''
+                GROUP BY c_type
+                ORDER BY COUNT(*) DESC
+            """).fetchall()
+            counts = {row[0]: row[1] for row in rows}
+            counts["all"] = sum(counts.values())
+            return counts
 
     def clear_centra_cameras(self) -> int:
         with self._get_connection() as conn:

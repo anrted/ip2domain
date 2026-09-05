@@ -71,6 +71,10 @@ class JobStore:
         return self._mem[job_id]
 
     def update(self, job_id: str, **kwargs) -> None:
+        if job_id not in self._mem:
+            persisted = self._storage.get_job(job_id)
+            if persisted:
+                self._mem[job_id] = persisted
         if job_id in self._mem:
             self._mem[job_id].update(kwargs)
             self._persist(job_id, self._mem[job_id])

@@ -21,7 +21,7 @@ from urllib.parse import urlparse
 
 import aiohttp
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 
 from ip2domain.cameras.centra_engine.models import (
     CentraDiscoveryRequest,
@@ -90,16 +90,28 @@ def get_centra_cameras(source: str = Query(default="centra", max_length=50)):
         stored = storage.get_centra_cameras()
         centra_list = ([camera for camera in stored if camera.get("available", True)]
                        if stored else _centra_cameras())
-        for camera in centra_list:
-            camera["address"] = _centra_address(camera.get("title") or camera.get("address", ""))
+        raw_addresses = [camera.get("address", "") for camera in centra_list]
+        fmt_addresses = [_centra_address(camera.get("title") or camera.get("address", "")) for camera in centra_list]
+        cached = storage.get_centra_coordinates(raw_addresses + fmt_addresses)
+        for camera, raw_addr, fmt_addr in zip(centra_list, raw_addresses, fmt_addresses):
+            camera["address"] = fmt_addr
+            if fmt_addr in cached:
+                camera["coordinates"] = cached[fmt_addr]
+            elif raw_addr in cached:
+                camera["coordinates"] = cached[raw_addr]
             embed_url = str(camera.get("embed_url") or "")
             if "/embed.html" in embed_url:
                 camera["embed_url"] = embed_url.split("?", 1)[0]
             camera["provider_id"] = "centra"
-        cached = storage.get_centra_coordinates([camera.get("address", "") for camera in centra_list])
+        building_coords = {}
         for camera in centra_list:
-            if camera.get("address") in cached:
-                camera["coordinates"] = cached[camera["address"]]
+            b_id = camera.get("building_id")
+            if b_id and camera.get("coordinates") and b_id not in building_coords:
+                building_coords[b_id] = camera["coordinates"]
+        for camera in centra_list:
+            b_id = camera.get("building_id")
+            if b_id and b_id in building_coords and not camera.get("coordinates"):
+                camera["coordinates"] = building_coords[b_id]
         cameras.extend(centra_list)
 
     # 2. Orion Telecom Public Cameras (cam.krk.ru)
@@ -344,9 +356,24 @@ def get_active_centra_discoveries():
     fields = ("job_id", "target", "status", "progress_pct", "stage", "total", "checked",
               "found", "skipped", "start_id", "end_id", "entrance_start", "entrance_end",
               "started_at", "speed", "eta_seconds")
+    jobs_map = {}
+    for jid, jdata in CENTRA_JOBS.items():
+        if isinstance(jdata, dict) and jdata.get("status") in active_statuses:
+            jobs_map[jid] = {field: jdata.get(field) for field in fields}
+
     persisted = storage.list_jobs("centra_discovery", sorted(active_statuses))
-    jobs = [{field: job.get(field) for field in fields} for job in persisted]
-    return {"jobs": jobs}
+    for job in persisted:
+        jid = job.get("job_id")
+        if not jid:
+            continue
+        if jid not in jobs_map:
+            jobs_map[jid] = {field: job.get(field) for field in fields}
+        else:
+            for field in fields:
+                if jobs_map[jid].get(field) is None and job.get(field) is not None:
+                    jobs_map[jid][field] = job.get(field)
+
+    return {"jobs": list(jobs_map.values())}
 
 
 @router.get("/api/cameras/centra/discover/{job_id}")
@@ -364,8 +391,12 @@ def cancel_centra_discovery(job_id: str):
         raise HTTPException(status_code=404, detail="Задание не найдено")
     if job.get("status") not in {"queued", "running", "cancelling"}:
         return job
-    CENTRA_JOBS.update(job_id, status="cancelling", cancel_requested=True,
-                       stage="Остановка поиска...")
+    if job.get("status") == "queued":
+        CENTRA_JOBS.update(job_id, status="cancelled", cancel_requested=True,
+                           stage="Отменено в очереди")
+    else:
+        CENTRA_JOBS.update(job_id, status="cancelling", cancel_requested=True,
+                           stage="Остановка поиска...")
     return CENTRA_JOBS.get(job_id)
 
 
@@ -377,23 +408,34 @@ def clear_centra_cameras():
 @router.get("/api/cameras/centra/screens")
 def get_centra_screens(offset: int = Query(default=0, ge=0),
                        limit: int = Query(default=100, ge=1, le=100),
-                       camera_type: str = Query(default="", max_length=1),
-                       search: str = Query(default="", max_length=200)):
-    if camera_type and not re.fullmatch(r"[A-Za-z]", camera_type):
+                       camera_type: str = Query(default="", max_length=32),
+                       search: str = Query(default="", max_length=200),
+                       source: str = Query(default="all", max_length=50)):
+    if camera_type and not re.fullmatch(r"^[A-Za-z0-9_\-]+$", camera_type):
         raise HTTPException(status_code=400, detail="Некорректный тип камеры")
-    page = storage.list_centra_cameras_page(offset, limit, camera_type, search)
+    page = storage.list_centra_cameras_page(offset, limit, camera_type, search, source=source)
+    types_count = storage.get_centra_camera_types_count(source=source)
     ttl = max(10, min(3600, int(os.environ.get("IP2DOMAIN_CENTRA_SCREEN_TTL", "300"))))
     now = time.time()
     for camera in page["cameras"]:
         camera["embed_url"] = str(camera.get("embed_url") or "").split("?", 1)[0]
-        camera["screenshot_url"] = f'/api/cameras/centra/screens/{camera.get("id")}.jpg'
+        if camera.get("snapshot_url"):
+            camera["screenshot_url"] = camera["snapshot_url"]
+        else:
+            camera["screenshot_url"] = f'/api/cameras/centra/screens/{camera.get("id")}.jpg'
         cached = CENTRA_CAPTURE_DIR / f'{str(camera.get("id") or "").upper()}.jpg'
         try:
             camera["screenshot_stale"] = cached.is_file() and now - cached.stat().st_mtime >= ttl
         except OSError:
             camera["screenshot_stale"] = False
-    page.update({"offset": offset, "limit": limit, "has_more": offset + len(page["cameras"]) < page["total"],
-                 "preview_primary": True, "ffmpeg_available": shutil.which("ffmpeg") is not None})
+    page.update({
+        "offset": offset,
+        "limit": limit,
+        "has_more": offset + len(page["cameras"]) < page["total"],
+        "types_count": types_count,
+        "preview_primary": True,
+        "ffmpeg_available": shutil.which("ffmpeg") is not None
+    })
     return page
 
 
@@ -403,6 +445,9 @@ async def get_centra_screenshot(camera_id: str, refresh: bool = False):
     if not re.fullmatch(r"^[A-Za-z0-9_\-]+$", safe_name) or ".." in safe_name:
         raise HTTPException(status_code=404, detail="Камера не найдена")
     safe_camera_id = safe_name.upper()
+    if safe_camera_id.startswith("ORION-"):
+        c_id = safe_camera_id.split("-", 1)[1]
+        return RedirectResponse(f"http://fluserver.orionnet.online/cam{c_id}/preview.jpg", status_code=302)
     camera = storage.get_centra_camera(safe_camera_id)
     if not camera or not camera.get("available", True):
         raise HTTPException(status_code=404, detail="Камера не найдена")
@@ -456,7 +501,7 @@ async def start_centra_person_detection(req: CentraPersonDetectionRequest,
     if any(job.get("status") in {"queued", "running"} for job in CENTRA_PERSON_JOBS.values()):
         raise HTTPException(status_code=409, detail="Анализ людей уже выполняется")
     camera_type = req.camera_type.strip().upper()
-    if camera_type and not re.fullmatch(r"[A-Z]", camera_type):
+    if camera_type and not re.fullmatch(r"^[A-Za-z0-9_\-]+$", camera_type):
         raise HTTPException(status_code=400, detail="Некорректный тип камеры")
     if req.all_cameras:
         camera_ids = [str(camera.get("id") or "").upper()

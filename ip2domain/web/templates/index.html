@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
-    <link rel="stylesheet" href="/static/style.css?v=20260904-dvr">
+    <link rel="stylesheet" href="/static/style.css?v=20260905-card-layout-fix">
     <link rel="stylesheet" href="/static/style_v2.css?v=20260819-v2-1">
 </head>
 
@@ -936,11 +936,15 @@
                             <div class="section-header">
                                 <div>
                                     <h2>Карта открытых камер</h2>
-                                    <p class="section-description">Публичные камеры на карте: Centra, Орион Телеком (cam.krk.ru), Goodline (A42)</p>
+                                    <p class="section-description">Публичные камеры на карте: Centra, Орион Телеком
+                                        (cam.krk.ru), Goodline (A42)</p>
                                 </div>
                                 <div style="display:flex; align-items:center; gap:0.75rem;">
-                                    <label for="centra-map-source-select" style="font-size:0.85rem; color:var(--text-muted, #94a3b8);">Источник:</label>
-                                    <select id="centra-map-source-select" class="form-control" style="padding:0.25rem 0.5rem; font-size:0.85rem; width:auto;" onchange="changeCentraMapSource(this.value)">
+                                    <label for="centra-map-source-select"
+                                        style="font-size:0.85rem; color:var(--text-muted, #94a3b8);">Источник:</label>
+                                    <select id="centra-map-source-select" class="form-control"
+                                        style="padding:0.25rem 0.5rem; font-size:0.85rem; width:auto;"
+                                        onchange="changeCentraMapSource(this.value)">
                                         <option value="all" selected>Все источники</option>
                                         <option value="centra">Centra</option>
                                         <option value="orion">Орион Телеком (cam.krk.ru)</option>
@@ -1069,7 +1073,8 @@
                                 </select><label class="centra-screen-search"><span>Поиск</span><input
                                         id="centra-screen-search" type="search" maxlength="200"
                                         placeholder="Название, адрес или ID" autocomplete="off"
-                                        oninput="scheduleCentraScreensSearch()"></label>
+                                        oninput="scheduleCentraScreensSearch()"
+                                        onkeydown="if(event.key==='Enter'){event.preventDefault();resetCentraScreens();}"></label>
                                 <div class="centra-screen-mode"><button class="btn btn-ghost btn-small active"
                                         id="centra-screens-all-button" type="button"
                                         onclick="showAllCentraScreens()">Все камеры</button><button
@@ -1098,8 +1103,13 @@
                             </div>
                             <div id="centra-people-progress" class="centra-people-progress" style="display:none"></div>
                             <div id="centra-screens-grid" class="centra-screens-grid"></div>
-                            <div id="centra-screens-sentinel" class="centra-screens-sentinel"><span
-                                    class="spinner"></span> Загрузка...</div>
+                            <div id="centra-screens-sentinel" class="centra-screens-sentinel"
+                                style="display:none; justify-content:center; align-items:center; gap:10px; padding:16px 0;">
+                                <span class="spinner" id="centra-screens-spinner"></span>
+                                <span id="centra-screens-sentinel-text">Загрузка кадров...</span>
+                                <button class="btn btn-ghost btn-small" id="centra-screens-load-more-btn" type="button"
+                                    onclick="loadMoreCentraScreens()" style="display:none;">Загрузить ещё 100</button>
+                            </div>
                         </section>
                     </div>
                     <!-- ══════════════════════════════════════════════════
@@ -1556,7 +1566,7 @@
     <script src="/static/graph.js"></script>
     <script src="/static/scan.js"></script>
     <script src="/static/remote_desktop.js"></script>
-    <script src="/static/cameras/centra.js?v=20260904-addr-group"></script>
+    <script src="/static/cameras/centra.js?v=20260905-dynamic-cluster-mode"></script>
     <script src="/static/cameras/scanner.js?v=20260814-m7-skip-existing"></script>
     <script src="/static/cameras/go2rtc.js?v=20260814-m7-skip-existing"></script>
     <script src="/static/cameras/strix.js?v=20260818-db-presets-v5"></script>
