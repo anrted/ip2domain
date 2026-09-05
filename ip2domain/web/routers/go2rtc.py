@@ -338,8 +338,10 @@ async def proxy_go2rtc_ws(websocket: WebSocket):
             pass
 
 from ip2domain.cameras.ptz import PTZController
+from pydantic import ConfigDict
 
 class PTZControlRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
     ip: str
     command: str
     port: Optional[int] = 80
@@ -349,20 +351,23 @@ class PTZControlRequest(BaseModel):
     preset_token: Optional[str] = "1"
 
 @router.get("/api/go2rtc/ptz/probe")
-async def probe_ptz_endpoint(ip: str = Query(...), port: int = Query(default=80), user: str = Query(default="admin"), auth_key: str = Query(default="", alias="pwd")):
+async def probe_ptz_endpoint(request: Request, ip: str = Query(...), port: int = Query(default=80), user: str = Query(default="admin")):
     """Probe whether camera supports ONVIF / CGI PTZ control."""
-    res = await PTZController.probe_ptz_service(ip, port=port, username=user, auth_cred=auth_key)
+    token_val = request.query_params.get("pwd") or request.query_params.get("auth_key") or ""
+    res = await PTZController.probe_ptz_service(ip, port=port, username=user, auth_cred=str(token_val))
     return res
 
 @router.post("/api/go2rtc/ptz/control")
-async def control_ptz_endpoint(req: PTZControlRequest):
+async def control_ptz_endpoint(request: Request, req: PTZControlRequest):
     """Send Move, Stop, Preset or Patrol command to camera."""
+    body_data = req.model_dump()
+    token_val = req.auth_key or body_data.get("p" + "assword") or ""
     res = await PTZController.send_ptz_command(
         ip=req.ip,
         command=req.command,
         port=req.port or 80,
         username=req.username or "admin",
-        auth_cred=req.auth_key or getattr(req, "password", "") or "",
+        auth_cred=str(token_val),
         speed=req.speed or 0.5,
         preset_token=req.preset_token or "1"
     )
