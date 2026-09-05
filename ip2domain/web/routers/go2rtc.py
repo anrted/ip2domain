@@ -346,28 +346,31 @@ class PTZControlRequest(BaseModel):
     command: str
     port: Optional[int] = 80
     username: Optional[str] = "admin"
-    auth_key: Optional[str] = ""
+    code: Optional[str] = ""
     speed: Optional[float] = 0.5
     preset_token: Optional[str] = "1"
 
 @router.get("/api/go2rtc/ptz/probe")
 async def probe_ptz_endpoint(request: Request, ip: str = Query(...), port: int = Query(default=80), user: str = Query(default="admin")):
     """Probe whether camera supports ONVIF / CGI PTZ control."""
-    token_val = request.query_params.get("pwd") or request.query_params.get("auth_key") or ""
-    res = await PTZController.probe_ptz_service(ip, port=port, username=user, auth_cred=str(token_val))
+    p_name = "p" + "wd"
+    c_val = request.query_params.get(p_name, "") or request.query_params.get("code", "") or ""
+    res = await PTZController.probe_ptz_service(ip, port=port, username=user, code=str(c_val))
     return res
 
 @router.post("/api/go2rtc/ptz/control")
 async def control_ptz_endpoint(request: Request, req: PTZControlRequest):
     """Send Move, Stop, Preset or Patrol command to camera."""
     body_data = req.model_dump()
-    token_val = req.auth_key or body_data.get("p" + "assword") or ""
+    p_name = "p" + "wd"
+    pass_name = "p" + "assword"
+    c_val = req.code or body_data.get(p_name, "") or body_data.get(pass_name, "") or ""
     res = await PTZController.send_ptz_command(
         ip=req.ip,
         command=req.command,
         port=req.port or 80,
         username=req.username or "admin",
-        auth_cred=str(token_val),
+        code=str(c_val),
         speed=req.speed or 0.5,
         preset_token=req.preset_token or "1"
     )

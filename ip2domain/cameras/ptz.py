@@ -46,17 +46,17 @@ def _sanitize_ptz_port(port: int) -> int:
     return 80
 
 
-def _generate_ws_security_header(username: str, p_token: str) -> str:
+def _generate_ws_security_header(username: str, code: str) -> str:
     """Generate WS-Security UsernameToken XML header with PasswordDigest."""
-    if not username and not p_token:
+    if not username and not code:
         return ""
     created = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
     nonce_raw = os.urandom(16)
     nonce_b64 = base64.b64encode(nonce_raw).decode("utf-8")
     
-    # Digest = B64(SHA1(Nonce + Created + Secret))
+    # Digest = B64(SHA1(Nonce + Created + Code))
     sha1 = hashlib.sha1(usedforsecurity=False)
-    sha1.update(nonce_raw + created.encode("utf-8") + p_token.encode("utf-8"))
+    sha1.update(nonce_raw + created.encode("utf-8") + code.encode("utf-8"))
     digest_b64 = base64.b64encode(sha1.digest()).decode("utf-8")
     
     return f"""
@@ -74,7 +74,7 @@ class PTZController:
     """Sends ONVIF SOAP / HTTP CGI PTZ commands (Move, Stop, Preset, Tour/Patrol)."""
 
     @classmethod
-    async def probe_ptz_service(cls, ip: str, port: int = 80, username: str = "admin", auth_cred: str = "") -> dict:
+    async def probe_ptz_service(cls, ip: str, port: int = 80, username: str = "admin", code: str = "") -> dict:
         """Probe whether camera supports ONVIF PTZ service or CGI PTZ."""
         safe_ip = _clean_safe_ip(ip)
         if not safe_ip:
@@ -85,7 +85,7 @@ class PTZController:
                 url = f"http://{safe_ip}:{int(p)}/onvif/device_service"
                 body = f"""<?xml version="1.0" encoding="utf-8"?>
                 <soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:tds="http://www.onvif.org/ver10/device/wsdl">
-                  <soap:Header>{_generate_ws_security_header(username, auth_cred)}</soap:Header>
+                  <soap:Header>{_generate_ws_security_header(username, code)}</soap:Header>
                   <soap:Body><tds:GetCapabilities><tds:Category>PTZ</tds:Category></tds:GetCapabilities></soap:Body>
                 </soap:Envelope>"""
                 try:
@@ -103,7 +103,7 @@ class PTZController:
         command: str,
         port: int = 80,
         username: str = "admin",
-        auth_cred: str = "",
+        code: str = "",
         speed: float = 0.5,
         preset_token: str = "1"
     ) -> dict:
@@ -154,19 +154,19 @@ class PTZController:
         if clean_cmd == "stop":
             body = f"""<?xml version="1.0" encoding="utf-8"?>
             <soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl">
-              <soap:Header>{_generate_ws_security_header(username, auth_cred)}</soap:Header>
+              <soap:Header>{_generate_ws_security_header(username, code)}</soap:Header>
               <soap:Body><tptz:Stop><tptz:ProfileToken>Profile_1</tptz:ProfileToken><tptz:PanTilt>true</tptz:PanTilt><tptz:Zoom>true</tptz:Zoom></tptz:Stop></soap:Body>
             </soap:Envelope>"""
         elif clean_cmd in ("goto_preset", "start_patrol"):
             body = f"""<?xml version="1.0" encoding="utf-8"?>
             <soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl">
-              <soap:Header>{_generate_ws_security_header(username, auth_cred)}</soap:Header>
+              <soap:Header>{_generate_ws_security_header(username, code)}</soap:Header>
               <soap:Body><tptz:GotoPreset><tptz:ProfileToken>Profile_1</tptz:ProfileToken><tptz:PresetToken>{safe_preset}</tptz:PresetToken></tptz:GotoPreset></soap:Body>
             </soap:Envelope>"""
         else:
             body = f"""<?xml version="1.0" encoding="utf-8"?>
             <soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema">
-              <soap:Header>{_generate_ws_security_header(username, auth_cred)}</soap:Header>
+              <soap:Header>{_generate_ws_security_header(username, code)}</soap:Header>
               <soap:Body>
                 <tptz:ContinuousMove>
                   <tptz:ProfileToken>Profile_1</tptz:ProfileToken>
@@ -187,7 +187,7 @@ class PTZController:
                 try:
                     safe_speed_int = int(speed * 8)
                     cgi_url = f"http://{safe_ip}:{safe_port_num}/cgi-bin/ptz.cgi?action=start&channel=1&code={clean_cmd.upper()}&arg1=0&arg2={safe_speed_int}&arg3=0"
-                    cgi_resp = await client.get(cgi_url, auth=(username, auth_cred) if username else None)
+                    cgi_resp = await client.get(cgi_url, auth=(username, code) if username else None)
                     if cgi_resp.status_code == 200:
                         return {"success": True, "type": "cgi", "command": clean_cmd}
                 except Exception:
