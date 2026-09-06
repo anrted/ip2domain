@@ -148,49 +148,81 @@ async def add_go2rtc_stream(req: Request):
         url_list = []
 
     # Smart Multi-Source Candidate Generator for robust streaming:
-    # 1. Original URL (e.g. rtsp://admin:pass@IP/path)
-    # 2. Anonymous URL (without credentials, if camera is public/anonymous)
-    # 3. Default credentials (admin:admin, admin:123456)
-    # 4. If path is "/" or empty on Hipcam/generic devices, fallback to "/11", "/12", "/1/stream1"
+    # 1. Resolves credentials if masked (***) or missing from scanner_v2 database
+    # 2. Applies #transport=tcp#backchannel=0 to avoid UDP drops and audio handshake hangs
+    # 3. Always uses lightweight #video=copy for ffmpeg fallbacks (zero transcoding CPU overhead)
+    # 4. Falls back to admin:@ and admin:admin only if no credentials were known
     expanded_urls = []
     for u in url_list:
-        candidates = [u]
-        
-        parsed = urllib.parse.urlsplit(u)
+        if not u:
+            continue
+        is_ffmpeg = u.startswith("ffmpeg:")
+        raw_target = u[7:] if is_ffmpeg else u
+
+        parsed = urllib.parse.urlsplit(raw_target)
+        host = parsed.hostname
+
+        # If credentials missing or masked with ***, restore from storage if known
+        recovered_creds = None
+        if host:
+            v2_res = storage.get_v2_result(host)
+            if v2_res and v2_res.get("credentials"):
+                cu = v2_res["credentials"].get("user", "")
+                cp = v2_res["credentials"].get("password", "")
+                if cu:
+                    recovered_creds = (cu, cp)
+
+        if recovered_creds:
+            cu, cp = recovered_creds
+            if ":***@" in raw_target:
+                raw_target = re.sub(r":[^/@]+@", f":{cp}@", raw_target)
+                parsed = urllib.parse.urlsplit(raw_target)
+            elif not parsed.username and parsed.scheme in ("rtsp", "rtsps"):
+                netloc = f"{cu}:{cp}@{parsed.netloc}"
+                raw_target = urllib.parse.urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))
+                parsed = urllib.parse.urlsplit(raw_target)
+
+        if is_ffmpeg:
+            # Force copy mode for ffmpeg fallback to prevent locking CPU
+            clean_ff = raw_target
+            if "#video=h264" in clean_ff or "#video=transcode" in clean_ff:
+                clean_ff = re.sub(r"#video=[^#]+", "#video=copy", clean_ff)
+                clean_ff = re.sub(r"#audio=[^#]+", "", clean_ff).rstrip("#")
+            if not clean_ff.startswith("ffmpeg:"):
+                clean_ff = f"ffmpeg:{clean_ff}"
+            if "#video=" not in clean_ff:
+                clean_ff = f"{clean_ff}#video=copy"
+            if clean_ff not in expanded_urls:
+                expanded_urls.append(clean_ff)
+            continue
+
         if parsed.scheme in ("rtsp", "rtsps"):
-            netloc = parsed.netloc
-            host_port = netloc.split("@")[-1]
+            # Ensure TCP transport and no backchannel by default to prevent UDP drops / audio handshake hangs
+            tcp_url = raw_target
+            if "#" not in tcp_url:
+                tcp_url = f"{tcp_url}#transport=tcp#backchannel=0"
+            elif "transport=" not in tcp_url:
+                tcp_url = f"{tcp_url}#transport=tcp"
 
-            # Completely anonymous candidate (without any user/password)
-            anon_url = urllib.parse.urlunsplit((parsed.scheme, host_port, parsed.path, parsed.query, parsed.fragment))
-            if anon_url not in candidates:
-                candidates.append(anon_url)
+            if tcp_url not in expanded_urls:
+                expanded_urls.append(tcp_url)
 
-            # admin:admin candidate
-            admin_admin = urllib.parse.urlunsplit((parsed.scheme, f"admin:admin@{host_port}", parsed.path, parsed.query, parsed.fragment))
-            if admin_admin not in candidates:
-                candidates.append(admin_admin)
+            # ffmpeg copy fallback for cameras with non-standard RTSP interleaved packets
+            ff_fallback = f"ffmpeg:{raw_target}#video=copy"
+            if ff_fallback not in expanded_urls:
+                expanded_urls.append(ff_fallback)
 
-        # Path fallbacks for root '/'
-        for cand in list(candidates):
-            if cand.endswith('/'):
-                cand_11 = cand[:-1] + '/11'
-                cand_stream = cand[:-1] + '/1/stream1'
-                if cand_11 not in candidates:
-                    candidates.append(cand_11)
-                if cand_stream not in candidates:
-                    candidates.append(cand_stream)
-
-        # Also register ffmpeg: source as ultimate fallback
-        # for cameras with quirky RTSP SETUP behavior
-        for cand in list(candidates)[:2]:
-            ff_cand = f"ffmpeg:{cand}#video=copy"
-            if ff_cand not in candidates:
-                candidates.append(ff_cand)
-
-        for c in candidates:
-            if c not in expanded_urls:
-                expanded_urls.append(c)
+            # If no credentials exist in URL, add common camera defaults as fallbacks
+            if not parsed.username:
+                host_port = parsed.netloc.split("@")[-1]
+                admin_blank = urllib.parse.urlunsplit((parsed.scheme, f"admin:@{host_port}", parsed.path, parsed.query, parsed.fragment))
+                admin_admin = urllib.parse.urlunsplit((parsed.scheme, f"admin:admin@{host_port}", parsed.path, parsed.query, parsed.fragment))
+                for extra in (f"{admin_blank}#transport=tcp#backchannel=0", f"{admin_admin}#transport=tcp#backchannel=0"):
+                    if extra not in expanded_urls:
+                        expanded_urls.append(extra)
+        else:
+            if u not in expanded_urls:
+                expanded_urls.append(u)
 
     url_list = expanded_urls
 

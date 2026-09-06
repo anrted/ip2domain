@@ -237,9 +237,10 @@ async function v2OpenStreamPlayer(srcUrl, camName, ip, currentIdx = 0) {
         }
 
         let actualSrcUrl = srcUrl;
+        const u = cam?.credentials?.user || '';
+        const p = cam?.credentials?.password ?? '';
+
         if (actualSrcUrl.startsWith('ws://') || actualSrcUrl.startsWith('wss://')) {
-            const u = cam?.credentials?.user || '';
-            const p = cam?.credentials?.password || '';
             const credsPart = u ? `${encodeURIComponent(u)}:${encodeURIComponent(p)}@` : '';
             if (actualSrcUrl.includes('rtsp-over-websocket')) {
                 actualSrcUrl = `rtsp://${credsPart}${ip}:554/axis-media/media.amp`;
@@ -249,12 +250,31 @@ async function v2OpenStreamPlayer(srcUrl, camName, ip, currentIdx = 0) {
             }
         }
 
+        if (actualSrcUrl.startsWith('rtsp://') || actualSrcUrl.startsWith('rtsps://')) {
+            if (u) {
+                const credsPart = `${encodeURIComponent(u)}:${encodeURIComponent(p)}@`;
+                if (actualSrcUrl.includes(':***@')) {
+                    actualSrcUrl = actualSrcUrl.replace(/:[^\/@]+@/, `:${encodeURIComponent(p)}@`);
+                } else {
+                    const hostPart = actualSrcUrl.split('://')[1]?.split('/')[0] || '';
+                    if (!hostPart.includes('@')) {
+                        actualSrcUrl = actualSrcUrl.replace('://', `://${credsPart}`);
+                    }
+                }
+            }
+        }
+
+        const mainUrl = actualSrcUrl.includes('#')
+            ? actualSrcUrl
+            : `${actualSrcUrl}#transport=tcp#backchannel=0`;
+        const ffUrl = `ffmpeg:${actualSrcUrl}#video=copy`;
+
         const regResp = await fetch("/api/go2rtc/streams", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 name: tempName,
-                url: [actualSrcUrl, `ffmpeg:${actualSrcUrl}#video=h264#audio=aac`]
+                url: [mainUrl, ffUrl]
             })
         });
 

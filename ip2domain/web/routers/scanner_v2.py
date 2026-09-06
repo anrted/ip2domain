@@ -222,13 +222,14 @@ async def add_to_go2rtc(
         safe_ip = ip.replace(".", "_")
         stream_name = f"v2_{safe_ip}_1"
 
+    res = storage.get_v2_result(ip)
+    creds = res.get("credentials", {}) if res else {}
+    u = creds.get("user", "")
+    p = creds.get("password", "")
+    creds_str = f"{u}:{p}@" if u else ""
+
     # Resolve WebSocket endpoint if passed
     if stream_url.startswith("ws://") or stream_url.startswith("wss://"):
-        res = storage.get_v2_result(ip)
-        creds = res.get("credentials", {}) if res else {}
-        u = creds.get("user", "")
-        p = creds.get("password", "")
-        creds_str = f"{u}:{p}@" if u else ""
         if "rtsp-over-websocket" in stream_url:
             stream_url = f"rtsp://{creds_str}{ip}:554/axis-media/media.amp"
         elif res and res.get("streams"):
@@ -237,13 +238,32 @@ async def add_to_go2rtc(
                     stream_url = s["url"]
                     break
 
+    # Recover credentials if masked with *** or missing
+    if stream_url.startswith("rtsp://") or stream_url.startswith("rtsps://"):
+        if u:
+            if ":***@" in stream_url:
+                stream_url = re.sub(r":[^/@]+@", f":{p}@", stream_url)
+            else:
+                parts = stream_url.split("://", 1)
+                if len(parts) == 2:
+                    host_part = parts[1].split("/")[0]
+                    if "@" not in host_part:
+                        stream_url = f"{parts[0]}://{creds_str}{parts[1]}"
+
+    # Prepare sources: primary RTSP with TCP transport and no backchannel audio hangs + ffmpeg copy fallback
+    sources = []
+    if stream_url.startswith("rtsp://") or stream_url.startswith("rtsps://"):
+        main_src = stream_url if "#" in stream_url else f"{stream_url}#transport=tcp#backchannel=0"
+        sources = [main_src, f"ffmpeg:{stream_url}#video=copy"]
+    else:
+        sources = [stream_url]
+
     go2rtc_url = f"{GO2RTC_API_URL}/api/streams"
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=6.0) as client:
             resp = await client.put(
                 go2rtc_url,
-                params={"name": stream_name},
-                content=stream_url,
+                params={"name": stream_name, "src": sources},
             )
 
             if resp.status_code in (200, 201, 204):
