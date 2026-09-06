@@ -148,8 +148,8 @@ class GeoCityDatabase:
             query += " AND country_code = ?"
             params.append(c_filter)
         if r_filter:
-            query += " AND region = ?"
-            params.append(r_filter)
+            query += " AND (region = ? OR region LIKE ?)"
+            params.extend([r_filter, f"%{r_filter}%"])
 
         query += " GROUP BY country_code, region, city ORDER BY subnets DESC, total_ips DESC"
 
