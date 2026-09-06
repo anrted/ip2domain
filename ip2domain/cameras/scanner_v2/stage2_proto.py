@@ -157,8 +157,12 @@ async def probe_host_v2(
     """
     http_ports = sorted(set(open_ports) & (HTTP_PORTS | HTTPS_PORTS | DVR_PORTS))
     if not http_ports:
-        http_ports = [p for p in open_ports if p not in RTSP_PORTS and p not in RTMP_PORTS]
-    rtsp_ports = sorted(set(open_ports) & RTSP_PORTS)
+        http_ports = [p for p in open_ports if p not in {554, 555, 8554, 10554, 5544, 6554, 7447, 322, 5555} and p not in RTMP_PORTS]
+    # Prioritize dedicated RTSP ports first, then any dual-purpose ports like 8080/8000/8081
+    primary_rtsp = {554, 555, 8554, 10554, 5544, 6554, 7447, 322, 5555}
+    rtsp_ports = sorted(set(open_ports) & primary_rtsp)
+    if not rtsp_ports:
+        rtsp_ports = sorted(set(open_ports) & RTSP_PORTS)
     # Only add 554 if it was actually found open by masscan
     if not rtsp_ports and 554 in open_ports:
         rtsp_ports = [554]

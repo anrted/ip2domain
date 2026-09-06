@@ -36,22 +36,41 @@ window.v2MergeResults = v2MergeResults;
 function v2UpdateResultsCount(filteredCount) {
     const el = document.getElementById('v2-results-count');
     if (!el) return;
-    const total = (window.V2State.results || []).length;
+    const totalLoaded = (window.V2State.results || []).length;
+    const totalDb = window.V2State.totalInDb || totalLoaded;
+    const total = Math.max(totalLoaded, totalDb);
+    const withScreens = (window.V2State.results || []).filter(c =>
+        (c.streams || []).some(s => s.screenshot && String(s.screenshot).trim().length > 0)
+    ).length;
+    const verified = (window.V2State.results || []).filter(c =>
+        (c.streams || []).some(s => s.verified || (s.screenshot && String(s.screenshot).trim().length > 0))
+    ).length;
+
+    const fmt = n => Number(n).toLocaleString('ru-RU');
+
     if (filteredCount !== undefined && filteredCount !== total) {
-        el.textContent = `${filteredCount} из ${total} камер`;
+        el.innerHTML = `<strong>${fmt(filteredCount)}</strong> из ${fmt(total)} камер <span class="v2-count-sub">(${fmt(verified)} живых · ${fmt(withScreens)} с превью)</span>`;
     } else {
-        el.textContent = `${total} камер`;
+        el.innerHTML = `<strong>${fmt(total)}</strong> камер <span class="v2-count-sub">(${fmt(verified)} живых · ${fmt(withScreens)} с превью)</span>`;
     }
 }
 window.v2UpdateResultsCount = v2UpdateResultsCount;
 
-async function v2LoadStoredResults() {
+async function v2LoadStoredResults(force = false) {
+    if (window.V2State.isLoadingResults) return;
+    if (!force && window.V2State.resultsLoaded && (window.V2State.results || []).length > 0) {
+        v2RenderResults();
+        return;
+    }
+    window.V2State.isLoadingResults = true;
     try {
-        const resp = await fetch('/api/v2/results?limit=5000');
+        const resp = await fetch('/api/v2/results?limit=100000');
         if (!resp.ok) return;
         const data = await resp.json();
         const results = data.results || [];
         window.V2State.results = results;
+        window.V2State.totalInDb = data.total_db || results.length;
+        window.V2State.resultsLoaded = true;
         v2UpdateResultsCount();
         v2RenderResults();
         const card = document.getElementById('v2-results-card');
@@ -60,6 +79,8 @@ async function v2LoadStoredResults() {
         }
     } catch (e) {
         console.error('[v2] Error loading stored results:', e);
+    } finally {
+        window.V2State.isLoadingResults = false;
     }
 }
 window.v2LoadStoredResults = v2LoadStoredResults;
@@ -67,14 +88,21 @@ window.v2LoadStoredResults = v2LoadStoredResults;
 function _cameraScore(cam) {
     let score = 0;
     const streams = cam.streams || [];
+    // Priority 1: Real preview screenshot captured and available - ALWAYS FIRST
     if (streams.some(s => s.screenshot && String(s.screenshot).trim().length > 0)) {
-        score += 1000;
+        score += 10000;
     }
+    // Priority 2: Verified live stream
     if (streams.some(s => s.verified)) {
-        score += 500;
+        score += 5000;
     }
+    // Priority 3: HTTP snapshot stream
     if (streams.some(s => s.type === 'http_snapshot' || (s.url && (s.url.startsWith('http://') || s.url.startsWith('https://'))))) {
-        score += 200;
+        score += 2000;
+    }
+    // Priority 4: RTSP stream
+    if (streams.some(s => s.type === 'rtsp' || (s.url && s.url.startsWith('rtsp://')))) {
+        score += 500;
     }
     if (cam.brand && cam.brand !== 'Unknown' && cam.brand !== 'Generic IPCam' && cam.brand !== 'Generic RTSP') {
         score += 50;
@@ -146,12 +174,21 @@ function v2RenderResults() {
     const grid = document.getElementById('v2-camera-grid');
     if (!grid) return;
 
-    let filtered = window.V2State.results;
+    let filtered = window.V2State.results || [];
     if (window.V2State.filterBrand !== 'all') {
         filtered = filtered.filter(c => (c.brand || '').toLowerCase().includes(window.V2State.filterBrand.toLowerCase()));
     }
     if (window.V2State.filterProtocol !== 'all') {
         filtered = filtered.filter(c => (c.protocols || []).includes(window.V2State.filterProtocol));
+    }
+    if (window.V2State.filterStatus === 'live') {
+        filtered = filtered.filter(c =>
+            (c.streams || []).some(s => s.verified || (s.screenshot && String(s.screenshot).trim().length > 0))
+        );
+    } else if (window.V2State.filterStatus === 'preview') {
+        filtered = filtered.filter(c =>
+            (c.streams || []).some(s => s.screenshot && String(s.screenshot).trim().length > 0)
+        );
     }
     if (window.V2State.filterGeo && window.V2State.filterGeo !== 'all') {
         if (window.V2State.filterGeo === '__no_geo__') {
@@ -180,22 +217,82 @@ function v2RenderResults() {
     v2UpdateResultsCount(filtered.length);
     v2UpdateGeoDropdown();
 
+    const paginationContainer = document.getElementById('v2-pagination-container');
+
     if (!filtered.length) {
         grid.innerHTML = `<div class="v2-empty-state" style="grid-column:1/-1">
             <div class="v2-empty-icon">📷</div>
             <p>Камеры не найдены по выбранным фильтрам.</p>
             ${window.V2State.filterGeo !== 'all' || window.V2State.geoSearch ? `<button type="button" class="v2-btn-small" onclick="v2ClearGeoFilter()" style="margin-top:0.5rem">Сбросить гео-фильтр</button>` : ''}
         </div>`;
+        if (paginationContainer) paginationContainer.style.display = 'none';
         return;
     }
 
     // Default sorting: cameras with preview / screenshot first!
     filtered = [...filtered].sort((a, b) => _cameraScore(b) - _cameraScore(a));
 
-    grid.innerHTML = filtered.map(cam => v2RenderCameraCard(cam)).join('');
+    const pageSize = window.V2State.pageSize || 48;
+    const visibleCount = Math.min(window.V2State.visibleCount || pageSize, filtered.length);
+    const visibleCams = filtered.slice(0, visibleCount);
+
+    grid.innerHTML = visibleCams.map(cam => v2RenderCameraCard(cam)).join('');
     initV2LazyLoading();
+    v2RenderPagination(visibleCount, filtered.length);
 }
 window.v2RenderResults = v2RenderResults;
+
+function v2RenderPagination(visibleCount, totalCount) {
+    let container = document.getElementById('v2-pagination-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'v2-pagination-container';
+        container.className = 'v2-pagination-bar';
+        const card = document.getElementById('v2-results-card');
+        if (card) {
+            card.appendChild(container);
+        }
+    }
+    if (!container) return;
+
+    const pageSize = window.V2State.pageSize || 48;
+    if (visibleCount >= totalCount) {
+        container.innerHTML = totalCount > pageSize ? `
+            <div class="v2-pagination-info">✓ Показаны все ${totalCount} камер</div>
+        ` : '';
+        container.style.display = totalCount > pageSize ? 'flex' : 'none';
+        return;
+    }
+
+    const remaining = totalCount - visibleCount;
+    const nextBatch = Math.min(pageSize, remaining);
+    container.style.display = 'flex';
+    container.innerHTML = `
+        <div class="v2-pagination-info">Показано <strong>${visibleCount}</strong> из <strong>${totalCount}</strong> камер</div>
+        <div class="v2-pagination-actions">
+            <button type="button" class="v2-btn-load-more" onclick="v2LoadMoreResults()">
+                ⬇ Загрузить ещё ${nextBatch}
+            </button>
+            <button type="button" class="v2-btn-show-all" onclick="v2ShowAllResults()">
+                Показать все (${totalCount})
+            </button>
+        </div>
+    `;
+}
+window.v2RenderPagination = v2RenderPagination;
+
+function v2LoadMoreResults() {
+    const step = window.V2State.pageSize || 48;
+    window.V2State.visibleCount = (window.V2State.visibleCount || step) + step;
+    v2RenderResults();
+}
+window.v2LoadMoreResults = v2LoadMoreResults;
+
+function v2ShowAllResults() {
+    window.V2State.visibleCount = (window.V2State.results || []).length;
+    v2RenderResults();
+}
+window.v2ShowAllResults = v2ShowAllResults;
 
 function _sanitizeV2ImageUrl(url) {
     if (!url || typeof url !== 'string') return '';
@@ -263,7 +360,8 @@ function v2RenderCameraCard(cam) {
                      src="${_esc(imgSrc)}"
                      loading="lazy"
                      alt="${_esc(cam.ip)}"
-                     onerror="this.style.display='none';document.getElementById('v2-ph-${safeIp}').style.display='flex'">
+                     onload="this.classList.add('v2-loaded')"
+                     onerror="this.style.display='none';const ph=document.getElementById('v2-ph-${safeIp}');if(ph)ph.style.display='flex'">
                 <div class="v2-camera-screenshot-placeholder" id="v2-ph-${safeIp}" style="display:none">
                     <div class="v2-placeholder-inner">
                         <span>📷</span>

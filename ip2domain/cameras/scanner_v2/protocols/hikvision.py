@@ -84,17 +84,16 @@ async def probe_hikvision(
                     ch_resp = await client.get(base + _ISAPI_CHANNELS, auth=auth, timeout=_TIMEOUT)
                     if ch_resp.status_code == 200:
                         ids = re.findall(r"<id>(\d+)</id>", ch_resp.text)
-                        for ch_id in ids[:8]:  # max 8 channels
+                        for ch_id in ids[:32]:  # up to 32 channels
                             rtsp_urls.append(f"rtsp://{ip}:554/Streaming/Channels/{ch_id}")
                 except Exception:
                     pass
 
-                # Fallback: standard channels 101-108
+                # Fallback: standard channels 101, 102, 201, 202, etc.
                 if not rtsp_urls:
-                    rtsp_urls = [
-                        f"rtsp://{ip}:554/Streaming/Channels/101",
-                        f"rtsp://{ip}:554/Streaming/Channels/201",
-                    ]
+                    for ch in range(1, 9):
+                        rtsp_urls.append(f"rtsp://{ip}:554/Streaming/Channels/{ch}01")
+                        rtsp_urls.append(f"rtsp://{ip}:554/Streaming/Channels/{ch}02")
 
                 result["rtsp_urls"] = rtsp_urls
                 result["snapshot_url"] = base + _ISAPI_SNAPSHOT

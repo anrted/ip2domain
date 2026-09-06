@@ -36,7 +36,6 @@ _SNAPSHOT_PATHS = [
     # Uniview LAPI
     "/LAPI/V1.0/Channels/0/Media/Video/Source/0/Snapshot",
     # Generic & common brand snapshots
-    "/snap.jpg?JpegCam=0",
     "/snap.jpg?JpegSize=XL",
     "/snap.jpg",
     "/snap.jpg?usr=admin&pwd=",
@@ -88,7 +87,15 @@ _HLS_PATHS = [
 
 
 def _is_jpeg(content: bytes) -> bool:
-    return bool(content) and content[:3] == b"\xff\xd8\xff"
+    if not content or len(content) < 2048 or content[:3] != b"\xff\xd8\xff":
+        return False
+    try:
+        from PIL import Image
+        import io
+        im = Image.open(io.BytesIO(content))
+        return im.width >= 160 and im.height >= 120
+    except Exception:
+        return len(content) >= 4096
 
 
 def _is_hls(content: bytes) -> bool:

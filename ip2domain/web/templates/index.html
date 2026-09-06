@@ -11,7 +11,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
     <link rel="stylesheet" href="/static/style.css?v=20260905-card-layout-fix">
-    <link rel="stylesheet" href="/static/style_v2.css?v=20260819-v2-1">
+    <link rel="stylesheet" href="/static/style_v2.css?v=20260906-v2-live-filter">
 </head>
 
 <body>
@@ -1301,6 +1301,10 @@
                                 <div class="v2-filter-bar">
                                     <button class="v2-filter-btn active" id="v2-filter-brand-all" data-value="all"
                                         onclick="v2SetFilter('brand','all')">Все</button>
+                                    <button class="v2-filter-btn v2-filter-btn-live" id="v2-filter-status-live" data-value="live"
+                                        onclick="v2SetFilter('status','live')" title="Только живые камеры с проверенными потоками">🟢 Живые (Live)</button>
+                                    <button class="v2-filter-btn v2-filter-btn-preview" id="v2-filter-status-preview" data-value="preview"
+                                        onclick="v2SetFilter('status','preview')" title="Только камеры со снимками/превью">🖼️ С превью</button>
                                     <button class="v2-filter-btn" id="v2-filter-brand-Hikvision" data-value="Hikvision"
                                         onclick="v2SetFilter('brand','Hikvision')">Hikvision</button>
                                     <button class="v2-filter-btn" id="v2-filter-brand-Dahua" data-value="Dahua"
@@ -1327,6 +1331,10 @@
                                         onclick="v2SetFilter('protocol','http_snapshot')">Snapshots</button>
                                 </div>
                                 <div class="v2-results-actions">
+                                    <button class="v2-btn-small" id="v2-btn-bulk-capture"
+                                        style="background:rgba(16,185,129,0.2);border:1px solid rgba(16,185,129,0.45);color:#34d399;font-weight:600;"
+                                        onclick="v2ToggleBulkCapture(this)"
+                                        title="Массово проверить потоки и получить превью всех камер из базы">📸 Получить все превью</button>
                                     <button class="v2-btn-small" id="v2-btn-resolve-geo"
                                         style="background:rgba(14,165,233,0.2);border:1px solid rgba(14,165,233,0.45);color:#38bdf8;font-weight:600;"
                                         onclick="v2ResolveAllGeo(this)"
@@ -1336,6 +1344,18 @@
                                         go2rtc</button>
                                     <button class="v2-btn-small" onclick="v2ExportJson()">⬇ JSON</button>
                                     <button class="v2-btn-small v2-btn-danger" onclick="v2ClearResults()">🗑</button>
+                                </div>
+                            </div>
+
+                            <!-- Bulk Capture Progress Bar -->
+                            <div id="v2-bulk-capture-status" style="display:none;margin-bottom:12px;padding:8px 14px;background:rgba(15,23,42,0.85);border:1px solid rgba(16,185,129,0.35);border-radius:8px;font-size:0.8rem;align-items:center;justify-content:space-between;gap:12px;box-shadow:0 4px 15px rgba(0,0,0,0.3);">
+                                <div style="display:flex;align-items:center;gap:10px;">
+                                    <div class="v2-spinner" style="width:16px;height:16px;border-width:2px;border-top-color:#34d399;flex-shrink:0;"></div>
+                                    <span id="v2-bulk-capture-text" style="color:#e2e8f0;font-weight:500;">Подготовка проверки потоков...</span>
+                                </div>
+                                <div style="display:flex;align-items:center;gap:12px;">
+                                    <span id="v2-bulk-capture-stats" style="color:#34d399;font-weight:600;font-size:0.8rem;">✓ 0 живых</span>
+                                    <button class="v2-btn-small v2-btn-danger" style="padding:2px 8px;font-size:0.75rem;" onclick="v2StopBulkCapture()">⏹ Стоп</button>
                                 </div>
                             </div>
 
@@ -1570,7 +1590,7 @@
     <script src="/static/cameras/scanner.js?v=20260814-m7-skip-existing"></script>
     <script src="/static/cameras/go2rtc.js?v=20260814-m7-skip-existing"></script>
     <script src="/static/cameras/strix.js?v=20260818-db-presets-v5"></script>
-    <script src="/static/cameras/scanner_v2.js?v=20260821-v2-16"></script>
+    <script src="/static/cameras/scanner_v2.js?v=20260906-bulk-capture"></script>
     <script src="/static/city_ip.js?v=20260821-v1"></script>
 </body>
 

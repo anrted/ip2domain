@@ -93,7 +93,14 @@ class ScannerV2StorageMixin:
                 ),
             )
 
-    def get_v2_results(self, limit: int = 5000, brand: str = "", protocol: str = "") -> List[Dict]:
+    def get_v2_results(
+        self,
+        limit: int = 100000,
+        brand: str = "",
+        protocol: str = "",
+        has_preview: bool = False,
+        verified_only: bool = False,
+    ) -> List[Dict]:
         """Retrieve v2 scanner results, prioritizing cameras with preview/verified streams."""
         with self._get_connection() as conn:
             query = "SELECT result_json, in_go2rtc FROM v2_results WHERE is_garbage = 0"
@@ -104,12 +111,20 @@ class ScannerV2StorageMixin:
             if protocol:
                 query += " AND protocols LIKE ?"
                 params.append(f"%{protocol}%")
+            if has_preview:
+                query += " AND (streams_json LIKE '%/v2_captures/%' OR streams_json LIKE '%\"screenshot\": \"/%')"
+            elif verified_only:
+                query += " AND (streams_json LIKE '%\"verified\": true%' OR streams_json LIKE '%/v2_captures/%')"
+
             # SQL sorting: cameras with captured screenshots or verified live streams FIRST, then recent
             query += """ ORDER BY 
-                (streams_json LIKE '%"screenshot": "%' AND streams_json NOT LIKE '%"screenshot": ""%') DESC,
+                (streams_json LIKE '%/v2_captures/%' OR streams_json LIKE '%"screenshot": "/%') DESC,
                 (streams_json LIKE '%"verified": true%') DESC,
-                updated_at DESC LIMIT ?"""
-            params.append(limit)
+                updated_at DESC"""
+            if limit and limit > 0:
+                query += " LIMIT ?"
+                params.append(limit)
+
             rows = conn.execute(query, params).fetchall()
             results = []
             for row in rows:
@@ -124,11 +139,13 @@ class ScannerV2StorageMixin:
                 streams = res.get("streams", [])
                 score = 0
                 if any(bool(s.get("screenshot") or s.get("screenshot_path")) for s in streams):
-                    score += 1000
+                    score += 10000
                 if any(bool(s.get("verified")) for s in streams):
-                    score += 500
+                    score += 5000
                 if any(s.get("type") == "http_snapshot" or (str(s.get("url", "")).startswith("http")) for s in streams):
-                    score += 200
+                    score += 2000
+                if any(s.get("type") == "rtsp" or (str(s.get("url", "")).startswith("rtsp://")) for s in streams):
+                    score += 500
                 return score
 
             results.sort(key=_res_sort_key, reverse=True)

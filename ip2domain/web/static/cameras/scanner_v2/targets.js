@@ -13,6 +13,12 @@ const V2State = window.V2State || {
     filterProtocol: 'all',
     filterGeo: 'all',
     geoSearch: '',
+    filterStatus: 'all',   // all | live | preview
+    totalInDb: 0,
+    visibleCount: 48,
+    pageSize: 48,
+    isLoadingResults: false,
+    resultsLoaded: false,
     credentials: [
         { user: 'admin', password: '' },
         { user: 'admin', password: 'admin' },
@@ -216,7 +222,6 @@ async function v2CheckActiveScan() {
     }
     if (!savedJobId) {
         if (window.v2SetScanState) v2SetScanState('idle');
-        if (window.v2LoadStoredResults) v2LoadStoredResults();
         return;
     }
     try {
@@ -224,7 +229,6 @@ async function v2CheckActiveScan() {
         if (!resp.ok) {
             localStorage.removeItem('ip2domain_v2_active_job');
             if (window.v2SetScanState) v2SetScanState('idle');
-            if (window.v2LoadStoredResults) v2LoadStoredResults();
             return;
         }
         const job = await resp.json();
@@ -241,11 +245,9 @@ async function v2CheckActiveScan() {
             if (job.results && job.results.length && window.v2MergeResults) {
                 v2MergeResults(job.results);
             }
-            if (window.v2LoadStoredResults) v2LoadStoredResults();
         }
     } catch (e) {
         if (window.v2SetScanState) v2SetScanState('idle');
-        if (window.v2LoadStoredResults) v2LoadStoredResults();
     }
 }
 window.v2CheckActiveScan = v2CheckActiveScan;

@@ -21,19 +21,19 @@ from .models import CameraResult, StreamInfo
 logger = logging.getLogger(__name__)
 
 _FFMPEG = shutil.which("ffmpeg") or "ffmpeg"
-_FRAME_TIMEOUT = 8.0
+_FRAME_TIMEOUT = 14.0
 
-# ffmpeg flags by stream type (timeout in microseconds: 5,000,000 = 5s)
+# ffmpeg flags by stream type (timeout in microseconds: 7,000,000 = 7s)
 _FFMPEG_ARGS = {
     "rtsp": [
         "-rtsp_transport", "tcp",
-        "-timeout", "5000000",
+        "-timeout", "7000000",
         "-analyzeduration", "2000000",
         "-probesize", "1000000",
     ],
     "rtsp_udp": [
         "-rtsp_transport", "udp",
-        "-timeout", "5000000",
+        "-timeout", "7000000",
         "-analyzeduration", "2000000",
     ],
     "hls": [
@@ -91,7 +91,7 @@ async def capture_stream_frame(
     extra_args = _FFMPEG_ARGS[stype_key]
 
     cmd = (
-        [_FFMPEG, "-y", "-nostdin", "-hide_banner"]
+        [_FFMPEG, "-y", "-nostdin", "-hide_banner", "-threads", "1"]
         + extra_args
         + ["-i", input_url,
            "-frames:v", "1",
@@ -203,10 +203,10 @@ async def _download_http_snapshot(
             if resp.status_code == 401 and user:
                 resp = await client.get(safe_url, auth=(user, password))
             content = resp.content or b""
-            # Must be a real image with at least 1 KB of data
+            # Must be a real image with at least 2 KB of data and resolution >= 160x120
             is_valid_image = (
                 resp.status_code == 200
-                and len(content) >= 1000
+                and len(content) >= 2048
                 and (
                     content[:2] == b"\xff\xd8"  # JPEG SOI
                     or content[:4] == b"\x89PNG" # PNG
@@ -214,6 +214,17 @@ async def _download_http_snapshot(
                     or (content[:4] == b"RIFF" and content[8:12] == b"WEBP") # WebP
                 )
             )
+            if is_valid_image:
+                try:
+                    from PIL import Image
+                    import io
+                    im = Image.open(io.BytesIO(content))
+                    if im.width < 160 or im.height < 120:
+                        is_valid_image = False
+                except Exception:
+                    if len(content) < 4096:
+                        is_valid_image = False
+
             if is_valid_image:
                 out_path.write_bytes(content)
                 return str(out_path)

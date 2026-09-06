@@ -20,6 +20,12 @@ const V2State = window.V2State || {
     filterProtocol: 'all',
     filterGeo: 'all',
     geoSearch: '',
+    filterStatus: 'all',   // all | live | preview
+    totalInDb: 0,
+    visibleCount: 48,
+    pageSize: 48,
+    isLoadingResults: false,
+    resultsLoaded: false,
     credentials: [
         { user: 'admin', password: '' },
         { user: 'admin', password: 'admin' },
@@ -223,7 +229,6 @@ async function v2CheckActiveScan() {
     }
     if (!savedJobId) {
         if (window.v2SetScanState) v2SetScanState('idle');
-        if (window.v2LoadStoredResults) v2LoadStoredResults();
         return;
     }
     try {
@@ -231,7 +236,6 @@ async function v2CheckActiveScan() {
         if (!resp.ok) {
             localStorage.removeItem('ip2domain_v2_active_job');
             if (window.v2SetScanState) v2SetScanState('idle');
-            if (window.v2LoadStoredResults) v2LoadStoredResults();
             return;
         }
         const job = await resp.json();
@@ -248,11 +252,9 @@ async function v2CheckActiveScan() {
             if (job.results && job.results.length && window.v2MergeResults) {
                 v2MergeResults(job.results);
             }
-            if (window.v2LoadStoredResults) v2LoadStoredResults();
         }
     } catch (e) {
         if (window.v2SetScanState) v2SetScanState('idle');
-        if (window.v2LoadStoredResults) v2LoadStoredResults();
     }
 }
 window.v2CheckActiveScan = v2CheckActiveScan;
@@ -623,22 +625,41 @@ window.v2MergeResults = v2MergeResults;
 function v2UpdateResultsCount(filteredCount) {
     const el = document.getElementById('v2-results-count');
     if (!el) return;
-    const total = (window.V2State.results || []).length;
+    const totalLoaded = (window.V2State.results || []).length;
+    const totalDb = window.V2State.totalInDb || totalLoaded;
+    const total = Math.max(totalLoaded, totalDb);
+    const withScreens = (window.V2State.results || []).filter(c =>
+        (c.streams || []).some(s => s.screenshot && String(s.screenshot).trim().length > 0)
+    ).length;
+    const verified = (window.V2State.results || []).filter(c =>
+        (c.streams || []).some(s => s.verified || (s.screenshot && String(s.screenshot).trim().length > 0))
+    ).length;
+
+    const fmt = n => Number(n).toLocaleString('ru-RU');
+
     if (filteredCount !== undefined && filteredCount !== total) {
-        el.textContent = `${filteredCount} из ${total} камер`;
+        el.innerHTML = `<strong>${fmt(filteredCount)}</strong> из ${fmt(total)} камер <span class="v2-count-sub">(${fmt(verified)} живых · ${fmt(withScreens)} с превью)</span>`;
     } else {
-        el.textContent = `${total} камер`;
+        el.innerHTML = `<strong>${fmt(total)}</strong> камер <span class="v2-count-sub">(${fmt(verified)} живых · ${fmt(withScreens)} с превью)</span>`;
     }
 }
 window.v2UpdateResultsCount = v2UpdateResultsCount;
 
-async function v2LoadStoredResults() {
+async function v2LoadStoredResults(force = false) {
+    if (window.V2State.isLoadingResults) return;
+    if (!force && window.V2State.resultsLoaded && (window.V2State.results || []).length > 0) {
+        v2RenderResults();
+        return;
+    }
+    window.V2State.isLoadingResults = true;
     try {
-        const resp = await fetch('/api/v2/results?limit=5000');
+        const resp = await fetch('/api/v2/results?limit=100000');
         if (!resp.ok) return;
         const data = await resp.json();
         const results = data.results || [];
         window.V2State.results = results;
+        window.V2State.totalInDb = data.total_db || results.length;
+        window.V2State.resultsLoaded = true;
         v2UpdateResultsCount();
         v2RenderResults();
         const card = document.getElementById('v2-results-card');
@@ -647,6 +668,8 @@ async function v2LoadStoredResults() {
         }
     } catch (e) {
         console.error('[v2] Error loading stored results:', e);
+    } finally {
+        window.V2State.isLoadingResults = false;
     }
 }
 window.v2LoadStoredResults = v2LoadStoredResults;
@@ -654,14 +677,21 @@ window.v2LoadStoredResults = v2LoadStoredResults;
 function _cameraScore(cam) {
     let score = 0;
     const streams = cam.streams || [];
+    // Priority 1: Real preview screenshot captured and available - ALWAYS FIRST
     if (streams.some(s => s.screenshot && String(s.screenshot).trim().length > 0)) {
-        score += 1000;
+        score += 10000;
     }
+    // Priority 2: Verified live stream
     if (streams.some(s => s.verified)) {
-        score += 500;
+        score += 5000;
     }
+    // Priority 3: HTTP snapshot stream
     if (streams.some(s => s.type === 'http_snapshot' || (s.url && (s.url.startsWith('http://') || s.url.startsWith('https://'))))) {
-        score += 200;
+        score += 2000;
+    }
+    // Priority 4: RTSP stream
+    if (streams.some(s => s.type === 'rtsp' || (s.url && s.url.startsWith('rtsp://')))) {
+        score += 500;
     }
     if (cam.brand && cam.brand !== 'Unknown' && cam.brand !== 'Generic IPCam' && cam.brand !== 'Generic RTSP') {
         score += 50;
@@ -733,12 +763,21 @@ function v2RenderResults() {
     const grid = document.getElementById('v2-camera-grid');
     if (!grid) return;
 
-    let filtered = window.V2State.results;
+    let filtered = window.V2State.results || [];
     if (window.V2State.filterBrand !== 'all') {
         filtered = filtered.filter(c => (c.brand || '').toLowerCase().includes(window.V2State.filterBrand.toLowerCase()));
     }
     if (window.V2State.filterProtocol !== 'all') {
         filtered = filtered.filter(c => (c.protocols || []).includes(window.V2State.filterProtocol));
+    }
+    if (window.V2State.filterStatus === 'live') {
+        filtered = filtered.filter(c =>
+            (c.streams || []).some(s => s.verified || (s.screenshot && String(s.screenshot).trim().length > 0))
+        );
+    } else if (window.V2State.filterStatus === 'preview') {
+        filtered = filtered.filter(c =>
+            (c.streams || []).some(s => s.screenshot && String(s.screenshot).trim().length > 0)
+        );
     }
     if (window.V2State.filterGeo && window.V2State.filterGeo !== 'all') {
         if (window.V2State.filterGeo === '__no_geo__') {
@@ -767,22 +806,82 @@ function v2RenderResults() {
     v2UpdateResultsCount(filtered.length);
     v2UpdateGeoDropdown();
 
+    const paginationContainer = document.getElementById('v2-pagination-container');
+
     if (!filtered.length) {
         grid.innerHTML = `<div class="v2-empty-state" style="grid-column:1/-1">
             <div class="v2-empty-icon">📷</div>
             <p>Камеры не найдены по выбранным фильтрам.</p>
             ${window.V2State.filterGeo !== 'all' || window.V2State.geoSearch ? `<button type="button" class="v2-btn-small" onclick="v2ClearGeoFilter()" style="margin-top:0.5rem">Сбросить гео-фильтр</button>` : ''}
         </div>`;
+        if (paginationContainer) paginationContainer.style.display = 'none';
         return;
     }
 
     // Default sorting: cameras with preview / screenshot first!
     filtered = [...filtered].sort((a, b) => _cameraScore(b) - _cameraScore(a));
 
-    grid.innerHTML = filtered.map(cam => v2RenderCameraCard(cam)).join('');
+    const pageSize = window.V2State.pageSize || 48;
+    const visibleCount = Math.min(window.V2State.visibleCount || pageSize, filtered.length);
+    const visibleCams = filtered.slice(0, visibleCount);
+
+    grid.innerHTML = visibleCams.map(cam => v2RenderCameraCard(cam)).join('');
     initV2LazyLoading();
+    v2RenderPagination(visibleCount, filtered.length);
 }
 window.v2RenderResults = v2RenderResults;
+
+function v2RenderPagination(visibleCount, totalCount) {
+    let container = document.getElementById('v2-pagination-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'v2-pagination-container';
+        container.className = 'v2-pagination-bar';
+        const card = document.getElementById('v2-results-card');
+        if (card) {
+            card.appendChild(container);
+        }
+    }
+    if (!container) return;
+
+    const pageSize = window.V2State.pageSize || 48;
+    if (visibleCount >= totalCount) {
+        container.innerHTML = totalCount > pageSize ? `
+            <div class="v2-pagination-info">✓ Показаны все ${totalCount} камер</div>
+        ` : '';
+        container.style.display = totalCount > pageSize ? 'flex' : 'none';
+        return;
+    }
+
+    const remaining = totalCount - visibleCount;
+    const nextBatch = Math.min(pageSize, remaining);
+    container.style.display = 'flex';
+    container.innerHTML = `
+        <div class="v2-pagination-info">Показано <strong>${visibleCount}</strong> из <strong>${totalCount}</strong> камер</div>
+        <div class="v2-pagination-actions">
+            <button type="button" class="v2-btn-load-more" onclick="v2LoadMoreResults()">
+                ⬇ Загрузить ещё ${nextBatch}
+            </button>
+            <button type="button" class="v2-btn-show-all" onclick="v2ShowAllResults()">
+                Показать все (${totalCount})
+            </button>
+        </div>
+    `;
+}
+window.v2RenderPagination = v2RenderPagination;
+
+function v2LoadMoreResults() {
+    const step = window.V2State.pageSize || 48;
+    window.V2State.visibleCount = (window.V2State.visibleCount || step) + step;
+    v2RenderResults();
+}
+window.v2LoadMoreResults = v2LoadMoreResults;
+
+function v2ShowAllResults() {
+    window.V2State.visibleCount = (window.V2State.results || []).length;
+    v2RenderResults();
+}
+window.v2ShowAllResults = v2ShowAllResults;
 
 function _sanitizeV2ImageUrl(url) {
     if (!url || typeof url !== 'string') return '';
@@ -850,7 +949,8 @@ function v2RenderCameraCard(cam) {
                      src="${_esc(imgSrc)}"
                      loading="lazy"
                      alt="${_esc(cam.ip)}"
-                     onerror="this.style.display='none';document.getElementById('v2-ph-${safeIp}').style.display='flex'">
+                     onload="this.classList.add('v2-loaded')"
+                     onerror="this.style.display='none';const ph=document.getElementById('v2-ph-${safeIp}');if(ph)ph.style.display='flex'">
                 <div class="v2-camera-screenshot-placeholder" id="v2-ph-${safeIp}" style="display:none">
                     <div class="v2-placeholder-inner">
                         <span>📷</span>
@@ -1594,6 +1694,158 @@ async function v2ResolveAllGeo(btn) {
 }
 window.v2ResolveAllGeo = v2ResolveAllGeo;
 
+let _bulkCaptureTimer = null;
+
+async function v2ToggleBulkCapture(btn) {
+    try {
+        const statusResp = await fetch('/api/v2/bulk_capture/status').then(r => r.json()).catch(() => ({}));
+        if (statusResp && statusResp.is_running) {
+            await v2StopBulkCapture();
+            return;
+        }
+    } catch (e) {}
+
+    if (!confirm('Запустить массовую проверку потоков и получение превью для камер?\n\nПроцесс выполняется в фоновом режиме с безопасным ограничением (2 потока) и не перегружает сервер.')) {
+        return;
+    }
+
+    await v2StartBulkCapture(btn);
+}
+window.v2ToggleBulkCapture = v2ToggleBulkCapture;
+
+async function v2StartBulkCapture(btn) {
+    const bar = document.getElementById('v2-bulk-capture-status');
+    const textEl = document.getElementById('v2-bulk-capture-text');
+    const b = btn || document.getElementById('v2-btn-bulk-capture');
+
+    if (b) {
+        b.textContent = '⏹ Остановить';
+        b.style.color = '#f87171';
+        b.style.borderColor = 'rgba(239,68,68,0.5)';
+        b.style.background = 'rgba(239,68,68,0.2)';
+    }
+    if (bar) bar.style.display = 'flex';
+    if (textEl) textEl.textContent = 'Запуск фонового процесса проверки...';
+
+    try {
+        const resp = await fetch('/api/v2/bulk_capture/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                concurrency: 2,
+                only_unverified: true,
+                max_streams_per_cam: 4,
+            })
+        });
+        const data = await resp.json();
+        if (!data.success && data.message) {
+            _showV2Toast(data.message);
+        } else {
+            _showV2Toast('✓ Фоновый захват превью запущен');
+        }
+    } catch (e) {
+        console.error('[BulkCapture] Failed to start:', e);
+        _showV2Toast('Ошибка запуска фонового процесса');
+    }
+
+    _startBulkCapturePolling();
+}
+window.v2StartBulkCapture = v2StartBulkCapture;
+
+async function v2StopBulkCapture() {
+    try {
+        await fetch('/api/v2/bulk_capture/stop', { method: 'POST' });
+        _showV2Toast('Остановка процесса проверки...');
+    } catch (e) {
+        console.error('[BulkCapture] Failed to stop:', e);
+    }
+}
+window.v2StopBulkCapture = v2StopBulkCapture;
+
+function _startBulkCapturePolling() {
+    if (_bulkCaptureTimer) clearInterval(_bulkCaptureTimer);
+    let lastVerifiedCount = 0;
+
+    const poll = async () => {
+        try {
+            const resp = await fetch('/api/v2/bulk_capture/status');
+            if (!resp.ok) return;
+            const s = await resp.json();
+
+            const bar = document.getElementById('v2-bulk-capture-status');
+            const textEl = document.getElementById('v2-bulk-capture-text');
+            const statsEl = document.getElementById('v2-bulk-capture-stats');
+            const btn = document.getElementById('v2-btn-bulk-capture');
+
+            if (s.is_running) {
+                if (bar) bar.style.display = 'flex';
+                if (btn) {
+                    btn.textContent = `⏹ Остановить (${s.processed_cameras}/${s.total_cameras})`;
+                    btn.style.color = '#f87171';
+                    btn.style.borderColor = 'rgba(239,68,68,0.5)';
+                    btn.style.background = 'rgba(239,68,68,0.2)';
+                }
+                if (textEl) {
+                    const ipLabel = s.current_ip ? ` • ${s.current_ip}` : '';
+                    textEl.textContent = `Камеры: ${s.processed_cameras} / ${s.total_cameras} (потоков: ${s.processed_streams}/${s.total_streams})${ipLabel}`;
+                }
+                if (statsEl) {
+                    statsEl.textContent = `✓ ${s.verified_streams} живых`;
+                }
+
+                // If new verified streams discovered, reload list in background
+                if (s.verified_streams > lastVerifiedCount) {
+                    lastVerifiedCount = s.verified_streams;
+                    if (window.v2LoadResults) {
+                        window.v2LoadResults(true);
+                    }
+                }
+            } else {
+                clearInterval(_bulkCaptureTimer);
+                _bulkCaptureTimer = null;
+
+                if (bar) bar.style.display = 'none';
+                if (btn) {
+                    btn.textContent = '📸 Получить все превью';
+                    btn.style.color = '#34d399';
+                    btn.style.borderColor = 'rgba(16,185,129,0.45)';
+                    btn.style.background = 'rgba(16,185,129,0.2)';
+                }
+
+                if (s.processed_cameras > 0) {
+                    _showV2Toast(`✓ Обработка завершена! Проверено: ${s.processed_cameras}, живых потоков: ${s.verified_streams}`);
+                    if (window.v2LoadResults) {
+                        window.v2LoadResults(true);
+                    }
+                }
+            }
+        } catch (err) {
+            console.warn('[BulkCapture] Poll error:', err);
+        }
+    };
+
+    poll();
+    _bulkCaptureTimer = setInterval(poll, 2000);
+}
+
+// Check on page load if bulk capture was already running in background
+function v2CheckBulkCaptureOnLoad() {
+    fetch('/api/v2/bulk_capture/status')
+        .then(r => r.json())
+        .then(s => {
+            if (s && s.is_running) {
+                _startBulkCapturePolling();
+            }
+        })
+        .catch(() => {});
+}
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', v2CheckBulkCaptureOnLoad);
+} else {
+    v2CheckBulkCaptureOnLoad();
+}
+
+
 function _showV2Toast(msg) {
     const toast = document.createElement('div');
     toast.textContent = msg;
@@ -1603,16 +1855,43 @@ function _showV2Toast(msg) {
 }
 
 function v2SetFilter(type, value) {
-    window.V2State[type === 'brand' ? 'filterBrand' : 'filterProtocol'] = value;
-    const prefix = type === 'brand' ? 'v2-filter-brand-' : 'v2-filter-proto-';
-    document.querySelectorAll(`.v2-filter-btn[id^="${prefix}"]`).forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.value === value);
-    });
+    window.V2State.visibleCount = window.V2State.pageSize || 48;
+    if (type === 'status') {
+        const cur = window.V2State.filterStatus || 'all';
+        window.V2State.filterStatus = (cur === value) ? 'all' : value;
+        const activeVal = window.V2State.filterStatus;
+        document.getElementById('v2-filter-status-live')?.classList.toggle('active', activeVal === 'live');
+        document.getElementById('v2-filter-status-preview')?.classList.toggle('active', activeVal === 'preview');
+    } else if (type === 'brand') {
+        window.V2State.filterBrand = value;
+        if (value === 'all') {
+            window.V2State.filterProtocol = 'all';
+            window.V2State.filterStatus = 'all';
+            document.querySelectorAll('.v2-filter-btn').forEach(btn => btn.classList.remove('active'));
+            document.getElementById('v2-filter-brand-all')?.classList.add('active');
+        } else {
+            document.querySelectorAll('.v2-filter-btn[id^="v2-filter-brand-"]').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.value === value);
+            });
+        }
+    } else if (type === 'protocol') {
+        window.V2State.filterProtocol = value;
+        document.querySelectorAll('.v2-filter-btn[id^="v2-filter-proto-"]').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.value === value);
+        });
+    }
+
+    const isAll = window.V2State.filterBrand === 'all' &&
+                  window.V2State.filterProtocol === 'all' &&
+                  (!window.V2State.filterStatus || window.V2State.filterStatus === 'all');
+    document.getElementById('v2-filter-brand-all')?.classList.toggle('active', isAll);
+
     if (window.v2RenderResults) v2RenderResults();
 }
 window.v2SetFilter = v2SetFilter;
 
 function v2SetGeoFilter(val) {
+    window.V2State.visibleCount = window.V2State.pageSize || 48;
     window.V2State.filterGeo = val;
     const select = document.getElementById('v2-filter-geo');
     if (select && select.value !== val) {
@@ -1624,6 +1903,7 @@ function v2SetGeoFilter(val) {
 window.v2SetGeoFilter = v2SetGeoFilter;
 
 function v2SetGeoSearch(val) {
+    window.V2State.visibleCount = window.V2State.pageSize || 48;
     window.V2State.geoSearch = val;
     _updateGeoClearBtn();
     if (window.v2RenderResults) v2RenderResults();
@@ -1631,6 +1911,7 @@ function v2SetGeoSearch(val) {
 window.v2SetGeoSearch = v2SetGeoSearch;
 
 function v2ClearGeoFilter() {
+    window.V2State.visibleCount = window.V2State.pageSize || 48;
     window.V2State.filterGeo = 'all';
     window.V2State.geoSearch = '';
     const select = document.getElementById('v2-filter-geo');
@@ -1664,7 +1945,6 @@ if (typeof document !== 'undefined') {
     document.addEventListener('DOMContentLoaded', () => {
         if (window.v2LoadTools) v2LoadTools();
         if (window.v2RenderCredentials) v2RenderCredentials();
-        if (window.v2LoadStoredResults) v2LoadStoredResults();
 
         const savedVersion = localStorage.getItem('ip2domain_cam_version');
         if (savedVersion === 'v2') {

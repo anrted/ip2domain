@@ -60,7 +60,9 @@ async def probe_dahua_media(
             for ch in range(1, 9):
                 # Dahua standard rtsp format
                 result["streams"].append(f"rtsp://{auth_str}{ip}:554/cam/realmonitor?channel={ch}&subtype=0")
+                result["streams"].append(f"rtsp://{auth_str}{ip}:554/cam/realmonitor?channel={ch}&subtype=0&unicast=true&proto=Onvif")
                 result["streams"].append(f"rtsp://{auth_str}{ip}:554/cam/realmonitor?channel={ch}&subtype=1")
+                result["streams"].append(f"rtsp://{auth_str}{ip}:554/cam/realmonitor?channel={ch}&subtype=1&unicast=true&proto=Onvif")
 
     except Exception as exc:
         logger.debug("[Dahua Media] Error probing %s:%s: %s", ip, port, exc)

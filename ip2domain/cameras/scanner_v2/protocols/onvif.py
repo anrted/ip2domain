@@ -133,7 +133,7 @@ async def probe_onvif(
                 if profiles_xml:
                     import re
                     tokens = re.findall(r'token="([^"]+)"', profiles_xml)
-                    for token in tokens[:4]:
+                    for token in tokens[:16]:
                         stream_xml = await _soap_post(
                             client, url,
                             f"""<tds:GetStreamUri>
@@ -143,7 +143,7 @@ async def probe_onvif(
                               </tds:StreamSetup>
                               <tds:ProfileToken>{token}</tds:ProfileToken>
                             </tds:GetStreamUri>""",
-                            user, password,
+                            u_str, auth_val,
                         )
                         if stream_xml:
                             uri = _extract_xml_value(stream_xml, "Uri")

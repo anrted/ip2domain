@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import time
 import uuid
 from pathlib import Path
@@ -163,13 +164,26 @@ async def cancel_scan(job_id: str):
 
 @router.get("/results")
 async def get_results(
-    limit: int = Query(default=5000, le=20000),
+    limit: int = Query(default=100000, le=500000),
     brand: str = Query(default=""),
     protocol: str = Query(default=""),
+    has_preview: bool = Query(default=False),
+    verified_only: bool = Query(default=False),
 ):
-    """Return all stored v2 results from DB."""
-    results = storage.get_v2_results(limit=limit, brand=brand, protocol=protocol)
-    return JSONResponse(content={"results": results, "total": len(results)})
+    """Return stored v2 results from DB."""
+    results = storage.get_v2_results(
+        limit=limit,
+        brand=brand,
+        protocol=protocol,
+        has_preview=has_preview,
+        verified_only=verified_only,
+    )
+    stats = storage.get_v2_stats()
+    return JSONResponse(content={
+        "results": results,
+        "total": len(results),
+        "total_db": stats.get("total", len(results)),
+    })
 
 
 @router.get("/results/{ip}")
@@ -241,7 +255,7 @@ async def add_to_go2rtc(
         raise HTTPException(status_code=502, detail="Failed to add stream to go2rtc")
 
 
-@router.get("/capture")
+@router.api_route("/capture", methods=["GET", "HEAD"])
 async def serve_capture(path: str = Query(...)):
     """Serve a v2 screenshot by path or filename."""
     base_path = str(_V2_CAPTURE_DIR.resolve())
@@ -251,9 +265,13 @@ async def serve_capture(path: str = Query(...)):
     fullpath = os.path.normpath(os.path.join(base_path, safe_name))
     if not fullpath.startswith(base_path):
         raise HTTPException(status_code=400, detail="Screenshot not found or invalid")
-    if not os.path.isfile(fullpath) or os.path.getsize(fullpath) < 1000:
+    if not os.path.isfile(fullpath) or os.path.getsize(fullpath) < 100:
         raise HTTPException(status_code=404, detail="Screenshot not found or invalid")
-    return FileResponse(fullpath, media_type="image/jpeg")
+    return FileResponse(
+        fullpath,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "public, max-age=86400, immutable"},
+    )
 
 
 
@@ -351,5 +369,48 @@ async def resolve_all_cameras_geo():
         "updated_count": updated_count,
         "results": updated_cameras,
     })
+
+
+class BulkCaptureRequest(BaseModel):
+    concurrency: int = 2
+    only_unverified: bool = True
+    max_streams_per_cam: int = 4
+    ips: Optional[List[str]] = None
+
+
+@router.post("/bulk_capture/start")
+@router.post("/results/bulk-capture/start")
+async def start_bulk_capture(req: Optional[BulkCaptureRequest] = None):
+    """Start background batch verification and screenshot capture for cameras."""
+    from ip2domain.cameras.scanner_v2.bulk_capture import bulk_capture_mgr
+    c = req.concurrency if req else 2
+    ou = req.only_unverified if req else True
+    ms = req.max_streams_per_cam if req else 4
+    ips = req.ips if req else None
+    res = await bulk_capture_mgr.start(
+        concurrency=c,
+        only_unverified=ou,
+        max_streams_per_cam=ms,
+        target_ips=ips,
+    )
+    return JSONResponse(content=res)
+
+
+@router.get("/bulk_capture/status")
+@router.get("/results/bulk-capture/status")
+async def get_bulk_capture_status():
+    """Get real-time status of the background bulk capture worker."""
+    from ip2domain.cameras.scanner_v2.bulk_capture import bulk_capture_mgr
+    return JSONResponse(content=bulk_capture_mgr.get_status())
+
+
+@router.post("/bulk_capture/stop")
+@router.post("/results/bulk-capture/stop")
+async def stop_bulk_capture():
+    """Gracefully stop the background bulk capture worker."""
+    from ip2domain.cameras.scanner_v2.bulk_capture import bulk_capture_mgr
+    res = await bulk_capture_mgr.stop()
+    return JSONResponse(content=res)
+
 
 

@@ -96,10 +96,12 @@ async def probe_dahua(
 
                 # Build RTSP & Snapshot URLs for Dahua
                 creds_url = f"{user}:{password}@" if user else ""
-                rtsp_urls = [
-                    f"rtsp://{creds_url}{ip}:554/cam/realmonitor?channel=1&subtype=0",
-                    f"rtsp://{creds_url}{ip}:554/cam/realmonitor?channel=1&subtype=1",
-                ]
+                rtsp_urls = []
+                for ch in range(1, 9):
+                    rtsp_urls.append(f"rtsp://{creds_url}{ip}:554/cam/realmonitor?channel={ch}&subtype=0")
+                    rtsp_urls.append(f"rtsp://{creds_url}{ip}:554/cam/realmonitor?channel={ch}&subtype=0&unicast=true&proto=Onvif")
+                    rtsp_urls.append(f"rtsp://{creds_url}{ip}:554/cam/realmonitor?channel={ch}&subtype=1")
+                    rtsp_urls.append(f"rtsp://{creds_url}{ip}:554/cam/realmonitor?channel={ch}&subtype=1&unicast=true&proto=Onvif")
                 result["rtsp_urls"] = rtsp_urls
                 result["snapshot_url"] = f"{base}/cgi-bin/snapshot.cgi?channel=1"
                 result["snapshot_urls"] = [
