@@ -226,12 +226,8 @@ _BRAND_STREAMS: Dict[str, List[Tuple[str, str]]] = {
     ],
     "xiongmai": [
         ("/onvif-http/snapshot",                                             "http_snapshot"),
-        ("/snap.jpg?JpegCam=0",                                              "http_snapshot"),
-        ("/snap.jpg?JpegSize=XL",                                            "http_snapshot"),
-        ("/snap.jpg",                                                        "http_snapshot"),
     ],
     "cctv": [
-        ("/snap.jpg?JpegCam=0",                                              "http_snapshot"),
         ("/snapshot.jpg",                                                    "http_snapshot"),
     ],
     "dlink-dcs": [
@@ -371,7 +367,16 @@ async def _probe_brand_streams(
             if r.status_code == 200 and r.content:
                 ct = r.headers.get("content-type", "").lower()
                 if ct.startswith("image/") or r.content[:3] == b"\xff\xd8\xff":
-                    return (url, stype)
+                    if len(r.content) >= 2048:
+                        try:
+                            from PIL import Image
+                            import io
+                            im = Image.open(io.BytesIO(r.content))
+                            if im.width >= 160 and im.height >= 120:
+                                return (url, stype)
+                        except Exception:
+                            if len(r.content) >= 4096:
+                                return (url, stype)
                 elif "multipart" in ct or "mjpeg" in ct or "x-motion-jpeg" in ct:
                     return (url, "mjpeg")
         except Exception:

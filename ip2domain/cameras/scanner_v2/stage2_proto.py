@@ -436,7 +436,6 @@ async def probe_host_v2(
             hp = generic_r['http_port']
             base_g = f"http://{ip}:{hp}"
             candidates = [
-                f"{base_g}/snap.jpg?JpegCam=0",
                 f"{base_g}/cgi-bin/snapshot.cgi?channel=1",
                 f"{base_g}/snapshot.jpg",
                 f"{base_g}/image.jpg",
