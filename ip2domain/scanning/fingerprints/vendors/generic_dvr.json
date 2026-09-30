@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "vendor": "generic DVR",
+  "product_family": "video",
+  "models": [],
+  "firmware_patterns": [],
+  "ports": [
+    554,
+    8554
+  ],
+  "rtsp_patterns": [
+    "/channel{channel}/{stream}",
+    "/cam/realmonitor?channel={channel}&subtype={stream}"
+  ],
+  "http_patterns": [],
+  "onvif_patterns": [
+    "/onvif/device_service"
+  ],
+  "authentication": [
+    "basic",
+    "digest",
+    "wsse"
+  ],
+  "fingerprints": [],
+  "channel_patterns": {
+    "start": 1,
+    "default_max": 16
+  },
+  "stream_patterns": {
+    "indices": [
+      0,
+      1
+    ],
+    "profiles": [
+      "main",
+      "sub"
+    ]
+  }
+}

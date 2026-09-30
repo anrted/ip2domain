@@ -1,0 +1,1269 @@
+[
+  {
+    "id": "catalog-0",
+    "version": 1,
+    "contains": [
+      "milestone",
+      "xprotect",
+      "surveillancemobile"
+    ],
+    "vendor": "Milestone",
+    "model": "XProtect",
+    "device_type": "vms",
+    "category": "video",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-1",
+    "version": 1,
+    "contains": [
+      "flussonic"
+    ],
+    "vendor": "Flussonic",
+    "model": "Media Server",
+    "device_type": "vms",
+    "category": "video",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-2",
+    "version": 1,
+    "contains": [
+      "zoneminder",
+      "zm/index.php"
+    ],
+    "vendor": "ZoneMinder",
+    "model": "VMS Server",
+    "device_type": "vms",
+    "category": "video",
+    "confidence": 0.92
+  },
+  {
+    "id": "catalog-3",
+    "version": 1,
+    "contains": [
+      "trassir",
+      "dssl"
+    ],
+    "vendor": "Trassir",
+    "model": "Video Server",
+    "device_type": "vms",
+    "category": "video",
+    "confidence": 0.92
+  },
+  {
+    "id": "catalog-4",
+    "version": 1,
+    "contains": [
+      "macroscop"
+    ],
+    "vendor": "Macroscop",
+    "model": "Video Server",
+    "device_type": "vms",
+    "category": "video",
+    "confidence": 0.92
+  },
+  {
+    "id": "catalog-5",
+    "version": 1,
+    "contains": [
+      "sprecord"
+    ],
+    "vendor": "SpRecord",
+    "model": "Audio Recorder",
+    "device_type": "audio_recorder",
+    "category": "video",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-6",
+    "version": 1,
+    "contains": [
+      "hikvision",
+      "hiwatch",
+      "hikvision-webs",
+      "doc/page/login.asp",
+      "logincontroller",
+      "login.asp",
+      "ds-2cd",
+      "ds-72",
+      "ds-76",
+      "ds-77",
+      "ds-96"
+    ],
+    "vendor": "Hikvision / HiWatch",
+    "model": "IP Camera / NVR",
+    "device_type": "camera",
+    "category": "video",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-7",
+    "version": 1,
+    "contains": [
+      "goahead-webs",
+      "newie/css/main.css"
+    ],
+    "vendor": "Generic IP Camera",
+    "model": "IP Camera (GoAhead)",
+    "device_type": "camera",
+    "category": "video",
+    "confidence": 0.92
+  },
+  {
+    "id": "catalog-8",
+    "version": 1,
+    "contains": [
+      "dahua",
+      "dh-ipc",
+      "dh-xvr",
+      "dh-nvr"
+    ],
+    "vendor": "Dahua",
+    "model": "IP Camera / NVR",
+    "device_type": "camera",
+    "category": "video",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-9",
+    "version": 1,
+    "contains": [
+      "axis-camera",
+      "axis-media",
+      "axis communications"
+    ],
+    "vendor": "Axis",
+    "model": "IP Camera",
+    "device_type": "camera",
+    "category": "video",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-10",
+    "version": 1,
+    "contains": [
+      "uniview",
+      "unv"
+    ],
+    "vendor": "Uniview",
+    "model": "IP Camera / NVR",
+    "device_type": "camera",
+    "category": "video",
+    "confidence": 0.92
+  },
+  {
+    "id": "catalog-11",
+    "version": 1,
+    "contains": [
+      "d-link",
+      "dlink",
+      "wireless router",
+      "css_router.css"
+    ],
+    "vendor": "D-Link",
+    "model": "Wireless Router",
+    "device_type": "router",
+    "category": "network",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-12",
+    "version": 1,
+    "contains": [
+      "beward",
+      "dks15120",
+      "dks20210",
+      "dks850"
+    ],
+    "vendor": "Beward",
+    "model": "DKS / Intercom",
+    "device_type": "doorphone",
+    "category": "access",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-13",
+    "version": 1,
+    "contains": [
+      "bas-ip",
+      "aa-07b",
+      "av-01b",
+      "av-07b"
+    ],
+    "vendor": "BAS-IP",
+    "model": "Multi-Apartment Intercom",
+    "device_type": "doorphone",
+    "category": "access",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-14",
+    "version": 1,
+    "contains": [
+      "true ip",
+      "trueip",
+      "ti-2600",
+      "ti-3000"
+    ],
+    "vendor": "True IP",
+    "model": "IP Intercom",
+    "device_type": "doorphone",
+    "category": "access",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-15",
+    "version": 1,
+    "contains": [
+      "2n helios",
+      "2n ip",
+      "2n telecommunications"
+    ],
+    "vendor": "2N",
+    "model": "Helios IP",
+    "device_type": "doorphone",
+    "category": "access",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-16",
+    "version": 1,
+    "contains": [
+      "akuvox"
+    ],
+    "vendor": "Akuvox",
+    "model": "Smart Intercom",
+    "device_type": "doorphone",
+    "category": "access",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-17",
+    "version": 1,
+    "contains": [
+      "sigur",
+      "\u0441\u0444\u0438\u043d\u043a\u0441",
+      "e500",
+      "e300"
+    ],
+    "vendor": "Sigur",
+    "model": "Access Controller",
+    "device_type": "access_controller",
+    "category": "access",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-18",
+    "version": 1,
+    "contains": [
+      "zkteco",
+      "zksoftware",
+      "inbio",
+      "speedface"
+    ],
+    "vendor": "ZKTeco",
+    "model": "Biometric Terminal",
+    "device_type": "access_controller",
+    "category": "access",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-19",
+    "version": 1,
+    "contains": [
+      "parsec",
+      "nc-8000",
+      "nc-32k"
+    ],
+    "vendor": "Parsec",
+    "model": "Network Controller",
+    "device_type": "access_controller",
+    "category": "access",
+    "confidence": 0.9
+  },
+  {
+    "id": "catalog-20",
+    "version": 1,
+    "contains": [
+      "perco",
+      "ct/l04",
+      "cr01"
+    ],
+    "vendor": "Perco",
+    "model": "Turnstile Controller",
+    "device_type": "access_controller",
+    "category": "access",
+    "confidence": 0.92
+  },
+  {
+    "id": "catalog-21",
+    "version": 1,
+    "contains": [
+      "came connect",
+      "nice gate",
+      "cobox",
+      "pal-es"
+    ],
+    "vendor": "CAME / Nice",
+    "model": "Gate Controller",
+    "device_type": "gate_controller",
+    "category": "access",
+    "confidence": 0.9
+  },
+  {
+    "id": "catalog-22",
+    "version": 1,
+    "contains": [
+      "freepbx",
+      "asterisk",
+      "sangoma"
+    ],
+    "vendor": "FreePBX / Asterisk",
+    "model": "PBX Server",
+    "device_type": "pbx",
+    "category": "voice",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-23",
+    "version": 1,
+    "contains": [
+      "3cx",
+      "3cxphonesystem"
+    ],
+    "vendor": "3CX",
+    "model": "Phone System",
+    "device_type": "pbx",
+    "category": "voice",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-24",
+    "version": 1,
+    "contains": [
+      "freeswitch"
+    ],
+    "vendor": "FreeSWITCH",
+    "model": "Telephony Engine",
+    "device_type": "pbx",
+    "category": "voice",
+    "confidence": 0.92
+  },
+  {
+    "id": "catalog-25",
+    "version": 1,
+    "contains": [
+      "yeastar",
+      "mypbx"
+    ],
+    "vendor": "Yeastar",
+    "model": "MyPBX / S-Series",
+    "device_type": "pbx",
+    "category": "voice",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-26",
+    "version": 1,
+    "contains": [
+      "yealink",
+      "sip-t"
+    ],
+    "vendor": "Yealink",
+    "model": "SIP Phone",
+    "device_type": "ip_phone",
+    "category": "voice",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-27",
+    "version": 1,
+    "contains": [
+      "grandstream",
+      "gxp",
+      "grp26"
+    ],
+    "vendor": "Grandstream",
+    "model": "GXP / GRP IP Phone",
+    "device_type": "ip_phone",
+    "category": "voice",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-28",
+    "version": 1,
+    "contains": [
+      "cisco systems",
+      "cisco ip phone",
+      "cp-79",
+      "cp-88"
+    ],
+    "vendor": "Cisco",
+    "model": "Unified IP Phone",
+    "device_type": "ip_phone",
+    "category": "voice",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-29",
+    "version": 1,
+    "contains": [
+      "barix",
+      "annuncicom",
+      "exstreamer"
+    ],
+    "vendor": "Barix",
+    "model": "Annuncicom / Exstreamer",
+    "device_type": "ip_audio",
+    "category": "voice",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-30",
+    "version": 1,
+    "contains": [
+      "simatic",
+      "s7-1200",
+      "s7-1500",
+      "s7-300",
+      "s7-400",
+      "s7comm"
+    ],
+    "vendor": "Siemens",
+    "model": "SIMATIC S7-1200 / S7-1500",
+    "device_type": "plc",
+    "category": "industrial",
+    "confidence": 0.98
+  },
+  {
+    "id": "catalog-31",
+    "version": 1,
+    "contains": [
+      "rockwell",
+      "allen-bradley",
+      "controllogix",
+      "compactlogix",
+      "enip",
+      "ethernet/ip"
+    ],
+    "vendor": "Rockwell Automation / Allen-Bradley",
+    "model": "ControlLogix / CompactLogix",
+    "device_type": "plc",
+    "category": "industrial",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-32",
+    "version": 1,
+    "contains": [
+      "schneider electric",
+      "modicon",
+      "telemecanique"
+    ],
+    "vendor": "Schneider Electric",
+    "model": "Modicon M340 / M580",
+    "device_type": "plc",
+    "category": "industrial",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-33",
+    "version": 1,
+    "contains": [
+      "omron",
+      "sysmac",
+      "cj2m",
+      "nj501"
+    ],
+    "vendor": "Omron",
+    "model": "Sysmac / FINS",
+    "device_type": "plc",
+    "category": "industrial",
+    "confidence": 0.92
+  },
+  {
+    "id": "catalog-34",
+    "version": 1,
+    "contains": [
+      "wago",
+      "pfc200",
+      "750-8"
+    ],
+    "vendor": "WAGO",
+    "model": "PFC200 / I/O System",
+    "device_type": "plc",
+    "category": "industrial",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-35",
+    "version": 1,
+    "contains": [
+      "wincc",
+      "simatic hmi"
+    ],
+    "vendor": "Siemens",
+    "model": "WinCC / Comfort Panel",
+    "device_type": "scada",
+    "category": "industrial",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-36",
+    "version": 1,
+    "contains": [
+      "ignition",
+      "inductive automation"
+    ],
+    "vendor": "Inductive Automation",
+    "model": "Ignition SCADA",
+    "device_type": "scada",
+    "category": "industrial",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-37",
+    "version": 1,
+    "contains": [
+      "moxa",
+      "nport",
+      "iologik",
+      "edr-"
+    ],
+    "vendor": "Moxa",
+    "model": "NPort / ioLogik",
+    "device_type": "plc",
+    "category": "industrial",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-38",
+    "version": 1,
+    "contains": [
+      "owen",
+      "\u043e\u0432\u0435\u043d",
+      "\u043f\u043b\u043a110",
+      "\u043f\u043b\u043a210"
+    ],
+    "vendor": "OWEN (\u041e\u0432\u0435\u043d)",
+    "model": "\u041f\u041b\u041a / \u0422\u0420\u041c",
+    "device_type": "plc",
+    "category": "industrial",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-39",
+    "version": 1,
+    "contains": [
+      "apc",
+      "smart-ups",
+      "network management card",
+      "powerchute",
+      "apc web/snmp management card"
+    ],
+    "vendor": "APC by Schneider Electric",
+    "model": "Smart-UPS / NMC",
+    "device_type": "ups",
+    "category": "energy",
+    "confidence": 0.98
+  },
+  {
+    "id": "catalog-40",
+    "version": 1,
+    "contains": [
+      "eaton",
+      "powerware",
+      "network card-ms"
+    ],
+    "vendor": "Eaton",
+    "model": "Network Card-MS / Powerware",
+    "device_type": "ups",
+    "category": "energy",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-41",
+    "version": 1,
+    "contains": [
+      "cyberpower",
+      "rmcard"
+    ],
+    "vendor": "CyberPower",
+    "model": "RMCARD / Smart App",
+    "device_type": "ups",
+    "category": "energy",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-42",
+    "version": 1,
+    "contains": [
+      "vertiv",
+      "liebert",
+      "intellislot"
+    ],
+    "vendor": "Vertiv / Liebert",
+    "model": "Liebert IntelliSlot / GXT",
+    "device_type": "ups",
+    "category": "energy",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-43",
+    "version": 1,
+    "contains": [
+      "\u043c\u0435\u0440\u043a\u0443\u0440\u0438\u0439",
+      "mercury",
+      "\u0438\u043d\u043a\u043e\u0442\u0435\u043a\u0441",
+      "incotex"
+    ],
+    "vendor": "\u041c\u0435\u0440\u043a\u0443\u0440\u0438\u0439 / \u0418\u043d\u043a\u043e\u0442\u0435\u043a\u0441",
+    "model": "\u041c\u0435\u0440\u043a\u0443\u0440\u0438\u0439 230 / 234 / 236",
+    "device_type": "meter",
+    "category": "energy",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-44",
+    "version": 1,
+    "contains": [
+      "\u044d\u043d\u0435\u0440\u0433\u043e\u043c\u0435\u0440\u0430",
+      "ce301",
+      "ce303",
+      "ce308"
+    ],
+    "vendor": "\u042d\u043d\u0435\u0440\u0433\u043e\u043c\u0435\u0440\u0430",
+    "model": "\u0421\u0415301 / \u0421\u0415303 / \u0421\u0415308",
+    "device_type": "meter",
+    "category": "energy",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-45",
+    "version": 1,
+    "contains": [
+      "sma solar",
+      "sunny boy",
+      "webconnect"
+    ],
+    "vendor": "SMA Solar",
+    "model": "Sunny Boy / Tripower",
+    "device_type": "inverter",
+    "category": "energy",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-46",
+    "version": 1,
+    "contains": [
+      "terra 54",
+      "terra 53",
+      "ocpp",
+      "evlink"
+    ],
+    "vendor": "ABB / Terra",
+    "model": "EV Charger / OCPP",
+    "device_type": "ev_charger",
+    "category": "energy",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-47",
+    "version": 1,
+    "contains": [
+      "hw group",
+      "poseidon",
+      "damocles"
+    ],
+    "vendor": "HW group",
+    "model": "Poseidon / Damocles",
+    "device_type": "sensor",
+    "category": "iot",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-48",
+    "version": 1,
+    "contains": [
+      "tibbo",
+      "em1000",
+      "tps"
+    ],
+    "vendor": "Tibbo",
+    "model": "EM1000 / Sensor Hub",
+    "device_type": "sensor",
+    "category": "iot",
+    "confidence": 0.92
+  },
+  {
+    "id": "catalog-49",
+    "version": 1,
+    "contains": [
+      "netatmo"
+    ],
+    "vendor": "Netatmo",
+    "model": "Weather Station",
+    "device_type": "sensor",
+    "category": "iot",
+    "confidence": 0.9
+  },
+  {
+    "id": "catalog-50",
+    "version": 1,
+    "contains": [
+      "home assistant",
+      "home-assistant"
+    ],
+    "vendor": "Home Assistant",
+    "model": "Smart Home Hub",
+    "device_type": "smart_home",
+    "category": "iot",
+    "confidence": 0.98
+  },
+  {
+    "id": "catalog-51",
+    "version": 1,
+    "contains": [
+      "node-red"
+    ],
+    "vendor": "Node-RED",
+    "model": "Flow Editor",
+    "device_type": "smart_home",
+    "category": "iot",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-52",
+    "version": 1,
+    "contains": [
+      "\u0430\u0432\u0442\u043e\u0443\u0440\u0430\u0433\u0430\u043d",
+      "\u043f\u043e\u0442\u043e\u043a",
+      "parkon",
+      "autouragan"
+    ],
+    "vendor": "\u0410\u0432\u0442\u043e\u0423\u0440\u0430\u0433\u0430\u043d / \u041f\u043e\u0442\u043e\u043a",
+    "model": "LPR Camera",
+    "device_type": "anpr",
+    "category": "traffic",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-53",
+    "version": 1,
+    "contains": [
+      "swarco",
+      "itc-2",
+      "peek traffic",
+      "\u0430\u0441\u0443\u0434\u0434"
+    ],
+    "vendor": "SWARCO / Peek",
+    "model": "ITC-2 / Traffic Controller",
+    "device_type": "traffic_controller",
+    "category": "traffic",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-54",
+    "version": 1,
+    "contains": [
+      "parktime",
+      "\u043f\u0430\u0440\u043a\u0442\u0430\u0439\u043c",
+      "\u0432\u0435\u043a\u0442\u043e\u0440"
+    ],
+    "vendor": "\u041f\u0430\u0440\u043a\u043d\u0435\u0444\u0442\u044c / \u041f\u0430\u0440\u043a\u0422\u0430\u0439\u043c",
+    "model": "Parking Terminal",
+    "device_type": "parking",
+    "category": "traffic",
+    "confidence": 0.92
+  },
+  {
+    "id": "catalog-55",
+    "version": 1,
+    "contains": [
+      "niagara",
+      "tridium",
+      "jace"
+    ],
+    "vendor": "Tridium",
+    "model": "Niagara Framework",
+    "device_type": "bms",
+    "category": "bms",
+    "confidence": 0.98
+  },
+  {
+    "id": "catalog-56",
+    "version": 1,
+    "contains": [
+      "metasys",
+      "johnson controls"
+    ],
+    "vendor": "Johnson Controls",
+    "model": "Metasys / Facility Explorer",
+    "device_type": "bms",
+    "category": "bms",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-57",
+    "version": 1,
+    "contains": [
+      "bacnet",
+      "bacnet/ip"
+    ],
+    "vendor": "BACnet BMS",
+    "model": "Building Automation Controller",
+    "device_type": "bms",
+    "category": "bms",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-58",
+    "version": 1,
+    "contains": [
+      "\u0431\u043e\u043b\u0438\u0434",
+      "bolid",
+      "\u04412000",
+      "\u0441\u0438\u0440\u0438\u0443\u0441"
+    ],
+    "vendor": "Bolid (\u0411\u043e\u043b\u0438\u0434)",
+    "model": "\u0418\u0421\u041e \u041e\u0440\u0438\u043e\u043d / \u04212000-\u041f\u041f",
+    "device_type": "fire_panel",
+    "category": "safety",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-59",
+    "version": 1,
+    "contains": [
+      "notifier",
+      "honeywell fire",
+      "esser"
+    ],
+    "vendor": "Honeywell / Notifier",
+    "model": "Fire Alarm Panel",
+    "device_type": "fire_panel",
+    "category": "safety",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-60",
+    "version": 1,
+    "contains": [
+      "\u043b\u043a\u0434\u0441",
+      "\u043e\u0431\u044c",
+      "\u0434\u0438\u0441\u043f\u0435\u0442\u0447\u0435\u0440\u0438\u0437\u0430\u0446\u0438\u044f \u043b\u0438\u0444\u0442\u043e\u0432"
+    ],
+    "vendor": "\u041b\u041a\u0414\u0421",
+    "model": "\u041e\u0411\u042c / \u0414\u0438\u0441\u043f\u0435\u0442\u0447\u0435\u0440\u0441\u043a\u0438\u0439 \u043a\u043e\u043c\u043f\u043b\u0435\u043a\u0441",
+    "device_type": "elevator",
+    "category": "elevator",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-61",
+    "version": 1,
+    "contains": [
+      "otis elevator",
+      "schindler elevator",
+      "thyssenkrupp"
+    ],
+    "vendor": "OTIS / Schindler",
+    "model": "Elevator GCS / Controller",
+    "device_type": "elevator",
+    "category": "elevator",
+    "confidence": 0.92
+  },
+  {
+    "id": "catalog-62",
+    "version": 1,
+    "contains": [
+      "jetdirect",
+      "hp laserjet",
+      "hp officejet",
+      "hp pagewide"
+    ],
+    "vendor": "HP",
+    "model": "LaserJet / OfficeJet",
+    "device_type": "printer",
+    "category": "workplace",
+    "confidence": 0.98
+  },
+  {
+    "id": "catalog-63",
+    "version": 1,
+    "contains": [
+      "centreware",
+      "workcentre",
+      "xerox corporation"
+    ],
+    "vendor": "Xerox",
+    "model": "CentreWare / WorkCentre",
+    "device_type": "printer",
+    "category": "workplace",
+    "confidence": 0.98
+  },
+  {
+    "id": "catalog-64",
+    "version": 1,
+    "contains": [
+      "canon imagerunner",
+      "canon advance"
+    ],
+    "vendor": "Canon",
+    "model": "imageRUNNER",
+    "device_type": "printer",
+    "category": "workplace",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-65",
+    "version": 1,
+    "contains": [
+      "command center rx",
+      "kyocera"
+    ],
+    "vendor": "Kyocera",
+    "model": "TASKalfa / ECOSYS",
+    "device_type": "printer",
+    "category": "workplace",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-66",
+    "version": 1,
+    "contains": [
+      "octoprint"
+    ],
+    "vendor": "OctoPrint",
+    "model": "Print Server",
+    "device_type": "3d_printer",
+    "category": "workplace",
+    "confidence": 0.98
+  },
+  {
+    "id": "catalog-67",
+    "version": 1,
+    "contains": [
+      "moonraker",
+      "mainsail",
+      "fluidd"
+    ],
+    "vendor": "Klipper / Moonraker",
+    "model": "Mainsail / Fluidd",
+    "device_type": "3d_printer",
+    "category": "workplace",
+    "confidence": 0.98
+  },
+  {
+    "id": "catalog-68",
+    "version": 1,
+    "contains": [
+      "synology",
+      "diskstation"
+    ],
+    "vendor": "Synology",
+    "model": "DiskStation (DSM)",
+    "device_type": "nas",
+    "category": "workplace",
+    "confidence": 0.98
+  },
+  {
+    "id": "catalog-69",
+    "version": 1,
+    "contains": [
+      "qnap",
+      "qts"
+    ],
+    "vendor": "QNAP",
+    "model": "QTS NAS",
+    "device_type": "nas",
+    "category": "workplace",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-70",
+    "version": 1,
+    "contains": [
+      "idrac",
+      "integrated dell remote access controller"
+    ],
+    "vendor": "Dell",
+    "model": "iDRAC",
+    "device_type": "kvm",
+    "category": "ip_kvm",
+    "confidence": 0.98
+  },
+  {
+    "id": "catalog-71",
+    "version": 1,
+    "contains": [
+      "integrated lights-out",
+      "ilo 4",
+      "ilo 5",
+      "hp ilo"
+    ],
+    "vendor": "HPE",
+    "model": "iLO (Integrated Lights-Out)",
+    "device_type": "kvm",
+    "category": "ip_kvm",
+    "confidence": 0.98
+  },
+  {
+    "id": "catalog-72",
+    "version": 1,
+    "contains": [
+      "supermicro",
+      "atens technology",
+      "ipmi 2.0"
+    ],
+    "vendor": "Supermicro",
+    "model": "IPMI / BMC",
+    "device_type": "kvm",
+    "category": "ip_kvm",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-73",
+    "version": 1,
+    "contains": [
+      "aten",
+      "raritan",
+      "dominion kx",
+      "kn2116"
+    ],
+    "vendor": "Aten / Raritan",
+    "model": "IP-KVM Switch",
+    "device_type": "kvm",
+    "category": "ip_kvm",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-74",
+    "version": 1,
+    "contains": [
+      "airos",
+      "airmax",
+      "nanostation",
+      "powerbeam",
+      "unifi"
+    ],
+    "vendor": "Ubiquiti",
+    "model": "airMAX / UniFi",
+    "device_type": "radio_bridge",
+    "category": "network",
+    "confidence": 0.98
+  },
+  {
+    "id": "catalog-75",
+    "version": 1,
+    "contains": [
+      "mikrotik",
+      "routeros"
+    ],
+    "vendor": "MikroTik",
+    "model": "RouterOS",
+    "device_type": "radio_bridge",
+    "category": "network",
+    "confidence": 0.98
+  },
+  {
+    "id": "catalog-76",
+    "version": 1,
+    "contains": [
+      "idirect",
+      "hughesnet",
+      "inmarsat",
+      "hx200"
+    ],
+    "vendor": "iDirect / Hughes",
+    "model": "Satellite Modem",
+    "device_type": "satellite_terminal",
+    "category": "network",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-77",
+    "version": 1,
+    "contains": [
+      "mavlink",
+      "qgroundcontrol",
+      "dji pilot"
+    ],
+    "vendor": "MAVLink / QGC",
+    "model": "Ground Control Station",
+    "device_type": "drone_station",
+    "category": "network",
+    "confidence": 0.92
+  },
+  {
+    "id": "catalog-78",
+    "version": 1,
+    "contains": [
+      "traccar"
+    ],
+    "vendor": "Traccar",
+    "model": "GPS Tracking Server",
+    "device_type": "telematics",
+    "category": "telematics",
+    "confidence": 0.98
+  },
+  {
+    "id": "catalog-79",
+    "version": 1,
+    "contains": [
+      "wialon",
+      "gurtam"
+    ],
+    "vendor": "Wialon / Gurtam",
+    "model": "Fleet Management",
+    "device_type": "telematics",
+    "category": "telematics",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-80",
+    "version": 1,
+    "contains": [
+      "teltonika",
+      "fmb920",
+      "fmb120"
+    ],
+    "vendor": "Teltonika",
+    "model": "FMB / RUT Tracker",
+    "device_type": "telematics",
+    "category": "telematics",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-81",
+    "version": 1,
+    "contains": [
+      "\u0430\u0442\u043e\u043b",
+      "atol",
+      "fptr",
+      "\u044d\u0432\u043e\u0442\u043e\u0440"
+    ],
+    "vendor": "\u0410\u0422\u041e\u041b",
+    "model": "\u041a\u041a\u0422 / \u0414\u0440\u0430\u0439\u0432\u0435\u0440 \u041a\u041a\u0422",
+    "device_type": "pos",
+    "category": "specialized",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-82",
+    "version": 1,
+    "contains": [
+      "\u0448\u0442\u0440\u0438\u0445-\u043c",
+      "shtrih",
+      "\u043a\u0430\u0441\u0441\u0430"
+    ],
+    "vendor": "\u0428\u0442\u0440\u0438\u0445-\u041c",
+    "model": "\u041a\u041a\u0422 / \u0428\u0442\u0440\u0438\u0445",
+    "device_type": "pos",
+    "category": "specialized",
+    "confidence": 0.95
+  },
+  {
+    "id": "catalog-83",
+    "version": 1,
+    "contains": [
+      "orthanc",
+      "dcm4chee",
+      "dicom"
+    ],
+    "vendor": "Orthanc / DCM4CHEE",
+    "model": "DICOM Server",
+    "device_type": "medical",
+    "category": "medical",
+    "confidence": 0.98
+  },
+  {
+    "id": "flussonic",
+    "version": 1,
+    "contains": [
+      "flussonic"
+    ],
+    "product": "Flussonic",
+    "device_type": "vms",
+    "category": "video",
+    "confidence": 0.9
+  },
+  {
+    "id": "milestone",
+    "version": 1,
+    "contains": [
+      "milestone"
+    ],
+    "product": "Milestone",
+    "device_type": "vms",
+    "category": "video",
+    "confidence": 0.9
+  },
+  {
+    "id": "zoneminder",
+    "version": 1,
+    "contains": [
+      "zoneminder"
+    ],
+    "product": "ZoneMinder",
+    "device_type": "vms",
+    "category": "video",
+    "confidence": 0.9
+  },
+  {
+    "id": "frigate",
+    "version": 1,
+    "contains": [
+      "frigate"
+    ],
+    "product": "Frigate",
+    "device_type": "vms",
+    "category": "video",
+    "confidence": 0.9
+  },
+  {
+    "id": "shinobi",
+    "version": 1,
+    "contains": [
+      "shinobi"
+    ],
+    "product": "Shinobi",
+    "device_type": "vms",
+    "category": "video",
+    "confidence": 0.9
+  },
+  {
+    "id": "blue-iris",
+    "version": 1,
+    "contains": [
+      "blue iris"
+    ],
+    "product": "Blue Iris",
+    "device_type": "vms",
+    "category": "video",
+    "confidence": 0.9
+  },
+  {
+    "id": "wowza",
+    "version": 1,
+    "contains": [
+      "wowza"
+    ],
+    "product": "Wowza",
+    "device_type": "vms",
+    "category": "video",
+    "confidence": 0.9
+  },
+  {
+    "id": "nimble-streamer",
+    "version": 1,
+    "contains": [
+      "nimble streamer"
+    ],
+    "product": "Nimble Streamer",
+    "device_type": "vms",
+    "category": "video",
+    "confidence": 0.9
+  }
+]

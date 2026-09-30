@@ -30,12 +30,12 @@ async def probe_axis(
 ) -> Dict:
     """Probe Axis camera CGI endpoints.
 
-    Returns: brand, model, rtsp_urls, snapshot_url, mjpeg_url, http_port, credentials
+    Returns: brand, model, rtsp_urls, snapshot_url, mjpeg_url, http_port, credentials, auth_required
     """
     result = {
         "success": False, "brand": "Axis", "model": "", "serial": "",
         "firmware": "", "rtsp_urls": [], "snapshot_url": "",
-        "mjpeg_url": "", "http_port": 0, "credentials": {},
+        "mjpeg_url": "", "http_port": 0, "credentials": {}, "auth_required": False,
     }
     if not candidate_ports:
         return result
@@ -43,6 +43,8 @@ async def probe_axis(
     async with httpx.AsyncClient(verify=False, timeout=_TIMEOUT) as client:
         for port in candidate_ports:
             base = f"http://{ip}:{port}"
+            axis_service_detected = False
+
             for user, password in credentials:
                 try:
                     auth = httpx.DigestAuth(user, password) if user else None
@@ -52,11 +54,15 @@ async def probe_axis(
                 except Exception:
                     continue
 
+                www_auth_hdr = resp.headers.get("www-authenticate", "").lower()
+                server_hdr = resp.headers.get("server", "").lower()
+                if "axis" in www_auth_hdr or "axis" in server_hdr:
+                    axis_service_detected = True
+
                 if resp.status_code == 401:
                     continue
                 if resp.status_code != 200:
                     break
-
 
                 text = resp.text
                 params = _parse_axis_params(text)
@@ -69,14 +75,32 @@ async def probe_axis(
                 model = params.get("root.Brand.ProdShortName", "") or params.get("root.Brand.ProdNbr", "")
                 creds_url = f"{user}:{password}@" if user else ""
                 rtsp_urls = [
-                    f"rtsp://{creds_url}{ip}/axis-media/media.amp",
-                    f"rtsp://{creds_url}{ip}/axis-media/media.amp?videocodec=h264",
+                    f"rtsp://{creds_url}{ip}:554/axis-media/media.amp",
+                    f"rtsp://{creds_url}{ip}:554/axis-media/media.amp?videocodec=h264",
                 ]
 
                 result.update({
                     "success": True, "model": model, "http_port": port,
+                    "auth_required": False,
                     "credentials": {"user": user, "password": password},
                     "rtsp_urls": rtsp_urls,
+                    "snapshot_url": base + _AXIS_SNAPSHOT,
+                    "mjpeg_url": base + _AXIS_MJPEG,
+                })
+                return result
+
+            # If Axis confirmed by 401 challenge / headers but credentials failed
+            if axis_service_detected and not result["success"]:
+                result.update({
+                    "success": True,
+                    "brand": "Axis",
+                    "model": "Axis IP Camera",
+                    "http_port": port,
+                    "auth_required": True,
+                    "rtsp_urls": [
+                        f"rtsp://{ip}:554/axis-media/media.amp",
+                        f"rtsp://{ip}:554/axis-media/media.amp?videocodec=h264",
+                    ],
                     "snapshot_url": base + _AXIS_SNAPSHOT,
                     "mjpeg_url": base + _AXIS_MJPEG,
                 })

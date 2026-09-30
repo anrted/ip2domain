@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "vendor": "Bosch",
+  "product_family": "video",
+  "models": [],
+  "firmware_patterns": [],
+  "ports": [
+    554,
+    8554
+  ],
+  "rtsp_patterns": [
+    "/rtsp_tunnel?h26x=4&inst={channel}"
+  ],
+  "http_patterns": [],
+  "onvif_patterns": [
+    "/onvif/device_service"
+  ],
+  "authentication": [
+    "basic",
+    "digest",
+    "wsse"
+  ],
+  "fingerprints": [
+    "bosch"
+  ],
+  "channel_patterns": {
+    "start": 1,
+    "default_max": 16
+  },
+  "stream_patterns": {
+    "indices": [
+      0,
+      1
+    ],
+    "profiles": [
+      "main",
+      "sub"
+    ]
+  }
+}

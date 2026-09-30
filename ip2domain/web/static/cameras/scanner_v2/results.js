@@ -13,14 +13,7 @@ function v2MergeResults(incoming) {
         } else {
             const idx = existingMap.get(cam.ip);
             const oldCam = window.V2State.results[idx];
-            const oldStreamsJson = JSON.stringify(oldCam.streams || []);
-            const newStreamsJson = JSON.stringify(cam.streams || []);
-            if (oldStreamsJson !== newStreamsJson || oldCam.brand !== cam.brand || oldCam.model !== cam.model) {
-                if (window.V2State.previewCache[cam.ip]) {
-                    for (const s of (cam.streams || [])) {
-                        if (!s.screenshot) s.screenshot = window.V2State.previewCache[cam.ip];
-                    }
-                }
+            if (JSON.stringify(oldCam) !== JSON.stringify(cam)) {
                 window.V2State.results[idx] = cam;
                 changed = true;
             }
@@ -49,9 +42,9 @@ function v2UpdateResultsCount(filteredCount) {
     const fmt = n => Number(n).toLocaleString('ru-RU');
 
     if (filteredCount !== undefined && filteredCount !== total) {
-        el.innerHTML = `<strong>${fmt(filteredCount)}</strong> из ${fmt(total)} камер <span class="v2-count-sub">(${fmt(verified)} живых · ${fmt(withScreens)} с превью)</span>`;
+        el.innerHTML = `<strong>${fmt(filteredCount)}</strong> из ${fmt(total)} IP <span class="v2-count-sub">(${fmt(verified)} с видео · ${fmt(withScreens)} с превью)</span>`;
     } else {
-        el.innerHTML = `<strong>${fmt(total)}</strong> камер <span class="v2-count-sub">(${fmt(verified)} живых · ${fmt(withScreens)} с превью)</span>`;
+        el.innerHTML = `<strong>${fmt(total)}</strong> IP <span class="v2-count-sub">(${fmt(verified)} с видео · ${fmt(withScreens)} с превью)</span>`;
     }
 }
 window.v2UpdateResultsCount = v2UpdateResultsCount;
@@ -85,8 +78,20 @@ async function v2LoadStoredResults(force = false) {
 }
 window.v2LoadStoredResults = v2LoadStoredResults;
 
+function _isSpRecord(cam) {
+    if (!cam) return false;
+    const b = (cam.brand || '').toLowerCase();
+    const m = (cam.model || '').toLowerCase();
+    const p = cam.protocols || [];
+    return b.includes('sprecord') || m.includes('sprecord') || p.includes('sprecord_audio') || p.includes('sprecord');
+}
+window._isSpRecord = _isSpRecord;
+
 function _cameraScore(cam) {
     let score = 0;
+    if (_isSpRecord(cam)) {
+        score += 8500;
+    }
     const streams = cam.streams || [];
     // Priority 1: Real preview screenshot captured and available - ALWAYS FIRST
     if (streams.some(s => s.screenshot && String(s.screenshot).trim().length > 0)) {
@@ -126,12 +131,14 @@ function v2UpdateGeoDropdown() {
         if (cam.region) {
             regionsMap.set(cam.region, (regionsMap.get(cam.region) || 0) + 1);
         }
-        if (cam.country_code === 'RU') ruCount++;
-        else if (cam.country_code === 'BY') byCount++;
+        const cc = (cam.country_code || '').toUpperCase();
+        if (cc === 'RU') ruCount++;
+        else if (cc === 'BY') byCount++;
+
         if (!cam.city && !cam.region) noGeoCount++;
     });
 
-    let html = '<option value="all">📍 Все регионы и города</option>';
+    let html = '<option value="all">Все регионы и города</option>';
 
     if (ruCount > 0 || byCount > 0) {
         html += '<optgroup label="Страны">';
@@ -170,6 +177,12 @@ function v2UpdateGeoDropdown() {
 }
 window.v2UpdateGeoDropdown = v2UpdateGeoDropdown;
 
+function _isCam401(c) {
+    return c.auth_required === true || (c.streams || []).some(s => s.auth_required === true);
+}
+
+window._isCam401 = _isCam401;
+
 function v2RenderResults() {
     const grid = document.getElementById('v2-camera-grid');
     if (!grid) return;
@@ -179,16 +192,25 @@ function v2RenderResults() {
         filtered = filtered.filter(c => (c.brand || '').toLowerCase().includes(window.V2State.filterBrand.toLowerCase()));
     }
     if (window.V2State.filterProtocol !== 'all') {
-        filtered = filtered.filter(c => (c.protocols || []).includes(window.V2State.filterProtocol));
+        if (window.V2State.filterProtocol === 'sprecord_audio' || window.V2State.filterProtocol === 'sprecord') {
+            filtered = filtered.filter(c => _isSpRecord(c));
+        } else {
+            filtered = filtered.filter(c => (c.protocols || []).includes(window.V2State.filterProtocol));
+        }
     }
     if (window.V2State.filterStatus === 'live') {
         filtered = filtered.filter(c =>
-            (c.streams || []).some(s => s.verified || (s.screenshot && String(s.screenshot).trim().length > 0))
+            _isSpRecord(c) || (c.streams || []).some(s => s.verified || (s.screenshot && String(s.screenshot).trim().length > 0))
         );
     } else if (window.V2State.filterStatus === 'preview') {
         filtered = filtered.filter(c =>
-            (c.streams || []).some(s => s.screenshot && String(s.screenshot).trim().length > 0)
+            _isSpRecord(c) || (c.streams || []).some(s => s.screenshot && String(s.screenshot).trim().length > 0)
         );
+    }
+    if (window.V2State.filterAuth === 'open') {
+        filtered = filtered.filter(c => (c.streams || []).some(s => s.verified));
+    } else if (window.V2State.filterAuth === '401') {
+        filtered = filtered.filter(c => _isCam401(c));
     }
     if (window.V2State.filterGeo && window.V2State.filterGeo !== 'all') {
         if (window.V2State.filterGeo === '__no_geo__') {
@@ -319,6 +341,7 @@ function _streamScore(s) {
 
 function v2RenderCameraCard(cam) {
     const safeIp = cam.ip.replace(/\./g, '_');
+    const isAudioDevice = _isSpRecord(cam);
     const rawStreams = cam.streams || [];
     const totalStreams = rawStreams.length;
 
@@ -330,17 +353,20 @@ function v2RenderCameraCard(cam) {
     const curSelected = window.V2State.selectedStreams[cam.ip];
     const curStreamObj = streams.find(s => s.url === curSelected);
 
-    if (!curSelected || (!curStreamObj?.screenshot && bestStream?.screenshot)) {
+    if (!curSelected || !curStreamObj) {
         window.V2State.selectedStreams[cam.ip] = bestStream?.url || '';
     }
     const currentStreamUrl = window.V2State.selectedStreams[cam.ip];
     const currentStreamObj = streams.find(s => s.url === currentStreamUrl) || streams[0];
+    const endpoint = (cam.endpoints || []).find(e => e.port === currentStreamObj?.source_port);
+    const displayBrand = endpoint?.brand || cam.brand || 'Unknown';
+    const displayModel = endpoint?.model || cam.model || '';
+    const endpointPorts = [...new Set((cam.endpoints || []).map(e => e.port).filter(Boolean))];
 
-    // Find screenshot: first check selected stream, then any stream that has a screenshot, or cached preview
-    const cachedBlobUrl = window.V2State.previewCache[cam.ip] || '';
-    const streamWithScreen = (currentStreamObj?.screenshot ? currentStreamObj : null)
-        || streams.find(s => s.screenshot && s.screenshot.length > 0);
-    const screenshotPath = streamWithScreen?.screenshot || cachedBlobUrl;
+    // A frame belongs to exactly one URL, including its port and channel.
+    const previewKey = JSON.stringify([cam.ip, currentStreamUrl]);
+    const cachedBlobUrl = window.V2State.previewCache[previewKey] || '';
+    const screenshotPath = currentStreamObj?.screenshot || cachedBlobUrl;
 
     // Preview area HTML
     let previewHtml = '';
@@ -353,7 +379,28 @@ function v2RenderCameraCard(cam) {
         }
     }
 
-    if (imgSrc) {
+    if (isAudioDevice) {
+        const recordCountMatch = (cam.model || '').match(/\(([^)]+)\)/);
+        const recordCountStr = recordCountMatch ? recordCountMatch[1] : `${cam.total_records || '132 300+'} записей`;
+        previewHtml = `
+            <div class="v2-sprecord-preview-wrapper" id="v2-preview-box-${safeIp}">
+                <div class="v2-sprecord-eq-container">
+                    <span class="v2-sprecord-eq-bar"></span>
+                    <span class="v2-sprecord-eq-bar"></span>
+                    <span class="v2-sprecord-eq-bar"></span>
+                    <span class="v2-sprecord-eq-bar"></span>
+                    <span class="v2-sprecord-eq-bar"></span>
+                    <span class="v2-sprecord-eq-bar"></span>
+                    <span class="v2-sprecord-eq-bar"></span>
+                </div>
+                <div class="v2-sprecord-banner-title">🎙️ SpRecord Audio Server</div>
+                <div class="v2-sprecord-banner-count">${_esc(recordCountStr)}</div>
+                <button class="v2-sprecord-card-listen-btn" onclick="v2OpenSpRecordPlayer('${_esc(cam.ip)}')">
+                    ▶ Слушать записи
+                </button>
+            </div>
+        `;
+    } else if (imgSrc) {
         previewHtml = `
             <div class="v2-preview-wrapper" id="v2-preview-box-${safeIp}">
                 <img class="v2-camera-screenshot"
@@ -386,30 +433,62 @@ function v2RenderCameraCard(cam) {
         `;
     }
 
-    const verified = streams.some(s => s.verified || s.screenshot);
-    const verifiedBadge = verified ? '<span class="v2-verified-badge">✓ Live</span>' : '';
+    const verified = streams.some(s => s.verified);
+    const verifiedBadge = isAudioDevice
+        ? '<span class="v2-verified-badge" style="background:#059669">🎙️ Аудиосервер</span>'
+        : (verified ? '<span class="v2-verified-badge">✓ Live</span>' : '');
+    const is401 = _isCam401(cam);
+    const authBadge = isAudioDevice
+        ? '<span class="v2-auth-badge auth-open">🔓 admin: без пароля</span>'
+        : (is401
+            ? '<span class="v2-auth-badge auth-locked" title="Один или несколько сервисов требуют авторизацию">🔒 Требуется авторизация</span>'
+            : (verified
+                ? '<span class="v2-auth-badge auth-open">✓ Видео подтверждено</span>'
+                : '<span class="v2-auth-badge">○ Видео не подтверждено</span>'));
+
+    let credsBadge = '';
+    if (cam.credentials && cam.credentials.user) {
+        const pw = cam.credentials.password ? `:${_esc(cam.credentials.password)}` : '';
+        credsBadge = `<span style="font-size:0.7rem;color:#34d399;margin-left:6px;background:rgba(16,185,129,0.15);padding:1px 5px;border-radius:3px;font-weight:600">🔑 ${_esc(cam.credentials.user)}${pw}</span>`;
+    }
 
     const protocols = (cam.protocols || []).slice(0, 5);
     const badges = protocols.map(p => `<span class="v2-proto-badge ${_protoBadgeClass(p)}">${_protoLabel(p)}</span>`).join('');
 
     // Stream selector dropdown (top 15 streams sorted by quality/preview)
     let streamSelectorHtml = '';
-    if (totalStreams > 0) {
-        const streamOptions = streams.slice(0, 15).map((s, idx) => {
-            const shortPath = _formatShortStreamUrl(s.url);
+    if (isAudioDevice) {
+        const recordCountMatch = (cam.model || '').match(/\(([^)]+)\)/);
+        const recordCountStr = recordCountMatch ? recordCountMatch[1] : `${cam.total_records || '132 300+'} записей`;
+        streamSelectorHtml = `
+            <div class="v2-stream-selector-row">
+                <div class="v2-stream-info-header">
+                    <span style="color:rgba(255,255,255,0.45)">Сервер разговоров:</span>
+                    <span class="v2-stream-count-badge" onclick="v2OpenSpRecordPlayer('${_esc(cam.ip)}')" title="Открыть аудиоплеер звонков" style="background:rgba(16,185,129,0.2);color:#34d399;border-color:rgba(16,185,129,0.4);cursor:pointer">
+                        🎙️ ${_esc(recordCountStr)}
+                    </span>
+                </div>
+                <div style="font-size:0.75rem;color:#94a3b8;margin-top:4px;display:flex;align-items:center;justify-content:space-between">
+                    <span>🌐 Портал: <strong style="color:#e2e8f0">${_esc(cam.ip)}:${cam.http_port || 8002}</strong></span>
+                    <button type="button" class="v2-btn-small" onclick="v2OpenSpRecordPlayer('${_esc(cam.ip)}')" style="padding:2px 8px;font-size:0.75rem;background:rgba(16,185,129,0.25);color:#34d399;border:1px solid rgba(16,185,129,0.4)">▶ Записи</button>
+                </div>
+            </div>
+        `;
+    } else if (totalStreams > 0) {
+        const streamOptions = streams.map((s, idx) => {
+            const shortPath = _esc(s.url);
             const isSel = s.url === currentStreamUrl ? 'selected' : '';
             let tag = '';
             if (s.screenshot) tag = ' [🖼️ Кадр]';
             else if (s.verified) tag = ' [🟢 Live]';
-            else if (s.type === 'http_snapshot') tag = ' [📷 Snap]';
+            else tag = s.verification_status === 'failed' ? ' [нет кадра]' : ' [не проверен]';
             return `<option value="${_esc(s.url)}" ${isSel}>#${idx + 1} ${shortPath}${tag}</option>`;
         }).join('');
 
-        const moreOption = totalStreams > 15
-            ? `<option value="__open_modal__">⚡ Показать все ${totalStreams} потоков...</option>`
-            : '';
+        const moreOption = '';
 
-        const streamCountText = totalStreams === 1 ? '1 поток' : (totalStreams < 5 ? `${totalStreams} потока` : `${totalStreams} потоков`);
+        const confirmedStreams = streams.filter(s => s.verified).length;
+        const streamCountText = `${confirmedStreams} подтверждено · ${totalStreams} URL`;
 
         streamSelectorHtml = `
             <div class="v2-stream-selector-row">
@@ -444,16 +523,17 @@ function v2RenderCameraCard(cam) {
         </div>`;
     }
 
-    return `<div class="v2-camera-card" id="v2-cam-${safeIp}">
-        ${previewHtml}
-        ${verifiedBadge}
-        <div class="v2-camera-body">
-            <div class="v2-camera-brand">${_esc(cam.brand || 'Unknown')}</div>
-            <div class="v2-camera-ip">${_esc(cam.ip)}${cam.rtsp_port ? ':' + cam.rtsp_port : ''}</div>
-            ${locationHtml}
-            <div class="v2-camera-model">${_esc(cam.model || '')}</div>
-            <div class="v2-proto-badges">${badges}</div>
-            ${streamSelectorHtml}
+    let actionsHtml = '';
+    if (isAudioDevice) {
+        actionsHtml = `
+            <div class="v2-camera-actions">
+                <button class="v2-camera-btn" onclick="v2OpenSpRecordPlayer('${_esc(cam.ip)}')" title="Открыть аудиоплеер разговоров" style="background:rgba(16,185,129,0.25);color:#6ee7b7;border:1px solid rgba(16,185,129,0.5);font-weight:700">▶ Слушать записи</button>
+                <button class="v2-camera-btn" onclick="window.open('http://${_esc(cam.ip)}:${cam.http_port || 8002}/', '_blank')" title="Открыть веб-интерфейс SpRecord Web" style="background:rgba(59,130,246,0.2);color:#93c5fd;border:1px solid rgba(59,130,246,0.4)">🌐 SpRecord Web</button>
+                <button class="v2-camera-btn" onclick="v2ShowDetails('${_esc(cam.ip)}')" title="Подробности">ℹ️</button>
+            </div>
+        `;
+    } else {
+        actionsHtml = `
             <div class="v2-camera-actions">
                 <button class="v2-camera-btn" onclick="v2OpenSelectedStreamPlayer('${_esc(cam.ip)}')" title="Тест видеопотока в реальном времени (WebRTC / MSE плеер)" style="background:rgba(99,102,241,0.25);color:#c4b5fd;border:1px solid rgba(99,102,241,0.45);font-weight:600">▶ Тест</button>
                 ${goBtn}
@@ -461,6 +541,24 @@ function v2RenderCameraCard(cam) {
                 <button class="v2-camera-btn" onclick="v2OpenStreamModal('${_esc(cam.ip)}')" title="Просмотр всех ${totalStreams} потоков">⚡ ${totalStreams}</button>
                 <button class="v2-camera-btn" onclick="v2ShowDetails('${_esc(cam.ip)}')" title="Подробности">ℹ️</button>
             </div>
+        `;
+    }
+
+    return `<div class="v2-camera-card" id="v2-cam-${safeIp}">
+        ${previewHtml}
+        <div style="position:absolute;top:8px;left:8px;display:flex;gap:5px;z-index:3">
+            ${verifiedBadge}
+            ${authBadge}
+        </div>
+        <div class="v2-camera-body">
+            <div class="v2-camera-brand">${_esc(displayBrand)}</div>
+            <div class="v2-camera-ip">${_esc(cam.ip)}${endpoint?.port ? ':' + endpoint.port : (cam.rtsp_port ? ':' + cam.rtsp_port : '')}${credsBadge}</div>
+            ${locationHtml}
+            <div class="v2-camera-model">${_esc(displayModel)}</div>
+            ${endpointPorts.length > 1 ? `<div class="v2-camera-model">Порты: ${endpointPorts.join(', ')}</div>` : ''}
+            <div class="v2-proto-badges">${badges}</div>
+            ${streamSelectorHtml}
+            ${actionsHtml}
         </div>
     </div>`;
 }
@@ -528,12 +626,12 @@ window.v2OnStreamChange = v2OnStreamChange;
 async function v2CapturePreview(ip, event) {
     if (event) event.stopPropagation();
     const safeIp = ip.replace(/\./g, '_');
-    const box = document.getElementById(`v2-preview-box-${safeIp}`);
+    let box = document.getElementById(`v2-preview-box-${safeIp}`);
     const streamUrl = window.V2State.selectedStreams[ip] || '';
 
     if (!streamUrl) {
         alert('Нет URL потока для захвата кадра');
-        return;
+        return false;
     }
 
     if (box) {
@@ -546,15 +644,30 @@ async function v2CapturePreview(ip, event) {
     }
 
     const cam = (window.V2State.results || []).find(c => c.ip === ip);
-    const user = cam?.credentials?.user || 'admin';
-    const pass = cam?.credentials?.password || '';
+    const selected = (cam?.streams || []).find(s => s.url === streamUrl);
+    const credentials = selected?.credentials ?? cam?.credentials ?? {};
+    const user = credentials.user || '';
+    const pass = credentials.password || '';
 
     try {
         const previewUrl = `/api/v2/preview?ip=${encodeURIComponent(ip)}&stream_url=${encodeURIComponent(streamUrl)}&user=${encodeURIComponent(user)}&password=${encodeURIComponent(pass)}&_t=${Date.now()}`;
         const resp = await fetch(previewUrl);
 
         if (!resp.ok) {
-            if (box) {
+            if (selected) {
+                selected.verified = false;
+                selected.screenshot = '';
+                selected.verification_status = 'failed';
+            }
+            const failedKey = JSON.stringify([ip, streamUrl]);
+            if (window.V2State.previewCache[failedKey]) URL.revokeObjectURL(window.V2State.previewCache[failedKey]);
+            delete window.V2State.previewCache[failedKey];
+            if (window.V2State.selectedStreams[ip] === streamUrl) {
+                v2OnStreamChange(ip, streamUrl);
+                box = document.getElementById(`v2-preview-box-${safeIp}`);
+            }
+            v2UpdateResultsCount();
+            if (box && window.V2State.selectedStreams[ip] === streamUrl) {
                 box.innerHTML = `
                     <div class="v2-placeholder-inner">
                         <span style="font-size:1.6rem">⚠️</span>
@@ -563,23 +676,28 @@ async function v2CapturePreview(ip, event) {
                     </div>
                 `;
             }
-            return;
+            return false;
         }
 
         const blob = await resp.blob();
         const objUrl = URL.createObjectURL(blob);
-        window.V2State.previewCache[ip] = objUrl;
+        const previewKey = JSON.stringify([ip, streamUrl]);
+        const previousBlob = window.V2State.previewCache[previewKey];
+        if (previousBlob) URL.revokeObjectURL(previousBlob);
+        window.V2State.previewCache[previewKey] = objUrl;
 
         if (cam) {
             for (const s of (cam.streams || [])) {
                 if (s.url === streamUrl) {
                     s.verified = true;
+                    s.verification_status = 'verified';
+                    s.auth_required = false;
                     s.screenshot = objUrl;
                 }
             }
         }
 
-        if (box) {
+        if (box && window.V2State.selectedStreams[ip] === streamUrl) {
             box.innerHTML = `
                 <img class="v2-camera-screenshot" src="${objUrl}" alt="${_esc(ip)}">
                 <button class="v2-refresh-preview-btn" onclick="v2CapturePreview('${_esc(ip)}', event)" title="Обновить снимок потока">🔄 Обновить</button>
@@ -609,6 +727,7 @@ async function v2CapturePreview(ip, event) {
                 }).catch(() => {});
         }
 
+        return true;
     } catch (err) {
         if (box) {
             box.innerHTML = `
@@ -619,6 +738,7 @@ async function v2CapturePreview(ip, event) {
                 </div>
             `;
         }
+        return false;
     }
 }
 window.v2CapturePreview = v2CapturePreview;

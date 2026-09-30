@@ -11,7 +11,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
     <link rel="stylesheet" href="/static/style.css?v=20260905-card-layout-fix">
-    <link rel="stylesheet" href="/static/style_v2.css?v=20260906-v2-live-filter">
+    <link rel="stylesheet" href="/static/style_v2.css?v=20260907-v2-bruter-fix">
 </head>
 
 <body>
@@ -27,6 +27,9 @@
             <p class="sidebar-caption">Network Intelligence</p>
 
             <nav class="sidebar-nav" aria-label="Основная навигация">
+                <a class="nav-item" href="/scanner-v2" title="Scanner v2 — инвентаризация сервисов">
+                    <span class="nav-icon">◎</span><span>Scanner v2 · Сервисы</span>
+                </a>
                 <button class="nav-item active" data-view="graph-view" onclick="switchView('graph-view', this)"
                     title="Сканирование">
                     <span class="nav-icon">⌘</span><span>Сканирование</span>
@@ -1171,6 +1174,10 @@
                                                 <div><strong>Авто</strong><small>masscan если root, иначе
                                                         asyncio</small></div>
                                             </label>
+                                            <label class="v2-radio-item" title="Новое ядро Scanner v2 (staged pipeline: discover -> identify -> enrich)">
+                                                <input type="radio" name="v2-engine" value="staged" id="v2-engine-staged">
+                                                <div><strong>Scanner v2</strong><small>Staged ядро + очереди</small></div>
+                                            </label>
                                             <label class="v2-radio-item">
                                                 <input type="radio" name="v2-engine" value="masscan"
                                                     id="v2-engine-masscan">
@@ -1305,6 +1312,10 @@
                                         onclick="v2SetFilter('status','live')" title="Только живые камеры с проверенными потоками">🟢 Живые (Live)</button>
                                     <button class="v2-filter-btn v2-filter-btn-preview" id="v2-filter-status-preview" data-value="preview"
                                         onclick="v2SetFilter('status','preview')" title="Только камеры со снимками/превью">🖼️ С превью</button>
+                                    <button class="v2-filter-btn v2-filter-btn-auth-open" id="v2-filter-auth-open" data-value="open"
+                                        onclick="v2SetFilter('auth','open')" title="Есть хотя бы один поток с подтверждённым кадром">✓ Видео подтверждено</button>
+                                    <button class="v2-filter-btn v2-filter-btn-auth-401" id="v2-filter-auth-401" data-value="401"
+                                        onclick="v2SetFilter('auth','401')" title="Один или несколько сервисов требуют авторизацию">🔒 Требуют авторизацию</button>
                                     <button class="v2-filter-btn" id="v2-filter-brand-Hikvision" data-value="Hikvision"
                                         onclick="v2SetFilter('brand','Hikvision')">Hikvision</button>
                                     <button class="v2-filter-btn" id="v2-filter-brand-Dahua" data-value="Dahua"
@@ -1315,6 +1326,8 @@
                                         onclick="v2SetFilter('brand','Mobotix')">Mobotix</button>
                                     <button class="v2-filter-btn" id="v2-filter-brand-Xiongmai" data-value="Xiongmai"
                                         onclick="v2SetFilter('brand','Xiongmai')">Xiongmai (XM)</button>
+                                    <button class="v2-filter-btn v2-filter-btn-audio" id="v2-filter-brand-SpRecord" data-value="SpRecord"
+                                        onclick="v2SetFilter('brand','SpRecord')" title="Системы записи разговоров SpRecord">🎙️ SpRecord</button>
                                     <button class="v2-filter-btn" id="v2-filter-proto-onvif" data-value="onvif"
                                         onclick="v2SetFilter('protocol','onvif')">ONVIF</button>
                                     <button class="v2-filter-btn" id="v2-filter-proto-rtsp_direct"
@@ -1329,6 +1342,9 @@
                                     <button class="v2-filter-btn" id="v2-filter-proto-http_snapshot"
                                         data-value="http_snapshot"
                                         onclick="v2SetFilter('protocol','http_snapshot')">Snapshots</button>
+                                    <button class="v2-filter-btn v2-filter-btn-audio" id="v2-filter-proto-sprecord"
+                                        data-value="sprecord_audio"
+                                        onclick="v2SetFilter('protocol','sprecord_audio')" title="Аудиозаписи звонков SpRecord">🎙️ Аудиозаписи</button>
                                 </div>
                                 <div class="v2-results-actions">
                                     <button class="v2-btn-small" id="v2-btn-bulk-capture"
@@ -1340,6 +1356,12 @@
                                         onclick="v2ResolveAllGeo(this)"
                                         title="Определить город и гео-локацию для всех отсканированных камер">📍
                                         Определить города</button>
+                                    <button class="v2-btn-small" id="v2-btn-export-401"
+                                        style="background:rgba(245,158,11,0.2);border:1px solid rgba(245,158,11,0.45);color:#fbbf24;font-weight:600;"
+                                        onclick="v2Export401()" title="Скачать список IP:порт камер с ошибкой 401 (для брутфорса)">📋 Экспорт 401</button>
+                                    <button class="v2-btn-small" id="v2-btn-open-bruter"
+                                        style="background:linear-gradient(135deg, rgba(239,68,68,0.25), rgba(185,28,28,0.35));border:1px solid rgba(239,68,68,0.5);color:#fca5a5;font-weight:600;"
+                                        onclick="v2OpenBruterModal()" title="Запустить подбор паролей rtspBrute для камер с 401">🔨 RTSP Brute</button>
                                     <button class="v2-btn-small v2-btn-green" onclick="v2ExportAllToGo2rtc()">+ Все в
                                         go2rtc</button>
                                     <button class="v2-btn-small" onclick="v2ExportJson()">⬇ JSON</button>
@@ -1590,7 +1612,7 @@
     <script src="/static/cameras/scanner.js?v=20260814-m7-skip-existing"></script>
     <script src="/static/cameras/go2rtc.js?v=20260814-m7-skip-existing"></script>
     <script src="/static/cameras/strix.js?v=20260818-db-presets-v5"></script>
-    <script src="/static/cameras/scanner_v2.js?v=20260906-bulk-capture"></script>
+    <script src="/static/cameras/scanner_v2.js?v=20260930-multistream"></script>
     <script src="/static/city_ip.js?v=20260821-v1"></script>
 </body>
 

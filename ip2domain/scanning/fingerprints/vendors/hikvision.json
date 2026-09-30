@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "vendor": "Hikvision",
+  "product_family": "video",
+  "models": [],
+  "firmware_patterns": [],
+  "ports": [
+    554,
+    8554
+  ],
+  "rtsp_patterns": [
+    "/Streaming/Channels/{channel}0{stream1}"
+  ],
+  "http_patterns": [
+    "/ISAPI/System/deviceInfo",
+    "/ISAPI/Streaming/channels"
+  ],
+  "onvif_patterns": [
+    "/onvif/device_service"
+  ],
+  "authentication": [
+    "basic",
+    "digest",
+    "wsse"
+  ],
+  "fingerprints": [
+    "hikvision"
+  ],
+  "channel_patterns": {
+    "start": 1,
+    "default_max": 16
+  },
+  "stream_patterns": {
+    "indices": [
+      0,
+      1
+    ],
+    "profiles": [
+      "main",
+      "sub"
+    ]
+  }
+}

@@ -14,6 +14,7 @@ const V2State = window.V2State || {
     filterGeo: 'all',
     geoSearch: '',
     filterStatus: 'all',   // all | live | preview
+    filterAuth: 'all',     // all | open | 401
     totalInDb: 0,
     visibleCount: 48,
     pageSize: 48,

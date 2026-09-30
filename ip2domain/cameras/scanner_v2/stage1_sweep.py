@@ -34,23 +34,8 @@ def check_tools() -> Dict[str, bool]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# asyncio TCP connect sweep (enhanced, up to 300 concurrent)
+# asyncio TCP connect sweep powered by ScanPlan work blocks
 # ─────────────────────────────────────────────────────────────────────────────
-
-async def _tcp_check(ip: str, port: int, timeout: float) -> Tuple[str, int]:
-    writer = None
-    try:
-        _, writer = await asyncio.wait_for(asyncio.open_connection(ip, port), timeout=timeout)
-        return ip, port
-    except Exception:
-        return ip, 0
-    finally:
-        if writer:
-            try:
-                writer.close()
-            except Exception:
-                pass
-
 
 async def asyncio_port_sweep(
     targets: List[str],
@@ -60,43 +45,20 @@ async def asyncio_port_sweep(
     on_progress: Optional[Callable] = None,
     is_cancelled: Optional[Callable] = None,
 ) -> List[Tuple[str, List[int]]]:
-    """High-concurrency asyncio TCP connect sweep.
+    """High-concurrency asyncio TCP connect sweep via unified ScanPlan backend.
 
-    Returns list of (ip, [open_ports]) for responsive hosts.
-    Concurrency is per-host: each host fires all port checks in parallel.
+    Returns list of (ip, [open_ports]) for responsive hosts without runaway task creation.
     """
-    semaphore = asyncio.Semaphore(concurrency)
-    result_map: Dict[str, List[int]] = {}
-    completed = 0
-    total = len(targets)
-    lock = asyncio.Lock()
-
-    async def probe_host(ip: str):
-        nonlocal completed
-        if is_cancelled and is_cancelled():
-            return
-        async with semaphore:
-            tasks = [_tcp_check(ip, p, timeout) for p in ports]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            open_ports = [
-                r[1] for r in results
-                if isinstance(r, tuple) and len(r) == 2 and isinstance(r[1], int) and r[1] > 0
-            ]
-            async with lock:
-                completed += 1
-                if open_ports:
-                    result_map[ip] = sorted(open_ports)
-                if on_progress:
-                    on_progress(completed, total, ip, len(result_map))
-
-    batch_size = 1000
-    for i in range(0, total, batch_size):
-        if is_cancelled and is_cancelled():
-            break
-        batch = targets[i: i + batch_size]
-        await asyncio.gather(*[asyncio.create_task(probe_host(ip)) for ip in batch], return_exceptions=True)
-
-    return [(ip, ports_list) for ip, ports_list in result_map.items()]
+    from ip2domain.scanning.discovery.backends import AsyncioDiscoveryBackend
+    backend = AsyncioDiscoveryBackend()
+    return await backend.sweep(
+        targets=targets,
+        ports=ports,
+        concurrency=concurrency,
+        timeout=timeout,
+        on_progress=on_progress,
+        is_cancelled=is_cancelled,
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -106,7 +68,7 @@ async def asyncio_port_sweep(
 async def masscan_sweep(
     targets: List[str],
     ports: Tuple[int, ...],
-    rate: int = 50000,
+    rate: int = 25000,
     on_progress: Optional[Callable] = None,
     is_cancelled: Optional[Callable] = None,
 ) -> List[Tuple[str, List[int]]]:
@@ -142,12 +104,12 @@ async def masscan_sweep(
             "-iL", tmp_targets.name,
             "-p", port_str,
             "--rate", str(rate),
+            "--retries", "1",
             "--output-format", "json",
             "--output-filename", tmp_out,
-            "--wait", "2",
+            "--wait", "10",
         ]
         logger.info("[v2 Stage1/masscan] Starting: rate=%d pps, ports=%s, targets=%d", rate, port_str, valid_ipv4_targets)
-
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -198,30 +160,45 @@ async def masscan_sweep(
         except Exception:
             pass
 
-
-
         if is_cancelled and is_cancelled():
             return []
 
-        # Parse JSON output
+        # Parse JSON output with fallback
         result_map: Dict[str, List[int]] = {}
         if os.path.exists(tmp_out):
             try:
-                with open(tmp_out) as f:
+                with open(tmp_out, "r", encoding="utf-8", errors="ignore") as f:
                     content = f.read().strip()
-                # masscan JSON is not valid: it has trailing comma; fix it
-                if content.endswith(","):
-                    content = content[:-1]
-                if not content.startswith("["):
-                    content = "[" + content + "]"
-                entries = json.loads(content)
-                for entry in entries:
-                    ip = entry.get("ip", "")
-                    port = entry.get("ports", [{}])[0].get("port", 0)
-                    if ip and port:
-                        result_map.setdefault(ip, [])
-                        if port not in result_map[ip]:
-                            result_map[ip].append(port)
+                if content:
+                    # Clean trailing commas often produced before ']' in masscan
+                    cleaned = re.sub(r",\s*\]", "]", content)
+                    if cleaned.endswith(","):
+                        cleaned = cleaned[:-1]
+                    if not cleaned.startswith("["):
+                        cleaned = "[" + cleaned + "]"
+                    entries = []
+                    try:
+                        entries = json.loads(cleaned)
+                    except Exception:
+                        # Regex fallback to extract every {"ip": "...", "ports": [{"port": N}]}
+                        for m in re.finditer(r'\{[^{}]*"ip"\s*:\s*"([0-9\.]+)"[^{}]*"port"\s*:\s*(\d+)', content):
+                            f_ip = m.group(1)
+                            f_port = int(m.group(2))
+                            if f_ip and f_port:
+                                result_map.setdefault(f_ip, [])
+                                if f_port not in result_map[f_ip]:
+                                    result_map[f_ip].append(f_port)
+                    for entry in entries:
+                        if isinstance(entry, dict):
+                            ip = entry.get("ip", "")
+                            ports_list = entry.get("ports", [])
+                            for p_obj in ports_list:
+                                if isinstance(p_obj, dict):
+                                    port = p_obj.get("port", 0)
+                                    if ip and port:
+                                        result_map.setdefault(ip, [])
+                                        if port not in result_map[ip]:
+                                            result_map[ip].append(port)
             except Exception as exc:
                 logger.warning("[v2 Stage1/masscan] JSON parse error: %s", exc)
 

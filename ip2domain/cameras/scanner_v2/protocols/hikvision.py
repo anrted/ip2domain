@@ -31,7 +31,7 @@ async def probe_hikvision(
     result = {
         "success": False, "brand": "Hikvision", "model": "", "serial": "",
         "firmware": "", "rtsp_urls": [], "snapshot_url": "",
-        "http_port": 0, "credentials": {},
+        "http_port": 0, "credentials": {}, "auth_required": False,
     }
     if not candidate_ports:
         return result
@@ -39,6 +39,8 @@ async def probe_hikvision(
     async with httpx.AsyncClient(verify=False, timeout=_TIMEOUT) as client:
         for port in candidate_ports:
             base = f"http://{ip}:{port}"
+            hik_service_detected = False
+
             for user, password in credentials:
                 try:
                     auth = httpx.DigestAuth(user, password) if user else None
@@ -56,12 +58,23 @@ async def probe_hikvision(
                 except Exception:
                     continue
 
+                server_hdr = resp.headers.get("server", "").lower()
+                www_auth_hdr = resp.headers.get("www-authenticate", "").lower()
+                if (
+                    "hikvision" in server_hdr
+                    or "hikvision" in www_auth_hdr
+                    or "app-webs" in server_hdr
+                    or "dvrdvs-webs" in server_hdr
+                    or "dnvrs-webs" in server_hdr
+                    or "hikvision-webs" in server_hdr
+                ):
+                    hik_service_detected = True
+
                 if resp.status_code == 401:
                     # Wrong credentials, try next pair
                     continue
                 if resp.status_code != 200:
                     break  # Port likely not Hikvision ISAPI
-
 
                 xml = resp.text
                 # Verify it's actually ISAPI
@@ -75,6 +88,7 @@ async def probe_hikvision(
                 result.update({
                     "success": True, "model": model, "serial": serial,
                     "firmware": firmware, "http_port": port,
+                    "auth_required": False,
                     "credentials": {"user": user, "password": password},
                 })
 
@@ -97,6 +111,25 @@ async def probe_hikvision(
 
                 result["rtsp_urls"] = rtsp_urls
                 result["snapshot_url"] = base + _ISAPI_SNAPSHOT
+                return result
+
+            # If Hikvision verified by 401 challenge / headers but no password matched
+            if hik_service_detected and not result["success"]:
+                result.update({
+                    "success": True,
+                    "brand": "Hikvision",
+                    "model": "Hikvision IP Camera",
+                    "http_port": port,
+                    "auth_required": True,
+                    "rtsp_urls": [
+                        f"rtsp://{ip}:554/Streaming/Channels/101",
+                        f"rtsp://{ip}:554/Streaming/Channels/102",
+                        f"rtsp://{ip}:554/Streaming/Channels/201",
+                        f"rtsp://{ip}:554/Streaming/Channels/1",
+                        f"rtsp://{ip}:554/h264/ch1/main/av_stream",
+                    ],
+                    "snapshot_url": base + _ISAPI_SNAPSHOT,
+                })
                 return result
 
     return result

@@ -23,6 +23,13 @@ _WHEP_PATHS = [
 ]
 
 
+def is_valid_go2rtc_stream(key: str, val: any) -> bool:
+    """Validate if a key-value pair from /api/streams is a genuine go2rtc/mediamtx stream."""
+    if key in {"status", "error", "error_descr", "code", "message"}:
+        return False
+    return isinstance(val, (dict, list))
+
+
 async def probe_webrtc(
     ip: str,
     candidate_ports: List[int],
@@ -59,7 +66,15 @@ async def probe_webrtc(
                         try:
                             data = r.json()
                             if isinstance(data, dict) and data:
-                                stream_names = list(data.keys())
+                                if data.get("status") == "error" or "error_descr" in data or "code" in data:
+                                    continue
+                                valid_streams = [
+                                    k for k, v in data.items()
+                                    if is_valid_go2rtc_stream(k, v)
+                                ]
+                                if not valid_streams:
+                                    continue
+                                stream_names = valid_streams
                                 result["success"] = True
                                 result["brand"] = "go2rtc / MediaMTX Gateway"
                                 result["http_port"] = port

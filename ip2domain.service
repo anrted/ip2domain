@@ -11,6 +11,7 @@ ExecStart=/root/ip2domain/.venv/bin/python -m ip2domain.cli --web --host 0.0.0.0
 Restart=on-failure
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
+Environment=IP2DOMAIN_SCANNER_V2_ENABLED=1
 
 [Install]
 WantedBy=multi-user.target

@@ -13,7 +13,9 @@ logger = logging.getLogger(__name__)
 _TIMEOUT = 3.0
 
 # RTMP C0+C1 handshake: version byte (0x03) + 1536 bytes of time+zeros
-_RTMP_C0C1 = bytes([0x03]) + b"\x00" * 4 + b"\x00" * 4 + b"\x00" * 1528
+from ip2domain.scanning.protocols.binary import rtmp_request, rtmp_response
+
+_RTMP_C0C1 = rtmp_request()
 
 _RTMP_PATHS = [
     "/live",
@@ -50,9 +52,9 @@ async def probe_rtmp(ip: str, rtmp_ports: List[int]) -> Dict:
             writer.write(_RTMP_C0C1)
             await writer.drain()
             # Wait for S0+S1+S2 (1 + 1536 + 1536 = 3073 bytes)
-            data = await asyncio.wait_for(reader.read(3073), timeout=2.0)
+            data = await asyncio.wait_for(reader.readexactly(3073), timeout=2.0)
             # RTMP S0 should be 0x03
-            if data and data[0] == 0x03 and len(data) >= 1537:
+            if rtmp_response(data):
                 result["success"] = True
                 result["open_port"] = port
                 result["rtmp_url"] = f"rtmp://{ip}:{port}/live"

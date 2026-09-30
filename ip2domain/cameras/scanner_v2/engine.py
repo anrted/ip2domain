@@ -21,8 +21,10 @@ from .models import (
 )
 from .stage1_sweep import adaptive_port_sweep, check_tools
 from .stage2_proto import probe_host_v2
+from .aggregation import merge_host_cameras, universal_observation_to_camera_result
 from .stage3_stream import verify_camera_streams
 from .protocols.discovery import run_local_discovery
+from ip2domain.scanning.runner import run_bounded
 from ip2domain.data.geo_city_db import geo_city_db
 
 logger = logging.getLogger(__name__)
@@ -138,11 +140,42 @@ def _format_eta(seconds: float) -> str:
     return f"{int(seconds // 3600)}ч {int((seconds % 3600) // 60)}м"
 
 
+async def _capture_job_streams(job, capture_dir, storage):
+    """Shared capture stage: bounded workers, no camera-wide time cutoff."""
+    job.stage3_status = "running"
+    job.stage = "Stage 3: Проверка всех потоков и захват кадров"
+    total = sum(len(c.streams) for c in job.results)
+    completed = 0
+
+    async def capture(camera):
+        nonlocal completed
+        def save_stream(stream):
+            nonlocal completed
+            completed += 1
+            job.stage = f"Stage 3: Проверено потоков {completed}/{total}"
+            job.progress_pct = 85 + int(completed / max(1, total) * 14)
+            if storage:
+                storage.save_v2_result(camera.to_dict())
+        try:
+            await verify_camera_streams(camera, capture_dir,
+                                        is_cancelled=job.is_cancelled, on_stream=save_stream)
+        except Exception:
+            job.stage3_status = "error"
+            raise
+        finally:
+            job.stage3_completed += 1
+            if storage:
+                storage.save_v2_result(camera.to_dict())
+
+    await run_bounded(job.results, capture, 3, job.is_cancelled)
+    job.stage3_status = "cancelled" if job.is_cancelled() else "done"
+
+
 async def run_v2_scan_pipeline(
     job_id: str,
     targets_str: str,
     engine: str = "auto",
-    masscan_rate: int = 50000,
+    masscan_rate: int = 25000,
     concurrency: int = 150,
     port_timeout: float = 1.2,
     stage2_concurrency: int = _DEFAULT_STAGE2_CONCURRENCY,
@@ -170,6 +203,8 @@ async def run_v2_scan_pipeline(
     ts = lambda: datetime.now().strftime("%H:%M:%S")
 
     try:
+        if stage2_concurrency < 1:
+            raise ValueError("stage2_concurrency must be positive")
         job.status = "running"
         job.stage = "Подготовка..."
         if resume_from_index > 0:
@@ -258,6 +293,105 @@ async def run_v2_scan_pipeline(
                 targets = []
 
         job.progress_pct = 5
+
+        # ── Scanner v2 Staged Engine Execution Branch ──────────────────
+        if engine == "staged":
+            job.engine_used = "staged"
+            job.stage = "Scanner v2 Staged Pipeline: запуск..."
+            job.add_log("[Scanner v2 Staged] Запуск через staged_pipeline (discover -> identify -> enrich)...")
+            try:
+                from ip2domain.scanning.policies import ScanConfig
+                from ip2domain.scanning.persistence import InventoryRepository
+                from ip2domain.scanning.staged_pipeline import run_staged_scan
+                from ip2domain.cameras.scanner_v2.aggregation import universal_observation_to_camera_result
+
+                inv_db_path = (
+                    os.environ.get("IP2DOMAIN_INVENTORY_DB_PATH", getattr(storage, "db_path", "ip2domain.db") + ".inventory")
+                    if storage else "ip2domain.db.inventory"
+                )
+                repo = InventoryRepository(inv_db_path)
+                scan_cfg = ScanConfig(
+                    targets=targets_str,
+                    profile="camera_legacy",
+                    workers=min(max(stage2_concurrency, 4), 32),
+                    discovery_workers=min(max(concurrency // 15, 2), 16),
+                    web_enrichment=True,
+                    active_consent=True,
+                )
+                plan = scan_cfg.plan()
+                scan_id = repo.create(scan_cfg, plan)
+
+                async def _poll_staged_job():
+                    while not job.is_cancelled():
+                        await asyncio.sleep(1.0)
+                        st = repo.get(scan_id)
+                        if not st:
+                            continue
+                        cov = st.get("coverage", {})
+                        done_bl = st.get("completed_blocks", 0)
+                        tot_bl = max(1, st.get("total_blocks", 1))
+                        pct = int((done_bl / tot_bl) * 85)
+                        job.progress_pct = max(5, min(90, pct))
+                        open_cnt = cov.get("state:open", 0)
+                        id_cnt = cov.get("identified", 0)
+                        job.stage = f"Scanner v2 Staged: {done_bl}/{tot_bl} блоков · Открыто: {open_cnt} · Опознано: {id_cnt}"
+                        if st.get("status") in ("completed", "cancelled", "error"):
+                            break
+
+                poll_task = asyncio.create_task(_poll_staged_job())
+                try:
+                    await run_staged_scan(repo, scan_id)
+                finally:
+                    poll_task.cancel()
+                    await asyncio.gather(poll_task, return_exceptions=True)
+
+                # Page through every endpoint; aggregate before any IP-keyed save.
+                hosts = {}
+                offset = 0
+                while not job.is_cancelled():
+                    eps = repo.endpoints(scan_id, limit=1000, offset=offset)
+                    if not eps:
+                        break
+                    for ep in eps:
+                        cam = universal_observation_to_camera_result(ep)
+                        if cam:
+                            hosts.setdefault(cam.ip, []).append(cam)
+                    offset += len(eps)
+                job.results = [merge_host_cameras(parts) for parts in hosts.values()]
+                for cam in job.results:
+                    if storage:
+                        storage.save_v2_result(cam.to_dict())
+                scan_state = repo.get(scan_id) or {}
+                if scan_state.get("status") == "error":
+                    raise RuntimeError("Staged scan failed")
+                if scan_state.get("status") == "cancelled":
+                    job.cancelled = True
+
+                job.add_log(f"[Scanner v2 Staged] Завершено. Обнаружено камер/видеопотоков: {len(job.results)}")
+            except Exception as exc:
+                logger.exception("[Scanner v2 Staged] Ошибка выполнения: %s", exc)
+                job.add_log(f"[Scanner v2 Staged] Ошибка: {exc}")
+                raise
+
+            # Optional frame verification & capture
+            if capture_frames and job.results and not job.is_cancelled():
+                job.stage = "Stage 3: Захват превью камер..."
+                job.add_log("[Stage 3] Запуск захвата скриншотов ffmpeg...")
+                await _capture_job_streams(job, capture_dir, storage)
+            else:
+                job.stage3_status = "skipped"
+            if job.is_cancelled():
+                job.status = "cancelled"
+                if storage:
+                    storage.mark_v2_job_status(job.job_id, "cancelled")
+                return
+
+            job.progress_pct = 100
+            job.status = "completed"
+            job.stage = f"Завершено: найдено {len(job.results)} камер"
+            if storage:
+                storage.save_v2_job(job.to_dict())
+            return
 
         # ── Stage 1: Port Sweep ────────────────────────────────────────
         job.stage1_status = "running"
@@ -375,13 +509,24 @@ async def run_v2_scan_pipeline(
                 if job.is_cancelled():
                     return
                 try:
-                    camera = await asyncio.wait_for(
-                        probe_host_v2(ip, open_ports, credentials, protocols=protocols),
-                        timeout=20.0,
-                    )
+                    camera = await probe_host_v2(ip, open_ports, credentials, protocols=protocols)
                 except asyncio.TimeoutError:
-                    logger.debug("[v2 Stage2] Host %s probe timed out", ip)
+                    logger.debug("[v2 Stage2] Host %s probe timed out, checking open ports fallback", ip)
                     camera = None
+                    cctv_ports = [p for p in open_ports if p in {554, 555, 5555, 8554, 34567, 34599, 37777}]
+                    if cctv_ports:
+                        p = cctv_ports[0]
+                        from .models import StreamInfo as _SI2
+                        if p in {34567, 34599}:
+                            camera = CameraResult(ip=ip, brand="Xiongmai", model="NETSurveillance Device", rtsp_port=554, auth_required=None, open_ports=sorted(open_ports), protocols=["xiongmai_sofia"])
+                            camera.streams.append(_SI2(url=f"rtsp://{ip}:554/cam/realmonitor?channel=1&subtype=0", stream_type="rtsp", auth_required=None))
+                        elif p == 37777:
+                            camera = CameraResult(ip=ip, brand="Dahua", model="Dahua DVR/NVR", rtsp_port=554, auth_required=None, open_ports=sorted(open_ports), protocols=["dahua_dhip"])
+                            camera.streams.append(_SI2(url=f"rtsp://{ip}:554/cam/realmonitor?channel=1&subtype=0", stream_type="rtsp", auth_required=None))
+                        else:
+                            camera = CameraResult(ip=ip, brand="Generic RTSP", rtsp_port=p, auth_required=None, open_ports=sorted(open_ports), protocols=["rtsp_direct"])
+                            camera.streams.append(_SI2(url=f"rtsp://{ip}:{p}/live/ch0", stream_type="rtsp", auth_required=None))
+                            camera.streams.append(_SI2(url=f"rtsp://{ip}:{p}/Streaming/Channels/101", stream_type="rtsp", auth_required=None))
                 except Exception as exc:
                     logger.warning("[v2 Stage2] Error probing %s: %s", ip, exc)
                     camera = None
@@ -413,9 +558,11 @@ async def run_v2_scan_pipeline(
                             except Exception:
                                 pass
 
-        await asyncio.gather(
-            *[fingerprint_host(ip, ports) for ip, ports in responsive_hosts],
-            return_exceptions=True,
+        async def fingerprint_target(target):
+            await fingerprint_host(*target)
+
+        await run_bounded(
+            responsive_hosts, fingerprint_target, stage2_concurrency, job.is_cancelled,
         )
 
         job.stage2_status = "done"
@@ -427,54 +574,17 @@ async def run_v2_scan_pipeline(
 
         # ── Stage 3: Frame Capture ─────────────────────────────────────
         if capture_frames and job.results:
-            job.stage3_status = "running"
-            job.stage = f"Stage 3: Захват кадров ({len(job.results)} камер)..."
-            job.add_log(f"[Stage 3] Захват скриншотов для {len(job.results)} камер...")
+            await _capture_job_streams(job, capture_dir, storage)
+            if job.is_cancelled():
+                job.status = "cancelled"
+                return
 
-            capture_sem = asyncio.Semaphore(3)  # max 3 ffmpeg at once (RAM limit)
-            stage3_done = 0
-
-            async def capture_camera(camera: CameraResult):
-                nonlocal stage3_done
-                if job.is_cancelled():
-                    return
-                async with capture_sem:
-                    try:
-                        await asyncio.wait_for(
-                            verify_camera_streams(camera, capture_dir, max_streams_to_try=4),
-                            timeout=25.0,
-                        )
-                    except (asyncio.TimeoutError, Exception) as exc:
-                        logger.debug("[v2 Stage3] Error verifying streams for %s: %s", camera.ip, exc)
-                    stage3_done += 1
-                    job.stage3_completed = stage3_done
-                    job.progress_pct = 85 + int((stage3_done / max(1, len(job.results))) * 14)
-                    # Update persisted result with screenshot
-                    if storage:
-                        try:
-                            storage.save_v2_result(camera.to_dict())
-                        except Exception:
-                            pass
-
-            await asyncio.gather(
-                *[capture_camera(cam) for cam in job.results],
-                return_exceptions=True,
-            )
-
-            # Soft filter: keep all cameras that have at least one stream (even unverified).
+            # Keep identified endpoints even when they expose no media yet.
             # Cameras where ffmpeg capture failed are kept but marked — they still have RTSP URLs
             # which can be checked manually or via the preview proxy.
             valid_cameras = []
             verified_count = 0
             for cam in job.results:
-                if not cam.streams:
-                    # Truly no streams at all — discard
-                    if storage:
-                        try:
-                            storage.delete_v2_result(cam.ip)
-                        except Exception:
-                            pass
-                    continue
                 has_verified = any(s.verified for s in cam.streams)
                 if has_verified:
                     verified_count += 1

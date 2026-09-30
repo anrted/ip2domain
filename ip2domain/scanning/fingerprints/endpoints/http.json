@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "paths": [
+    "/",
+    "/login",
+    "/admin",
+    "/api",
+    "/api/v1",
+    "/api/v2",
+    "/api/docs",
+    "/swagger",
+    "/swagger.json",
+    "/openapi.json",
+    "/health",
+    "/status",
+    "/info",
+    "/favicon.ico"
+  ]
+}

@@ -19,7 +19,9 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from ip2domain.core.storage import StorageManager
-from .stage3_stream import _capture_path, _download_http_snapshot, capture_stream_frame
+from .stage3_stream import _valid_frame, verify_camera_streams
+from .models import CameraResult
+from ip2domain.scanning.runner import run_bounded
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +68,7 @@ class BulkCaptureManager:
         self,
         concurrency: int = 2,
         only_unverified: bool = True,
-        max_streams_per_cam: int = 4,
+        max_streams_per_cam: int = 0,
         target_ips: Optional[List[str]] = None,
     ) -> dict:
         async with self._lock:
@@ -128,31 +130,25 @@ class BulkCaptureManager:
                 if not streams:
                     continue
 
-                if only_unverified:
-                    # Check if camera already has at least one verified stream with existing file
-                    has_verified_screenshot = False
-                    for s in streams:
-                        sc = s.get("screenshot", "")
-                        if sc and Path(sc).exists() and Path(sc).stat().st_size >= 2048:
-                            has_verified_screenshot = True
-                            break
-                    if has_verified_screenshot:
-                        # Skip cameras that already have valid preview
-                        continue
+                if only_unverified and all(
+                    s.get("verified") and s.get("screenshot") and _valid_frame(Path(s["screenshot"]))
+                    for s in streams
+                ):
+                    continue
 
                 cameras_to_process.append(cam)
 
             # Prioritize cameras with RTSP / Snapshot streams
             self._progress.total_cameras = len(cameras_to_process)
             self._progress.total_streams = sum(
-                min(len(c.get("streams", [])), max_streams_per_cam) for c in cameras_to_process
+                sum(not (only_unverified and s.get("verified") and s.get("screenshot") and _valid_frame(Path(s["screenshot"])))
+                    for s in (c.get("streams", [])[:max_streams_per_cam] if max_streams_per_cam > 0 else c.get("streams", [])))
+                for c in cameras_to_process
             )
 
             if not cameras_to_process:
                 self._progress.is_running = False
                 return
-
-            semaphore = asyncio.Semaphore(concurrency)
 
             async def process_camera(cam: dict):
                 if self._progress.stop_requested:
@@ -160,113 +156,30 @@ class BulkCaptureManager:
 
                 ip = str(cam.get("ip", "")).strip()
                 self._progress.current_ip = ip
-                credentials = cam.get("credentials") or {}
-                streams = cam.get("streams", [])
-                changed = False
-
-                tested_count = 0
-                for s in streams:
+                camera = CameraResult.from_dict(cam)
+                selected = camera.streams[:max_streams_per_cam] if max_streams_per_cam > 0 else camera.streams
+                for stream in selected:
                     if self._progress.stop_requested:
                         break
-                    if tested_count >= max_streams_per_cam:
-                        break
-
-                    url = s.get("url", "")
-                    if not url:
+                    if only_unverified and stream.verified and stream.screenshot_path and _valid_frame(Path(stream.screenshot_path)):
                         continue
-
-                    # If already verified and file exists, count as verified
-                    existing_path = s.get("screenshot", "")
-                    if existing_path and Path(existing_path).exists() and Path(existing_path).stat().st_size >= 2048:
-                        s["verified"] = True
-                        self._progress.verified_streams += 1
-                        self._progress.processed_streams += 1
-                        continue
-
-                    stype = s.get("type", "rtsp")
-                    ok = False
-                    path = ""
-                    codec, w, h = "", 0, 0
-
-                    tested_count += 1
-
-                    # 1. Try HTTP snapshot download first if applicable (fast, low CPU)
-                    is_http_snap = (
-                        stype == "http_snapshot"
-                        or (
-                            url.startswith(("http://", "https://"))
-                            and ".m3u8" not in url
-                            and "mjpg" not in url.lower()
-                            and "video.cgi" not in url.lower()
-                        )
-                    )
-                    if is_http_snap:
-                        snap_path = await _download_http_snapshot(url, _V2_CAPTURE_DIR, credentials=credentials)
-                        if snap_path and Path(snap_path).exists() and Path(snap_path).stat().st_size >= 2048:
-                            ok = True
-                            path = snap_path
-                            codec = "JPEG"
-
-                    # 2. Try ffmpeg capture for RTSP / RTMP / HLS / MJPEG
-                    if not ok:
-                        stream_type = (
-                            "rtmp" if url.startswith("rtmp://")
-                            else ("hls" if ".m3u8" in url
-                            else ("mjpeg" if ("mjpg" in url.lower() or "video.cgi" in url.lower())
-                            else "rtsp"))
-                        )
-                        ok, path, codec, w, h = await capture_stream_frame(
-                            stream_url=url,
-                            stream_type=stream_type,
-                            capture_dir=_V2_CAPTURE_DIR,
-                            credentials=credentials,
-                        )
-
+                    # A single-stream view keeps per-stream progress/save and all
+                    # other endpoint metadata intact in the parent result.
+                    single = CameraResult(ip=ip, streams=[stream], credentials=camera.credentials)
+                    await verify_camera_streams(single, _V2_CAPTURE_DIR,
+                                                is_cancelled=lambda: self._progress.stop_requested)
                     self._progress.processed_streams += 1
-
-                    if ok and path and Path(path).exists() and Path(path).stat().st_size > 500:
-                        s["verified"] = True
-                        s["screenshot"] = path
-                        s["codec"] = codec
-                        s["resolution"] = f"{w}x{h}" if w and h else ""
-                        s["width"] = w
-                        s["height"] = h
+                    if stream.verified:
                         self._progress.verified_streams += 1
-                        changed = True
-                        # If we confirmed one stream on this camera, we can continue to others or prioritize
                     else:
                         self._progress.failed_streams += 1
-
-                    # Short yield to prevent CPU starvation
-                    await asyncio.sleep(0.05)
-
-                if changed:
-                    # Save updated camera result
-                    try:
-                        storage.save_v2_result(cam)
-                    except Exception as e:
-                        logger.warning("[BulkCapture] Failed to save camera %s: %s", ip, e)
+                    updated = dict(cam, **camera.to_dict())
+                    storage.save_v2_result(updated)
 
                 self._progress.processed_cameras += 1
 
-            # Process in controlled chunks
-            chunk_size = 20
-            for i in range(0, len(cameras_to_process), chunk_size):
-                if self._progress.stop_requested:
-                    break
-                chunk = cameras_to_process[i : i + chunk_size]
-
-                async def sem_task(c):
-                    async with semaphore:
-                        await process_camera(c)
-
-                await asyncio.gather(*(sem_task(c) for c in chunk), return_exceptions=True)
-
-                # Periodic garbage collection for low RAM environment
-                if i % 100 == 0:
-                    gc.collect()
-
-                await asyncio.sleep(0.1)
+            await run_bounded(cameras_to_process, process_camera, concurrency,
+                              lambda: self._progress.stop_requested)
 
         except asyncio.CancelledError:
             logger.info("[BulkCapture] Task cancelled")

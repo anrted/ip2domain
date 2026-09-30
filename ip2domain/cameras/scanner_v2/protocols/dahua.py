@@ -28,7 +28,7 @@ async def probe_dahua(
     result = {
         "success": False, "brand": "Dahua", "model": "", "serial": "",
         "firmware": "", "rtsp_urls": [], "snapshot_url": "",
-        "http_port": 0, "credentials": {},
+        "http_port": 0, "credentials": {}, "auth_required": False,
     }
     if not candidate_ports:
         return result
@@ -36,6 +36,8 @@ async def probe_dahua(
     async with httpx.AsyncClient(verify=False, timeout=_TIMEOUT) as client:
         for port in candidate_ports:
             base = f"http://{ip}:{port}"
+            dahua_service_detected = False
+
             for user, password in credentials:
                 try:
                     auth = httpx.DigestAuth(user, password) if user else None
@@ -45,11 +47,15 @@ async def probe_dahua(
                 except Exception:
                     continue
 
+                www_auth_hdr = resp.headers.get("www-authenticate", "").lower()
+                server_hdr = resp.headers.get("server", "").lower()
+                if "dh_" in www_auth_hdr or "dahua" in www_auth_hdr or "dahua" in server_hdr or "dh-webs" in server_hdr:
+                    dahua_service_detected = True
+
                 if resp.status_code == 401:
                     continue
                 if resp.status_code != 200:
                     break
-
 
                 text = resp.text.strip()
                 # Reject any HTML error or proxy/web pages (e.g. 503/404/login portals)
@@ -68,7 +74,6 @@ async def probe_dahua(
                     if k.lower() == "type" or "name" in k.lower() or "type" in k.lower():
                         model = v.strip().strip('"\'')
                         break
-
 
                 serial = ""
                 firmware = ""
@@ -91,6 +96,7 @@ async def probe_dahua(
                 result.update({
                     "success": True, "model": model, "serial": serial,
                     "firmware": firmware, "http_port": port,
+                    "auth_required": False,
                     "credentials": {"user": user, "password": password},
                 })
 
@@ -110,6 +116,26 @@ async def probe_dahua(
                     f"{base}/cgi-bin/snapshot.cgi",
                 ]
                 return result
+
+            # If Dahua confirmed by 401 challenge (DH_ realm) but credentials failed
+            if dahua_service_detected and not result["success"]:
+                result.update({
+                    "success": True,
+                    "brand": "Dahua",
+                    "model": "Dahua IP Camera",
+                    "http_port": port,
+                    "auth_required": True,
+                    "rtsp_urls": [
+                        f"rtsp://{ip}:554/cam/realmonitor?channel=1&subtype=0",
+                        f"rtsp://{ip}:554/cam/realmonitor?channel=1&subtype=1",
+                        f"rtsp://{ip}:554/cam/realmonitor?channel=1&subtype=0&unicast=true&proto=Onvif",
+                        f"rtsp://{ip}:554/live",
+                    ],
+                    "snapshot_url": f"{base}/cgi-bin/snapshot.cgi?channel=1",
+                })
+                return result
+
+    return result
 
     return result
 

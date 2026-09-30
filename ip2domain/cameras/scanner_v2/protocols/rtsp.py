@@ -327,6 +327,7 @@ _RTSP_BRAND_PATTERNS = [
     (r"d-link|dlink", "D-Link"),
     (r"digital watchdog|vmax", "Digital Watchdog"),
     (r"sharx", "Sharx"),
+    (r"trassir", "Trassir"),
     (r"embedded net dvr", "Hikvision"),
     (r"ipcam|ip camera|netcam", "Generic IPCam"),
     (r"nvr|dvr|streamer", "Generic DVR"),
@@ -440,6 +441,7 @@ async def probe_rtsp_direct(
         "open_port": 0,
         "brand": "",
         "credentials": {},
+        "auth_required": False,
     }
 
     ports_to_try = rtsp_ports or [554]
@@ -768,8 +770,21 @@ async def probe_rtsp_direct(
                     seen.add(u)
                     deduped.append(u)
 
-            result["rtsp_urls"] = deduped
-            result["success"] = len(deduped) > 0
+            if not deduped and is_rtsp:
+                # RTSP service is confirmed active on this port, but all tried streams require authentication.
+                # Do NOT discard the camera — keep standard candidate URLs for UI / brute-forcing.
+                auth_req_urls = []
+                for p in probe_paths[:8]:
+                    u_cand = f"rtsp://{ip}:{port}{p}"
+                    if u_cand not in auth_req_urls:
+                        auth_req_urls.append(u_cand)
+                result["rtsp_urls"] = auth_req_urls
+                result["success"] = True
+                result["auth_required"] = True
+            else:
+                result["rtsp_urls"] = deduped
+                result["success"] = len(deduped) > 0
+                result["auth_required"] = False
 
         finally:
             if writer:

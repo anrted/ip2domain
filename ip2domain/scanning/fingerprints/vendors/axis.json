@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "vendor": "Axis",
+  "product_family": "video",
+  "models": [],
+  "firmware_patterns": [],
+  "ports": [
+    554,
+    8554
+  ],
+  "rtsp_patterns": [
+    "/axis-media/media.amp?camera={channel}&videocodec={codec}"
+  ],
+  "http_patterns": [
+    "/axis-cgi/basicdeviceinfo.cgi"
+  ],
+  "onvif_patterns": [
+    "/onvif/device_service"
+  ],
+  "authentication": [
+    "basic",
+    "digest",
+    "wsse"
+  ],
+  "fingerprints": [
+    "axis"
+  ],
+  "channel_patterns": {
+    "start": 1,
+    "default_max": 16
+  },
+  "stream_patterns": {
+    "indices": [
+      0,
+      1
+    ],
+    "profiles": [
+      "main",
+      "sub"
+    ]
+  }
+}

