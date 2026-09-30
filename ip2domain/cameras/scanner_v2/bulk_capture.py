@@ -33,6 +33,7 @@ _V2_CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
 
 @dataclass
 class BulkCaptureProgress:
+    status: str = "idle"
     is_running: bool = False
     total_cameras: int = 0
     processed_cameras: int = 0
@@ -40,6 +41,7 @@ class BulkCaptureProgress:
     processed_streams: int = 0
     verified_streams: int = 0
     failed_streams: int = 0
+    unsupported_streams: int = 0
     current_ip: str = ""
     started_at: float = 0.0
     elapsed_seconds: int = 0
@@ -71,6 +73,8 @@ class BulkCaptureManager:
         max_streams_per_cam: int = 0,
         target_ips: Optional[List[str]] = None,
     ) -> dict:
+        if max_streams_per_cam < 0:
+            raise ValueError("max_streams_per_cam must be non-negative")
         async with self._lock:
             if self._progress.is_running:
                 return {
@@ -83,7 +87,7 @@ class BulkCaptureManager:
             safe_concurrency = max(1, min(concurrency, 3))
 
             self._progress = BulkCaptureProgress(
-                is_running=True,
+                status="running", is_running=True,
                 started_at=time.time(),
                 stop_requested=False,
             )
@@ -108,7 +112,28 @@ class BulkCaptureManager:
             if not self._progress.is_running:
                 return {"success": True, "message": "Процесс не запущен"}
             self._progress.stop_requested = True
+            self._progress.status = "stopping"
             return {"success": True, "message": "Остановка запрошена"}
+
+    @staticmethod
+    def _prepare_cameras(raw_cams, only_unverified, max_streams_per_cam):
+        prepared = []
+        for cam in raw_cams:
+            selected = []
+            seen = set()
+            for stream in cam.get("streams", []):
+                url = stream.get("url")
+                if not url or url in seen:
+                    continue
+                seen.add(url)
+                if only_unverified and stream.get("verified") and stream.get("screenshot") and _valid_frame(Path(stream["screenshot"])):
+                    continue
+                selected.append(stream)
+            if max_streams_per_cam > 0:
+                selected = selected[:max_streams_per_cam]
+            if selected:
+                prepared.append(dict(cam, streams=selected))
+        return prepared
 
     async def _run(
         self,
@@ -119,35 +144,18 @@ class BulkCaptureManager:
     ):
         try:
             # 1. Fetch cameras from database
-            raw_cams = storage.get_v2_results(limit=100000)
-            if target_ips:
+            raw_cams = await asyncio.to_thread(storage.get_v2_results, limit=0)
+            if target_ips is not None:
                 target_set = {str(ip).strip() for ip in target_ips}
                 raw_cams = [c for c in raw_cams if str(c.get("ip", "")).strip() in target_set]
 
-            cameras_to_process = []
-            for cam in raw_cams:
-                streams = cam.get("streams", [])
-                if not streams:
-                    continue
-
-                if only_unverified and all(
-                    s.get("verified") and s.get("screenshot") and _valid_frame(Path(s["screenshot"]))
-                    for s in streams
-                ):
-                    continue
-
-                cameras_to_process.append(cam)
-
-            # Prioritize cameras with RTSP / Snapshot streams
+            cameras_to_process = await asyncio.to_thread(
+                self._prepare_cameras, raw_cams, only_unverified, max_streams_per_cam)
             self._progress.total_cameras = len(cameras_to_process)
-            self._progress.total_streams = sum(
-                sum(not (only_unverified and s.get("verified") and s.get("screenshot") and _valid_frame(Path(s["screenshot"])))
-                    for s in (c.get("streams", [])[:max_streams_per_cam] if max_streams_per_cam > 0 else c.get("streams", [])))
-                for c in cameras_to_process
-            )
+            self._progress.total_streams = sum(len(c["streams"]) for c in cameras_to_process)
 
             if not cameras_to_process:
-                self._progress.is_running = False
+                self._progress.status = "completed"
                 return
 
             async def process_camera(cam: dict):
@@ -157,12 +165,9 @@ class BulkCaptureManager:
                 ip = str(cam.get("ip", "")).strip()
                 self._progress.current_ip = ip
                 camera = CameraResult.from_dict(cam)
-                selected = camera.streams[:max_streams_per_cam] if max_streams_per_cam > 0 else camera.streams
-                for stream in selected:
+                for stream in camera.streams:
                     if self._progress.stop_requested:
                         break
-                    if only_unverified and stream.verified and stream.screenshot_path and _valid_frame(Path(stream.screenshot_path)):
-                        continue
                     # A single-stream view keeps per-stream progress/save and all
                     # other endpoint metadata intact in the parent result.
                     single = CameraResult(ip=ip, streams=[stream], credentials=camera.credentials)
@@ -171,21 +176,28 @@ class BulkCaptureManager:
                     self._progress.processed_streams += 1
                     if stream.verified:
                         self._progress.verified_streams += 1
+                    elif stream.verification_status == "unsupported":
+                        self._progress.unsupported_streams += 1
                     else:
                         self._progress.failed_streams += 1
-                    updated = dict(cam, **camera.to_dict())
-                    storage.save_v2_result(updated)
+                    # Save just the changed stream; another request may have
+                    # refreshed metadata/other streams while this one was captured.
+                    await asyncio.to_thread(storage.update_v2_stream, ip, stream.to_dict())
 
                 self._progress.processed_cameras += 1
 
             await run_bounded(cameras_to_process, process_camera, concurrency,
                               lambda: self._progress.stop_requested)
 
+            self._progress.status = "cancelled" if self._progress.stop_requested else "completed"
         except asyncio.CancelledError:
+            self._progress.status = "cancelled"
+            self._progress.stop_requested = True
             logger.info("[BulkCapture] Task cancelled")
         except Exception as exc:
             logger.exception("[BulkCapture] Fatal error during bulk capture: %s", exc)
             self._progress.error = str(exc)
+            self._progress.status = "error"
         finally:
             self._progress.is_running = False
             self._progress.current_ip = ""

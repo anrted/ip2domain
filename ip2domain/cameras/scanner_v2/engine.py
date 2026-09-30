@@ -25,7 +25,7 @@ from .aggregation import merge_host_cameras, universal_observation_to_camera_res
 from .stage3_stream import verify_camera_streams
 from .protocols.discovery import run_local_discovery
 from ip2domain.scanning.runner import run_bounded
-from ip2domain.data.geo_city_db import geo_city_db
+from ip2domain.data.geo_city_db import geo_city_db, camera_geo_fields
 
 logger = logging.getLogger(__name__)
 
@@ -169,6 +169,21 @@ async def _capture_job_streams(job, capture_dir, storage):
 
     await run_bounded(job.results, capture, 3, job.is_cancelled)
     job.stage3_status = "cancelled" if job.is_cancelled() else "done"
+
+
+async def _resolve_job_geo(job, storage):
+    job.stage4_status = "running"
+    for cam in job.results:
+        if job.is_cancelled():
+            break
+        geo = await asyncio.to_thread(geo_city_db.find_by_ip, cam.ip)
+        fields = camera_geo_fields(geo or {})
+        for key, value in fields.items():
+            setattr(cam, key, value)
+        if storage:
+            storage.update_v2_geo(cam.ip, fields)
+        job.stage4_completed += 1
+    job.stage4_status = "cancelled" if job.is_cancelled() else "done"
 
 
 async def run_v2_scan_pipeline(
@@ -386,6 +401,12 @@ async def run_v2_scan_pipeline(
                     storage.mark_v2_job_status(job.job_id, "cancelled")
                 return
 
+            await _resolve_job_geo(job, storage)
+            if job.is_cancelled():
+                job.status = "cancelled"
+                if storage:
+                    storage.mark_v2_job_status(job.job_id, "cancelled")
+                return
             job.progress_pct = 100
             job.status = "completed"
             job.stage = f"Завершено: найдено {len(job.results)} камер"
@@ -604,44 +625,11 @@ async def run_v2_scan_pipeline(
                 f"({verified_count} с подтверждённым видео, {len(valid_cameras) - verified_count} без скриншота)"
             )
 
-        # ── Stage 4: Geolocation for Cameras with Preview ──────────────
-        if job.results:
-            job.stage4_status = "running"
-            cams_with_preview = [
-                cam for cam in job.results
-                if any(bool(getattr(s, "screenshot", None) or getattr(s, "verified", False)) for s in (cam.streams or []))
-            ]
-            if cams_with_preview:
-                job.stage = f"Stage 4: Определение городов ({len(cams_with_preview)} камер с превью)..."
-                job.add_log(f"[Stage 4] Определение гео-локации для {len(cams_with_preview)} камер с превью...")
-                geo_resolved = 0
-                for cam in cams_with_preview:
-                    if job.is_cancelled():
-                        break
-                    try:
-                        geo = geo_city_db.find_by_ip(cam.ip)
-                        if geo:
-                            cam.city = geo.get("city", "")
-                            cam.region = geo.get("region", "")
-                            cam.country_code = geo.get("country_code", "")
-                            cam.isp = geo.get("isp", "")
-                            if cam.city:
-                                geo_resolved += 1
-                                job.add_log(f"[Stage 4] 📍 {cam.ip} → {cam.city} ({cam.region}) [{cam.isp}]")
-                    except Exception as g_exc:
-                        logger.debug("[v2 Stage4] Geo lookup error for %s: %s", cam.ip, g_exc)
-
-                    if storage:
-                        try:
-                            storage.save_v2_result(cam.to_dict())
-                        except Exception:
-                            pass
-
-                job.stage4_completed = len(cams_with_preview)
-                job.add_log(f"[Stage 4] Завершено: определен город для {geo_resolved} из {len(cams_with_preview)} камер с превью")
-            else:
-                job.stage4_completed = 0
-            job.stage4_status = "done"
+        # Geolocation is independent of frame availability.
+        await _resolve_job_geo(job, storage)
+        if job.is_cancelled():
+            job.status = "cancelled"
+            return
 
         # ── Done ───────────────────────────────────────────────────────
         job.status = "completed"

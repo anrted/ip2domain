@@ -640,7 +640,10 @@ function v2UpdateResultsCount(filteredCount) {
 window.v2UpdateResultsCount = v2UpdateResultsCount;
 
 async function v2LoadStoredResults(force = false) {
-    if (window.V2State.isLoadingResults) return;
+    if (window.V2State.isLoadingResults) {
+        if (force) window.V2State.reloadResultsAfterLoad = true;
+        return;
+    }
     if (!force && window.V2State.resultsLoaded && (window.V2State.results || []).length > 0) {
         v2RenderResults();
         return;
@@ -664,6 +667,10 @@ async function v2LoadStoredResults(force = false) {
         console.error('[v2] Error loading stored results:', e);
     } finally {
         window.V2State.isLoadingResults = false;
+        if (window.V2State.reloadResultsAfterLoad) {
+            window.V2State.reloadResultsAfterLoad = false;
+            v2LoadStoredResults(true);
+        }
     }
 }
 window.v2LoadStoredResults = v2LoadStoredResults;
@@ -1104,12 +1111,17 @@ function v2RenderCameraCard(cam) {
     </button>`;
 
     let locationHtml = '';
-    if (cam.city) {
-        const flag = cam.country_code === 'BY' ? '🇧🇾' : '🇷🇺';
-        locationHtml = `<div class="v2-camera-location" onclick="v2SetGeoFilter('city:${_esc(cam.city)}')" title="Фильтровать по городу ${_esc(cam.city)}${cam.region ? ' • ' + _esc(cam.region) : ''}${cam.isp ? ' • ' + _esc(cam.isp) : ''}">
-            <span class="v2-geo-pin">📍</span>
-            <strong class="v2-geo-city">${flag} ${_esc(cam.city)}</strong>
-            ${cam.region && cam.region !== cam.city ? `<span class="v2-geo-region">${_esc(cam.region)}</span>` : ''}
+    if (cam.city || cam.region || cam.country_code) {
+        const flag = cam.country_code === 'BY' ? '🇧🇾' : cam.country_code === 'RU' ? '🇷🇺' : '';
+        const country = cam.country_code === 'RU' ? 'Россия' : cam.country_code === 'BY' ? 'Беларусь' : cam.country_code;
+        const label = cam.city || `${cam.region || country} · город не определён`;
+        const filter = cam.city ? `city:${cam.city}` : cam.region ? `region:${cam.region}` : `country:${cam.country_code}`;
+        const accuracy = cam.geo_accuracy_radius_km != null ? ` · радиус оценки ${cam.geo_accuracy_radius_km} км` : '';
+        const title = `Оценка местоположения по IP${accuracy}${cam.geo_database_date ? ' · база от ' + cam.geo_database_date : ''}`;
+        locationHtml = `<div class="v2-camera-location" onclick="v2SetGeoFilter('${_esc(filter)}')" title="${_esc(title)}">
+            <span class="v2-geo-pin">📍</span><strong class="v2-geo-city">${flag} ${_esc(label)}</strong>
+            ${cam.city && cam.region && cam.region !== cam.city ? `<span class="v2-geo-region">${_esc(cam.region)}</span>` : ''}
+            <span class="v2-geo-region">GeoIP${_esc(accuracy)}</span>
         </div>`;
     }
 
@@ -1303,15 +1315,19 @@ async function v2CapturePreview(ip, event) {
         }
 
         const camObj = (window.V2State.results || []).find(c => c.ip === ip);
-        if (camObj && !camObj.city) {
+        if (camObj && !camObj.geo_source) {
             fetch(`/api/geo/lookup?ip=${encodeURIComponent(ip)}`)
                 .then(r => r.json())
                 .then(j => {
-                    if (j.found && j.data && j.data.city) {
-                        camObj.city = j.data.city;
+                    if (j.found && j.data) {
+                        camObj.city = j.data.city || '';
                         camObj.region = j.data.region || '';
                         camObj.country_code = j.data.country_code || '';
                         camObj.isp = j.data.isp || '';
+                        camObj.geo_source = j.data.source || j.source || '';
+                        camObj.geo_precision = j.data.precision || 'unknown';
+                        camObj.geo_accuracy_radius_km = j.data.accuracy_radius_km;
+                        camObj.geo_database_date = j.data.database_date || '';
                         v2RenderResults();
                     }
                 }).catch(() => {});
@@ -1339,6 +1355,86 @@ window.v2CapturePreview = v2CapturePreview;
 // ════════════════════════════════════════════════════════════════
 
 // ── Camera Scanner v2: Stream Modal & Video Player Dialog ──────────────
+
+if (typeof window._esc !== 'function') {
+    window._esc = function(str) {
+        if (str == null) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    };
+}
+if (typeof window._protoBadgeClass !== 'function') {
+    window._protoBadgeClass = function(p) {
+        if (!p) return 'generic';
+        p = p.toLowerCase();
+        if (p.includes('onvif')) return 'onvif';
+        if (p.includes('hikvision')) return 'hikvision';
+        if (p.includes('dahua')) return 'dahua';
+        if (p.includes('axis')) return 'axis';
+        if (p.includes('hls')) return 'hls';
+        if (p.includes('mjpeg')) return 'mjpeg';
+        if (p.includes('rtmp')) return 'rtmp';
+        if (p.includes('rtsp')) return 'rtsp';
+        return 'generic';
+    };
+}
+if (typeof window.v2CopyUrl !== 'function') {
+    window.v2CopyUrl = function(url) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(url).then(() => {
+                _showStreamToast('✓ URL потока скопирован');
+            }).catch(() => _fallbackCopy(url));
+        } else {
+            _fallbackCopy(url);
+        }
+        function _fallbackCopy(text) {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            ta.remove();
+            _showStreamToast('✓ URL скопирован');
+        }
+        function _showStreamToast(msg) {
+            const toast = document.createElement('div');
+            toast.textContent = msg;
+            toast.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:rgba(16,185,129,0.95);color:#fff;padding:8px 16px;border-radius:8px;font-size:13px;z-index:999999;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 2500);
+        }
+    };
+}
+if (typeof window.v2AddSpecificStreamToGo2rtc !== 'function') {
+    window.v2AddSpecificStreamToGo2rtc = async function(ip, streamUrl, channelIdx) {
+        const safeIp = ip.replace(/\./g, '_');
+        const streamName = `v2_${safeIp}_ch${channelIdx}`;
+        try {
+            const resp = await fetch("/api/go2rtc/streams", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    name: streamName,
+                    url: [streamUrl, `ffmpeg:${streamUrl}#video=copy`]
+                })
+            });
+            if (resp.ok) {
+                alert(`Поток #${channelIdx} (${streamName}) успешно добавлен в go2rtc!`);
+            } else {
+                const data = await resp.json().catch(() => ({}));
+                alert('Ошибка добавления: ' + (data.detail || resp.statusText));
+            }
+        } catch (e) {
+            alert('Ошибка сети: ' + e.message);
+        }
+    };
+}
 
 function v2OpenStreamModal(ip) {
     const cam = (window.V2State.results || []).find(c => c.ip === ip);
@@ -1524,6 +1620,15 @@ async function v2OpenStreamPlayer(srcUrl, camName, ip, currentIdx = 0) {
                 <button type="button" style="background:none; border:none; color:#94a3b8; font-size:1.4rem; cursor:pointer; padding:0 4px; line-height:1;" onclick="document.getElementById('v2-player-dialog').close()" aria-label="Закрыть">×</button>
             </div>
         </div>
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.4rem 1.2rem; background: rgba(10,14,26,0.9); border-bottom: 1px solid rgba(255,255,255,0.06); font-size: 0.75rem;">
+            <div style="display: flex; align-items: center; gap: 0.4rem;">
+                <span style="color: #94a3b8;">🔒 Авторизация потока:</span>
+                <input type="text" id="v2-player-user-input" placeholder="Логин (admin)" value="${_esc(cam?.credentials?.user || '')}" style="background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); color: #fff; padding: 3px 8px; border-radius: 4px; font-size: 0.72rem; width: 100px;">
+                <input type="password" id="v2-player-pass-input" placeholder="Пароль" value="${_esc(cam?.credentials?.password || '')}" style="background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); color: #fff; padding: 3px 8px; border-radius: 4px; font-size: 0.72rem; width: 110px;">
+                <button type="button" class="btn btn-small" style="font-size: 0.72rem; padding: 3px 10px; background: rgba(99,102,241,0.7); color: #fff; border: 1px solid #818cf8; border-radius: 4px; cursor: pointer; font-weight: 600;" onclick="v2ApplyCredentialsAndReload('${_esc(ip)}', '${_esc(srcUrl)}', '${_esc(camName)}', ${currentIdx})">▶ Воспроизвести с паролем</button>
+            </div>
+            <span style="color: #64748b; font-size: 0.7rem;">(Для Hikvision/HiWatch логин обычно admin)</span>
+        </div>
         <div style="position: relative; width: 100%; aspect-ratio: 16/9; background: #000; display: flex; align-items: center; justify-content: center; overflow: hidden;">
             <div id="v2-modal-loader" style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.75rem; color: #cbd5e1;">
                 <span class="v2-spinner" style="width: 32px; height: 32px; border-width:3px; border-top-color:#6366f1;"></span>
@@ -1653,6 +1758,17 @@ async function v2OpenStreamPlayer(srcUrl, camName, ip, currentIdx = 0) {
     }
 }
 window.v2OpenStreamPlayer = v2OpenStreamPlayer;
+
+function v2ApplyCredentialsAndReload(ip, srcUrl, camName, currentIdx) {
+    const u = document.getElementById('v2-player-user-input')?.value.trim() || '';
+    const p = document.getElementById('v2-player-pass-input')?.value || '';
+    const cam = (window.V2State.results || []).find(c => c.ip === ip);
+    if (cam) {
+        cam.credentials = { user: u, password: p };
+    }
+    v2OpenStreamPlayer(srcUrl, camName, ip, currentIdx);
+}
+window.v2ApplyCredentialsAndReload = v2ApplyCredentialsAndReload;
 
 // ── SpRecord Audio Player Dialog & Dynamic Recordings ─────────────────────
 
@@ -2219,202 +2335,136 @@ async function v2ClearResults() {
 window.v2ClearResults = v2ClearResults;
 
 async function v2ResolveAllGeo(btn) {
-    if (!window.V2State.results || !window.V2State.results.length) {
-        alert('Сначала выполните сканирование или загрузите список камер.');
-        return;
-    }
-
-    const origText = btn ? btn.textContent : '';
-    if (btn) {
-        btn.disabled = true;
-        btn.textContent = '⏳ Определение...';
-    }
-
-    let updatedCount = 0;
-
-    // 1. Try server-side endpoint first
+    const origText = btn?.textContent || '';
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Определение...'; }
     try {
         const resp = await fetch('/api/v2/resolve_geo', { method: 'POST' });
-        if (resp.ok) {
-            const data = await resp.json();
-            if (data.results && data.results.length) {
-                window.V2State.results = data.results;
-                if (window.v2RenderResults) v2RenderResults();
-                _showV2Toast(`✓ Геолокация определена для ${data.updated_count || data.results.length} камер!`);
-                if (btn) {
-                    btn.disabled = false;
-                    btn.textContent = origText;
-                }
-                return;
-            }
-        }
-    } catch (e) {
-        console.warn('[v2] Server geo endpoint unavailable, using live lookup fallback:', e);
-    }
-
-    // 2. Client-side parallel batch resolution via /api/geo/lookup?ip=...
-    const cams = window.V2State.results;
-    const batchSize = 10;
-    for (let i = 0; i < cams.length; i += batchSize) {
-        const chunk = cams.slice(i, i + batchSize);
-        await Promise.all(chunk.map(async (cam) => {
-            try {
-                const r = await fetch(`/api/geo/lookup?ip=${encodeURIComponent(cam.ip)}`);
-                if (r.ok) {
-                    const j = await r.json();
-                    if (j.found && j.data) {
-                        cam.city = j.data.city || '';
-                        cam.region = j.data.region || '';
-                        cam.country_code = j.data.country_code || '';
-                        cam.isp = j.data.isp || '';
-                        if (cam.city) updatedCount++;
-                    }
-                }
-            } catch (err) {}
-        }));
-        if (window.v2RenderResults) v2RenderResults();
-    }
-
-    _showV2Toast(`✓ Геолокация определена для ${updatedCount} из ${cams.length} камер!`);
-    if (btn) {
-        btn.disabled = false;
-        btn.textContent = origText;
+        if (!resp.ok) throw new Error('Не удалось обновить геопозицию');
+        const data = await resp.json();
+        if (!data.success) throw new Error('Ошибка определения геопозиции');
+        window.V2State.results = data.results || [];
+        window.v2RenderResults?.();
+        window.v2UpdateResultsCount?.();
+        const counts = data.precision_counts || {};
+        _showV2Toast(`Город определён: ${counts.city || 0}; только регион: ${counts.region || 0}; только страна: ${counts.country || 0}; нет данных: ${counts.unknown || 0}`);
+    } catch (error) {
+        _showV2Toast(error.message);
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = origText; }
     }
 }
 window.v2ResolveAllGeo = v2ResolveAllGeo;
 
 let _bulkCaptureTimer = null;
+let _bulkCapturePending = false;
+let _bulkCapturePollVersion = 0;
+
+function _resetBulkCaptureButton(btn) {
+    const b = btn || document.getElementById('v2-btn-bulk-capture');
+    if (!b) return;
+    b.disabled = false;
+    b.textContent = '📸 Получить все превью';
+    b.style.color = '#34d399';
+    b.style.borderColor = 'rgba(16,185,129,0.45)';
+    b.style.background = 'rgba(16,185,129,0.2)';
+}
 
 async function v2ToggleBulkCapture(btn) {
+    if (_bulkCapturePending) return;
     try {
-        const statusResp = await fetch('/api/v2/bulk_capture/status').then(r => r.json()).catch(() => ({}));
-        if (statusResp && statusResp.is_running) {
-            await v2StopBulkCapture();
-            return;
+        const resp = await fetch('/api/v2/bulk_capture/status');
+        if (!resp.ok) throw new Error('Статус проверки недоступен');
+        const status = await resp.json();
+        if (status.is_running) { await v2StopBulkCapture(); return; }
+        if (confirm('Получить недостающие превью всех потоков из базы? Уже сохранённые проверенные кадры будут пропущены. Одновременно обрабатываются не более двух потоков.')) {
+            await v2StartBulkCapture(btn);
         }
-    } catch (e) {}
-
-    if (!confirm('Запустить массовую проверку потоков и получение превью для камер?\n\nПроцесс выполняется в фоновом режиме с безопасным ограничением (2 потока) и не перегружает сервер.')) {
-        return;
-    }
-
-    await v2StartBulkCapture(btn);
+    } catch (error) { _showV2Toast(error.message); }
 }
 window.v2ToggleBulkCapture = v2ToggleBulkCapture;
 
 async function v2StartBulkCapture(btn) {
-    const bar = document.getElementById('v2-bulk-capture-status');
-    const textEl = document.getElementById('v2-bulk-capture-text');
+    if (_bulkCapturePending) return;
+    _bulkCapturePending = true;
     const b = btn || document.getElementById('v2-btn-bulk-capture');
-
-    if (b) {
-        b.textContent = '⏹ Остановить';
-        b.style.color = '#f87171';
-        b.style.borderColor = 'rgba(239,68,68,0.5)';
-        b.style.background = 'rgba(239,68,68,0.2)';
-    }
-    if (bar) bar.style.display = 'flex';
-    if (textEl) textEl.textContent = 'Запуск фонового процесса проверки...';
-
+    if (b) { b.disabled = true; b.textContent = '⏳ Запуск...'; }
     try {
         const resp = await fetch('/api/v2/bulk_capture/start', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                concurrency: 2,
-                only_unverified: true,
-                max_streams_per_cam: 0,
-            })
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({concurrency: 2, only_unverified: true, max_streams_per_cam: 0})
         });
+        if (!resp.ok) throw new Error(`Ошибка запуска (${resp.status})`);
         const data = await resp.json();
-        if (!data.success && data.message) {
-            _showV2Toast(data.message);
-        } else {
-            _showV2Toast('✓ Фоновый захват превью запущен');
-        }
-    } catch (e) {
-        console.error('[BulkCapture] Failed to start:', e);
-        _showV2Toast('Ошибка запуска фонового процесса');
+        if (!data.success && !data.status?.is_running) throw new Error(data.message || 'Захват превью не запущен');
+        _showV2Toast(data.message || 'Фоновый захват превью запущен');
+        _startBulkCapturePolling();
+    } catch (error) {
+        _resetBulkCaptureButton(b);
+        _showV2Toast(error.message);
+    } finally {
+        _bulkCapturePending = false;
+        if (b) b.disabled = false;
     }
-
-    _startBulkCapturePolling();
 }
 window.v2StartBulkCapture = v2StartBulkCapture;
 
 async function v2StopBulkCapture() {
     try {
-        await fetch('/api/v2/bulk_capture/stop', { method: 'POST' });
-        _showV2Toast('Остановка процесса проверки...');
-    } catch (e) {
-        console.error('[BulkCapture] Failed to stop:', e);
-    }
+        const resp = await fetch('/api/v2/bulk_capture/stop', { method: 'POST' });
+        if (!resp.ok) throw new Error('Не удалось остановить проверку');
+        _showV2Toast('Остановка после текущего потока...');
+        _startBulkCapturePolling();
+    } catch (error) { _showV2Toast(error.message); }
 }
 window.v2StopBulkCapture = v2StopBulkCapture;
 
 function _startBulkCapturePolling() {
     if (_bulkCaptureTimer) clearInterval(_bulkCaptureTimer);
-    let lastVerifiedCount = 0;
-
+    const version = ++_bulkCapturePollVersion;
+    let lastProcessed = -1;
+    let pending = false;
     const poll = async () => {
+        if (pending) return;
+        pending = true;
         try {
             const resp = await fetch('/api/v2/bulk_capture/status');
-            if (!resp.ok) return;
+            if (!resp.ok) throw new Error('Не удалось получить статус проверки');
             const s = await resp.json();
-
+            if (version !== _bulkCapturePollVersion) return;
             const bar = document.getElementById('v2-bulk-capture-status');
-            const textEl = document.getElementById('v2-bulk-capture-text');
-            const statsEl = document.getElementById('v2-bulk-capture-stats');
+            const text = document.getElementById('v2-bulk-capture-text');
+            const stats = document.getElementById('v2-bulk-capture-stats');
             const btn = document.getElementById('v2-btn-bulk-capture');
-
+            if (bar) bar.style.display = 'flex';
+            if (stats) stats.textContent = `✓ ${s.verified_streams || 0} с кадром · ${s.failed_streams || 0} без кадра · ${s.unsupported_streams || 0} не поддерживаются`;
             if (s.is_running) {
-                if (bar) bar.style.display = 'flex';
-                if (btn) {
-                    btn.textContent = `⏹ Остановить (${s.processed_cameras}/${s.total_cameras})`;
-                    btn.style.color = '#f87171';
-                    btn.style.borderColor = 'rgba(239,68,68,0.5)';
-                    btn.style.background = 'rgba(239,68,68,0.2)';
-                }
-                if (textEl) {
-                    const ipLabel = s.current_ip ? ` • ${s.current_ip}` : '';
-                    textEl.textContent = `Камеры: ${s.processed_cameras} / ${s.total_cameras} (потоков: ${s.processed_streams}/${s.total_streams})${ipLabel}`;
-                }
-                if (statsEl) {
-                    statsEl.textContent = `✓ ${s.verified_streams} живых`;
-                }
-
-                // If new verified streams discovered, reload list in background
-                if (s.verified_streams > lastVerifiedCount) {
-                    lastVerifiedCount = s.verified_streams;
-                    if (window.v2LoadResults) {
-                        window.v2LoadResults(true);
-                    }
-                }
+                if (btn) btn.textContent = s.stop_requested ? '⏳ Остановка...' : `⏹ Остановить (${s.processed_streams}/${s.total_streams})`;
+                if (text) text.textContent = `IP: ${s.processed_cameras}/${s.total_cameras}; потоки: ${s.processed_streams}/${s.total_streams}`;
             } else {
                 clearInterval(_bulkCaptureTimer);
                 _bulkCaptureTimer = null;
-
-                if (bar) bar.style.display = 'none';
-                if (btn) {
-                    btn.textContent = '📸 Получить все превью';
-                    btn.style.color = '#34d399';
-                    btn.style.borderColor = 'rgba(16,185,129,0.45)';
-                    btn.style.background = 'rgba(16,185,129,0.2)';
-                }
-
-                if (s.processed_cameras > 0) {
-                    _showV2Toast(`✓ Обработка завершена! Проверено: ${s.processed_cameras}, живых потоков: ${s.verified_streams}`);
-                    if (window.v2LoadResults) {
-                        window.v2LoadResults(true);
-                    }
-                }
+                _resetBulkCaptureButton(btn);
+                const message = s.error || s.status === 'error'
+                    ? `Ошибка проверки: ${s.error || 'неизвестная ошибка'}`
+                    : s.stop_requested || s.status === 'cancelled'
+                        ? `Проверка остановлена: ${s.processed_streams}/${s.total_streams} потоков`
+                        : s.total_streams === 0
+                            ? 'Нет потоков с недостающими превью'
+                            : `Проверка завершена: ${s.processed_streams}/${s.total_streams} потоков, кадров: ${s.verified_streams}`;
+                if (text) text.textContent = message;
+                _showV2Toast(message);
             }
-        } catch (err) {
-            console.warn('[BulkCapture] Poll error:', err);
-        }
+            if (s.processed_streams !== lastProcessed || !s.is_running) {
+                lastProcessed = s.processed_streams;
+                await window.v2LoadStoredResults?.(true);
+            }
+        } catch (error) {
+            const text = document.getElementById('v2-bulk-capture-text');
+            if (text) text.textContent = error.message;
+        } finally { pending = false; }
     };
-
-    poll();
     _bulkCaptureTimer = setInterval(poll, 2000);
+    poll();
 }
 
 // Check on page load if bulk capture was already running in background

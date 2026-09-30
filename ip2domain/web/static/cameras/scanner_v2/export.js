@@ -341,202 +341,136 @@ async function v2ClearResults() {
 window.v2ClearResults = v2ClearResults;
 
 async function v2ResolveAllGeo(btn) {
-    if (!window.V2State.results || !window.V2State.results.length) {
-        alert('Сначала выполните сканирование или загрузите список камер.');
-        return;
-    }
-
-    const origText = btn ? btn.textContent : '';
-    if (btn) {
-        btn.disabled = true;
-        btn.textContent = '⏳ Определение...';
-    }
-
-    let updatedCount = 0;
-
-    // 1. Try server-side endpoint first
+    const origText = btn?.textContent || '';
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Определение...'; }
     try {
         const resp = await fetch('/api/v2/resolve_geo', { method: 'POST' });
-        if (resp.ok) {
-            const data = await resp.json();
-            if (data.results && data.results.length) {
-                window.V2State.results = data.results;
-                if (window.v2RenderResults) v2RenderResults();
-                _showV2Toast(`✓ Геолокация определена для ${data.updated_count || data.results.length} камер!`);
-                if (btn) {
-                    btn.disabled = false;
-                    btn.textContent = origText;
-                }
-                return;
-            }
-        }
-    } catch (e) {
-        console.warn('[v2] Server geo endpoint unavailable, using live lookup fallback:', e);
-    }
-
-    // 2. Client-side parallel batch resolution via /api/geo/lookup?ip=...
-    const cams = window.V2State.results;
-    const batchSize = 10;
-    for (let i = 0; i < cams.length; i += batchSize) {
-        const chunk = cams.slice(i, i + batchSize);
-        await Promise.all(chunk.map(async (cam) => {
-            try {
-                const r = await fetch(`/api/geo/lookup?ip=${encodeURIComponent(cam.ip)}`);
-                if (r.ok) {
-                    const j = await r.json();
-                    if (j.found && j.data) {
-                        cam.city = j.data.city || '';
-                        cam.region = j.data.region || '';
-                        cam.country_code = j.data.country_code || '';
-                        cam.isp = j.data.isp || '';
-                        if (cam.city) updatedCount++;
-                    }
-                }
-            } catch (err) {}
-        }));
-        if (window.v2RenderResults) v2RenderResults();
-    }
-
-    _showV2Toast(`✓ Геолокация определена для ${updatedCount} из ${cams.length} камер!`);
-    if (btn) {
-        btn.disabled = false;
-        btn.textContent = origText;
+        if (!resp.ok) throw new Error('Не удалось обновить геопозицию');
+        const data = await resp.json();
+        if (!data.success) throw new Error('Ошибка определения геопозиции');
+        window.V2State.results = data.results || [];
+        window.v2RenderResults?.();
+        window.v2UpdateResultsCount?.();
+        const counts = data.precision_counts || {};
+        _showV2Toast(`Город определён: ${counts.city || 0}; только регион: ${counts.region || 0}; только страна: ${counts.country || 0}; нет данных: ${counts.unknown || 0}`);
+    } catch (error) {
+        _showV2Toast(error.message);
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = origText; }
     }
 }
 window.v2ResolveAllGeo = v2ResolveAllGeo;
 
 let _bulkCaptureTimer = null;
+let _bulkCapturePending = false;
+let _bulkCapturePollVersion = 0;
+
+function _resetBulkCaptureButton(btn) {
+    const b = btn || document.getElementById('v2-btn-bulk-capture');
+    if (!b) return;
+    b.disabled = false;
+    b.textContent = '📸 Получить все превью';
+    b.style.color = '#34d399';
+    b.style.borderColor = 'rgba(16,185,129,0.45)';
+    b.style.background = 'rgba(16,185,129,0.2)';
+}
 
 async function v2ToggleBulkCapture(btn) {
+    if (_bulkCapturePending) return;
     try {
-        const statusResp = await fetch('/api/v2/bulk_capture/status').then(r => r.json()).catch(() => ({}));
-        if (statusResp && statusResp.is_running) {
-            await v2StopBulkCapture();
-            return;
+        const resp = await fetch('/api/v2/bulk_capture/status');
+        if (!resp.ok) throw new Error('Статус проверки недоступен');
+        const status = await resp.json();
+        if (status.is_running) { await v2StopBulkCapture(); return; }
+        if (confirm('Получить недостающие превью всех потоков из базы? Уже сохранённые проверенные кадры будут пропущены. Одновременно обрабатываются не более двух потоков.')) {
+            await v2StartBulkCapture(btn);
         }
-    } catch (e) {}
-
-    if (!confirm('Запустить массовую проверку потоков и получение превью для камер?\n\nПроцесс выполняется в фоновом режиме с безопасным ограничением (2 потока) и не перегружает сервер.')) {
-        return;
-    }
-
-    await v2StartBulkCapture(btn);
+    } catch (error) { _showV2Toast(error.message); }
 }
 window.v2ToggleBulkCapture = v2ToggleBulkCapture;
 
 async function v2StartBulkCapture(btn) {
-    const bar = document.getElementById('v2-bulk-capture-status');
-    const textEl = document.getElementById('v2-bulk-capture-text');
+    if (_bulkCapturePending) return;
+    _bulkCapturePending = true;
     const b = btn || document.getElementById('v2-btn-bulk-capture');
-
-    if (b) {
-        b.textContent = '⏹ Остановить';
-        b.style.color = '#f87171';
-        b.style.borderColor = 'rgba(239,68,68,0.5)';
-        b.style.background = 'rgba(239,68,68,0.2)';
-    }
-    if (bar) bar.style.display = 'flex';
-    if (textEl) textEl.textContent = 'Запуск фонового процесса проверки...';
-
+    if (b) { b.disabled = true; b.textContent = '⏳ Запуск...'; }
     try {
         const resp = await fetch('/api/v2/bulk_capture/start', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                concurrency: 2,
-                only_unverified: true,
-                max_streams_per_cam: 0,
-            })
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({concurrency: 2, only_unverified: true, max_streams_per_cam: 0})
         });
+        if (!resp.ok) throw new Error(`Ошибка запуска (${resp.status})`);
         const data = await resp.json();
-        if (!data.success && data.message) {
-            _showV2Toast(data.message);
-        } else {
-            _showV2Toast('✓ Фоновый захват превью запущен');
-        }
-    } catch (e) {
-        console.error('[BulkCapture] Failed to start:', e);
-        _showV2Toast('Ошибка запуска фонового процесса');
+        if (!data.success && !data.status?.is_running) throw new Error(data.message || 'Захват превью не запущен');
+        _showV2Toast(data.message || 'Фоновый захват превью запущен');
+        _startBulkCapturePolling();
+    } catch (error) {
+        _resetBulkCaptureButton(b);
+        _showV2Toast(error.message);
+    } finally {
+        _bulkCapturePending = false;
+        if (b) b.disabled = false;
     }
-
-    _startBulkCapturePolling();
 }
 window.v2StartBulkCapture = v2StartBulkCapture;
 
 async function v2StopBulkCapture() {
     try {
-        await fetch('/api/v2/bulk_capture/stop', { method: 'POST' });
-        _showV2Toast('Остановка процесса проверки...');
-    } catch (e) {
-        console.error('[BulkCapture] Failed to stop:', e);
-    }
+        const resp = await fetch('/api/v2/bulk_capture/stop', { method: 'POST' });
+        if (!resp.ok) throw new Error('Не удалось остановить проверку');
+        _showV2Toast('Остановка после текущего потока...');
+        _startBulkCapturePolling();
+    } catch (error) { _showV2Toast(error.message); }
 }
 window.v2StopBulkCapture = v2StopBulkCapture;
 
 function _startBulkCapturePolling() {
     if (_bulkCaptureTimer) clearInterval(_bulkCaptureTimer);
-    let lastVerifiedCount = 0;
-
+    const version = ++_bulkCapturePollVersion;
+    let lastProcessed = -1;
+    let pending = false;
     const poll = async () => {
+        if (pending) return;
+        pending = true;
         try {
             const resp = await fetch('/api/v2/bulk_capture/status');
-            if (!resp.ok) return;
+            if (!resp.ok) throw new Error('Не удалось получить статус проверки');
             const s = await resp.json();
-
+            if (version !== _bulkCapturePollVersion) return;
             const bar = document.getElementById('v2-bulk-capture-status');
-            const textEl = document.getElementById('v2-bulk-capture-text');
-            const statsEl = document.getElementById('v2-bulk-capture-stats');
+            const text = document.getElementById('v2-bulk-capture-text');
+            const stats = document.getElementById('v2-bulk-capture-stats');
             const btn = document.getElementById('v2-btn-bulk-capture');
-
+            if (bar) bar.style.display = 'flex';
+            if (stats) stats.textContent = `✓ ${s.verified_streams || 0} с кадром · ${s.failed_streams || 0} без кадра · ${s.unsupported_streams || 0} не поддерживаются`;
             if (s.is_running) {
-                if (bar) bar.style.display = 'flex';
-                if (btn) {
-                    btn.textContent = `⏹ Остановить (${s.processed_cameras}/${s.total_cameras})`;
-                    btn.style.color = '#f87171';
-                    btn.style.borderColor = 'rgba(239,68,68,0.5)';
-                    btn.style.background = 'rgba(239,68,68,0.2)';
-                }
-                if (textEl) {
-                    const ipLabel = s.current_ip ? ` • ${s.current_ip}` : '';
-                    textEl.textContent = `Камеры: ${s.processed_cameras} / ${s.total_cameras} (потоков: ${s.processed_streams}/${s.total_streams})${ipLabel}`;
-                }
-                if (statsEl) {
-                    statsEl.textContent = `✓ ${s.verified_streams} живых`;
-                }
-
-                // If new verified streams discovered, reload list in background
-                if (s.verified_streams > lastVerifiedCount) {
-                    lastVerifiedCount = s.verified_streams;
-                    if (window.v2LoadResults) {
-                        window.v2LoadResults(true);
-                    }
-                }
+                if (btn) btn.textContent = s.stop_requested ? '⏳ Остановка...' : `⏹ Остановить (${s.processed_streams}/${s.total_streams})`;
+                if (text) text.textContent = `IP: ${s.processed_cameras}/${s.total_cameras}; потоки: ${s.processed_streams}/${s.total_streams}`;
             } else {
                 clearInterval(_bulkCaptureTimer);
                 _bulkCaptureTimer = null;
-
-                if (bar) bar.style.display = 'none';
-                if (btn) {
-                    btn.textContent = '📸 Получить все превью';
-                    btn.style.color = '#34d399';
-                    btn.style.borderColor = 'rgba(16,185,129,0.45)';
-                    btn.style.background = 'rgba(16,185,129,0.2)';
-                }
-
-                if (s.processed_cameras > 0) {
-                    _showV2Toast(`✓ Обработка завершена! Проверено: ${s.processed_cameras}, живых потоков: ${s.verified_streams}`);
-                    if (window.v2LoadResults) {
-                        window.v2LoadResults(true);
-                    }
-                }
+                _resetBulkCaptureButton(btn);
+                const message = s.error || s.status === 'error'
+                    ? `Ошибка проверки: ${s.error || 'неизвестная ошибка'}`
+                    : s.stop_requested || s.status === 'cancelled'
+                        ? `Проверка остановлена: ${s.processed_streams}/${s.total_streams} потоков`
+                        : s.total_streams === 0
+                            ? 'Нет потоков с недостающими превью'
+                            : `Проверка завершена: ${s.processed_streams}/${s.total_streams} потоков, кадров: ${s.verified_streams}`;
+                if (text) text.textContent = message;
+                _showV2Toast(message);
             }
-        } catch (err) {
-            console.warn('[BulkCapture] Poll error:', err);
-        }
+            if (s.processed_streams !== lastProcessed || !s.is_running) {
+                lastProcessed = s.processed_streams;
+                await window.v2LoadStoredResults?.(true);
+            }
+        } catch (error) {
+            const text = document.getElementById('v2-bulk-capture-text');
+            if (text) text.textContent = error.message;
+        } finally { pending = false; }
     };
-
-    poll();
     _bulkCaptureTimer = setInterval(poll, 2000);
+    poll();
 }
 
 // Check on page load if bulk capture was already running in background

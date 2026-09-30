@@ -507,8 +507,8 @@
             dom.lookupResult.innerHTML = `
                 <div class="geo-lookup-card">
                     <div class="geo-lookup-header">
-                        <h4>${flag} • ${_esc(d.city) || 'Неизвестно'}</h4>
-                        <span class="geo-source-tag">${json.source === 'local_db' ? 'GeoLite2 РФ/РБ' : 'Online GeoIP'}</span>
+                        <h4>${flag} • ${_esc(d.city) || 'Город не определён'}</h4>
+                        <span class="geo-source-tag">${json.source === 'geolite2_city' ? 'GeoLite2 City' : json.source === 'local_db' ? 'Локальный индекс подсетей' : 'Online GeoIP'}</span>
                     </div>
                     <div class="geo-lookup-grid">
                         <div><strong>Подсеть/CIDR:</strong> <code>${_esc(d.cidr)}</code></div>
@@ -516,10 +516,11 @@
                         <div><strong>Провайдер (ISP):</strong> ${_esc(d.isp) || '—'}</div>
                         <div><strong>ASN:</strong> <a href="https://bgp.he.net/${encodeURIComponent(d.asn || '')}" target="_blank" class="geo-asn-link">${_esc(d.asn) || '—'}</a></div>
                         <div><strong>Организация:</strong> ${_esc(d.org) || '—'}</div>
-                        <div><strong>Координаты:</strong> ${d.lat ? `${_esc(d.lat)}, ${_esc(d.lon)}` : '—'}</div>
+                        <div><strong>Оценка координат GeoIP:</strong> ${d.lat != null && d.lon != null ? `${_esc(d.lat)}, ${_esc(d.lon)}` : '—'}</div>
                     </div>
+                    <div>Точность: ${d.accuracy_radius_km != null ? 'радиус ' + _esc(d.accuracy_radius_km) + ' км' : 'не указана'}${d.database_date ? ' · база от ' + _esc(d.database_date) : ''}</div>
                     <div class="geo-lookup-actions" style="margin-top:8px; display:flex; gap:6px;">
-                        <button type="button" class="btn btn-small" onclick="window.CityIpFinder.filterByCityName('${_esc(d.city)}')">🔍 Все подсети города ${_esc(d.city)}</button>
+                        ${d.city ? `<button type="button" class="btn btn-small" onclick="window.CityIpFinder.filterByCityName('${_esc(d.city)}')">🔍 Все подсети города ${_esc(d.city)}</button>` : ''}
                         <button type="button" class="btn btn-small btn-ghost" onclick="window.CityIpFinder.sendSingleCidrToV2('${_esc(d.cidr)}')">📹 В Сканер Камер</button>
                     </div>
                 </div>

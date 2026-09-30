@@ -7,12 +7,58 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import re
+import threading
+from datetime import datetime, timezone
 import sqlite3
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 _DB_PATH = Path(__file__).resolve().parent / "geo_subnets.sqlite3"
+
+
+_GEO_PLACEHOLDERS = {"", "федеральный округ", "область", "регион", "неизвестно", "unknown", "federal district", "region", "oblast"}
+
+
+def normalize_ip(value: str) -> str:
+    raw = value.strip()
+    try:
+        return str(ipaddress.ip_interface(raw).ip)
+    except ValueError:
+        # Legacy scanner records may contain IPv4:port.
+        if raw.count(":") == 1 and raw.rsplit(":", 1)[1].isdigit():
+            return str(ipaddress.ip_address(raw.rsplit(":", 1)[0]))
+        raise
+
+
+def normalize_geo(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Administrative labels and missing values must never masquerade as cities."""
+    result = dict(data)
+    city = str(result.get("city") or "").strip()
+    region = str(result.get("region") or "").strip()
+    if region.casefold() in _GEO_PLACEHOLDERS:
+        region = ""
+    if city.casefold() in _GEO_PLACEHOLDERS:
+        city = ""
+    elif re.search(r"(?:област|федеральн|республик|\bкрай\b|\boblast\b|\bdistrict\b|\brepublic\b)", city, re.I):
+        region = region or city
+        city = ""
+    result.update(city=city, region=region,
+                  precision="city" if city else "region" if region else "country" if result.get("country_code") else "unknown")
+    if not city:
+        result["city_en"] = ""
+    result.setdefault("accuracy_radius_km", None)
+    result.setdefault("source", "local_db")
+    result.setdefault("database_date", "")
+    return result
+
+
+def camera_geo_fields(data: Dict[str, Any]) -> Dict[str, Any]:
+    geo = normalize_geo(data)
+    return {**{key: geo.get(key, "") for key in ("city", "region", "country_code", "isp")},
+            "geo_precision": geo["precision"], "geo_source": geo["source"],
+            "geo_accuracy_radius_km": geo["accuracy_radius_km"], "geo_database_date": geo["database_date"]}
 
 
 @dataclass(frozen=True)
@@ -39,10 +85,14 @@ class GeoCityDatabase:
 
     def __init__(self, db_path: Optional[str] = None):
         self.db_path = Path(db_path) if db_path else _DB_PATH
+        self._readers = {}
+        self._reader_lock = threading.RLock()
 
     def _get_connection(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self.db_path), timeout=10.0)
         conn.row_factory = sqlite3.Row
+        conn.create_function("GEO_CITY", 2, lambda city, region: normalize_geo({"city": city, "region": region})["city"], deterministic=True)
+        conn.create_function("GEO_REGION", 2, lambda city, region: normalize_geo({"city": city, "region": region})["region"], deterministic=True)
         return conn
 
     def get_countries_summary(self) -> List[Dict[str, Any]]:
@@ -58,7 +108,7 @@ class GeoCityDatabase:
                     country_name,
                     COUNT(*) as subnets,
                     SUM(ip_count) as total_ips,
-                    COUNT(DISTINCT city) as cities_count,
+                    COUNT(DISTINCT NULLIF(GEO_CITY(city, region), '')) as cities_count,
                     COUNT(DISTINCT region) as regions_count
                 FROM subnets
                 GROUP BY country_code
@@ -88,20 +138,20 @@ class GeoCityDatabase:
         c_filter = country.upper().strip() if country and country.upper() != "ALL" else ""
         query = """
             SELECT 
-                region,
+                GEO_REGION(city, region) AS region,
                 country_code,
                 country_name,
                 COUNT(*) as subnets,
                 SUM(ip_count) as total_ips,
-                COUNT(DISTINCT city) as cities_count
-            FROM subnets
+                COUNT(DISTINCT NULLIF(GEO_CITY(city, region), '')) as cities_count
+            FROM subnets WHERE GEO_REGION(city, region) != ''
         """
         params: List[Any] = []
         if c_filter:
-            query += " WHERE country_code = ?"
+            query += " AND country_code = ?"
             params.append(c_filter)
 
-        query += " GROUP BY country_code, region ORDER BY subnets DESC, region ASC"
+        query += " GROUP BY country_code, GEO_REGION(city, region) ORDER BY subnets DESC, region ASC"
 
         with self._get_connection() as conn:
             cur = conn.cursor()
@@ -141,7 +191,7 @@ class GeoCityDatabase:
                 lat,
                 lon
             FROM subnets
-            WHERE 1=1
+            WHERE GEO_CITY(city, region) != ''
         """
         params: List[Any] = []
         if c_filter:
@@ -302,51 +352,71 @@ class GeoCityDatabase:
             }
             for r in rows
         ]
-        return subnets, total
+        return [normalize_geo(item) for item in subnets], total
+
+    def _read_mmdb(self, name: str, ip: str):
+        path = self.db_path.parent / name
+        if not path.exists():
+            return None
+        try:
+            import maxminddb
+            stamp = (path.stat().st_mtime_ns, path.stat().st_size)
+            with self._reader_lock:
+                old = self._readers.get(name)
+                if old is None or old[0] != stamp:
+                    reader = maxminddb.open_database(str(path))
+                    if old is not None:
+                        old[1].close()
+                    self._readers[name] = (stamp, reader)
+                reader = self._readers[name][1]
+                record, prefix = reader.get_with_prefix_len(ip)
+                epoch = reader.metadata().build_epoch
+                return record, prefix, datetime.fromtimestamp(epoch, timezone.utc).date().isoformat()
+        except (ImportError, OSError, ValueError, RuntimeError):
+            return None
 
     def find_by_ip(self, ip_str: str) -> Optional[Dict[str, Any]]:
-        """Find matching subnet for given IP string in local database."""
-        if not self.db_path.exists():
-            return None
-
+        """Resolve the exact address from MMDB; use the range index only as fallback."""
         try:
-            target_ip = ipaddress.ip_address(ip_str.strip())
-            if target_ip.version != 4:
-                return None
-            ip_int = int(target_ip)
+            ip = ipaddress.ip_address(normalize_ip(ip_str))
         except ValueError:
             return None
-
-        with self._get_connection() as conn:
-            cur = conn.cursor()
-            cur.execute(
-                """
-                SELECT cidr, country_code, country_name, region, city, city_en, isp, asn, org, ip_count, lat, lon
-                FROM subnets
-                WHERE start_ip <= ? AND end_ip >= ?
-                ORDER BY ip_count ASC
-                LIMIT 1
-                """,
-                (ip_int, ip_int),
-            )
-            row = cur.fetchone()
-
-        if row:
-            return {
-                "cidr": row["cidr"],
-                "country_code": row["country_code"],
-                "country_name": row["country_name"],
-                "region": row["region"],
-                "city": row["city"],
-                "city_en": row["city_en"],
-                "isp": row["isp"],
-                "asn": row["asn"],
-                "org": row["org"],
-                "ip_count": row["ip_count"],
-                "lat": row["lat"],
-                "lon": row["lon"],
-            }
-        return None
+        match = self._read_mmdb("GeoLite2-City.mmdb", str(ip))
+        indexed = None
+        if not (match and match[0]) and self.db_path.exists() and ip.version == 4:
+            with self._get_connection() as conn:
+                row = conn.execute(
+                    "SELECT * FROM subnets WHERE start_ip <= ? AND end_ip >= ? "
+                    "ORDER BY (end_ip - start_ip) ASC, id ASC LIMIT 1", (int(ip), int(ip)),
+                ).fetchone()
+                if row:
+                    indexed = normalize_geo(dict(row))
+        if match and match[0]:
+            record, prefix, date = match
+            def name(value):
+                names = (value or {}).get("names", {})
+                return names.get("ru") or names.get("en") or ""
+            country = record.get("country", {})
+            subdivisions = record.get("subdivisions", [])
+            location = record.get("location", {})
+            network = ipaddress.ip_network(f"{ip}/{prefix}", strict=False)
+            # Do not fill absent city/region with the centroid or a broad range's label.
+            result = {"cidr": str(network), "country_code": country.get("iso_code", ""),
+                      "country_name": name(country), "city": name(record.get("city")),
+                      "city_en": record.get("city", {}).get("names", {}).get("en", ""),
+                      "region": name(subdivisions[-1]) if subdivisions else "",
+                      "lat": location.get("latitude"), "lon": location.get("longitude"),
+                      "accuracy_radius_km": location.get("accuracy_radius"),
+                      "source": "geolite2_city", "database_date": date,
+                      "ip_count": network.num_addresses,
+                      **{k: (indexed or {}).get(k, "") for k in ("isp", "asn", "org")}}
+            asn = self._read_mmdb("GeoLite2-ASN.mmdb", str(ip))
+            if asn and asn[0]:
+                result["asn"] = f"AS{asn[0]['autonomous_system_number']}" if asn[0].get("autonomous_system_number") else ""
+                result["org"] = asn[0].get("autonomous_system_organization", "")
+                result["isp"] = result["org"] or result["isp"]
+            return normalize_geo(result)
+        return indexed
 
     def get_all_cidrs_for_filter(
         self,

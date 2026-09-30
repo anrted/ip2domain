@@ -25,7 +25,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .common import storage
 
@@ -404,48 +404,33 @@ async def get_stream_preview(
 @router.post("/results/resolve-geo")
 async def resolve_all_cameras_geo():
     """Retroactively resolve cities and regions for all stored camera results."""
-    from ip2domain.data.geo_city_db import geo_city_db
-    import httpx
+    from ip2domain.data.geo_city_db import geo_city_db, camera_geo_fields
+    import asyncio
 
-    results = storage.get_v2_results(limit=10000)
-    updated_count = 0
-    updated_cameras = []
-
-    for cam in results:
-        ip = str(cam.get("ip", "")).strip()
-        if not ip:
-            continue
-
-        changed = False
-        geo = geo_city_db.find_by_ip(ip)
-        if geo:
-            cam["city"] = geo.get("city", "")
-            cam["region"] = geo.get("region", "")
-            cam["country_code"] = geo.get("country_code", "")
-            cam["isp"] = geo.get("isp", "")
-            changed = True
-
-        if changed or cam.get("city"):
-            try:
-                storage.save_v2_result(cam)
+    def resolve():
+        results = storage.get_v2_results(limit=0)
+        updated_count = 0
+        counts = {"city": 0, "region": 0, "country": 0, "unknown": 0}
+        for cam in results:
+            ip = str(cam.get("ip", "")).strip()
+            if not ip:
+                continue
+            geo = geo_city_db.find_by_ip(ip)
+            fields = camera_geo_fields(geo or {})
+            if storage.update_v2_geo(ip, fields):
                 updated_count += 1
-            except Exception:
-                pass
+            cam.update(fields)
+            counts[fields["geo_precision"]] += 1
+        return {"success": True, "total_cameras": len(results),
+                "updated_count": updated_count, "precision_counts": counts, "results": results}
 
-        updated_cameras.append(cam)
-
-    return JSONResponse(content={
-        "success": True,
-        "total_cameras": len(results),
-        "updated_count": updated_count,
-        "results": updated_cameras,
-    })
+    return JSONResponse(content=await asyncio.to_thread(resolve))
 
 
 class BulkCaptureRequest(BaseModel):
-    concurrency: int = 2
+    concurrency: int = Field(default=2, ge=1, le=3)
     only_unverified: bool = True
-    max_streams_per_cam: int = 0
+    max_streams_per_cam: int = Field(default=0, ge=0)
     ips: Optional[List[str]] = None
 
 

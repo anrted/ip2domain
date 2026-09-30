@@ -70,6 +70,10 @@ class CameraResult:
     region: str = ""                 # Region / Oblast
     country_code: str = ""           # "RU" | "BY"
     isp: str = ""                    # ISP / Autonomous System
+    geo_precision: str = "unknown"
+    geo_source: str = ""
+    geo_accuracy_radius_km: Optional[int] = None
+    geo_database_date: str = ""
     in_go2rtc: bool = False
     auth_required: Optional[bool] = None
     endpoints: List[Dict[str, Any]] = field(default_factory=list)
@@ -110,6 +114,10 @@ class CameraResult:
             "region": self.region,
             "country_code": self.country_code,
             "isp": self.isp,
+            "geo_precision": self.geo_precision,
+            "geo_source": self.geo_source,
+            "geo_accuracy_radius_km": self.geo_accuracy_radius_km,
+            "geo_database_date": self.geo_database_date,
             "in_go2rtc": self.in_go2rtc,
             "auth_required": self.auth_required,
             "timestamp": self.timestamp,

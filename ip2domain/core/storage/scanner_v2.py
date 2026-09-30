@@ -111,6 +111,40 @@ class ScannerV2StorageMixin:
                 ),
             )
 
+    def update_v2_stream(self, ip: str, stream: Dict) -> None:
+        """Persist one captured URL without rolling back other concurrent updates."""
+        with self._get_connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT result_json FROM v2_results WHERE ip = ?", (ip,)).fetchone()
+            if not row:
+                return
+            result = json.loads(row[0])
+            for existing in result.get("streams", []):
+                if existing.get("url") == stream.get("url"):
+                    existing.update(stream)
+                    break
+            else:
+                return
+            conn.execute("UPDATE v2_results SET result_json = ?, streams_json = ? WHERE ip = ?",
+                         (json.dumps(result, ensure_ascii=False), json.dumps(result.get("streams", []), ensure_ascii=False), ip))
+
+    def update_v2_geo(self, ip: str, geo: Dict) -> bool:
+        """Update only geolocation, preserving concurrently captured frames."""
+        keys = {"city", "region", "country_code", "isp", "geo_precision", "geo_source",
+                "geo_accuracy_radius_km", "geo_database_date"}
+        with self._get_connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT result_json FROM v2_results WHERE ip = ?", (ip,)).fetchone()
+            if not row:
+                return False
+            result = json.loads(row[0])
+            changed = any(result.get(key) != value for key, value in geo.items() if key in keys)
+            if changed:
+                result.update({key: value for key, value in geo.items() if key in keys})
+                conn.execute("UPDATE v2_results SET result_json = ? WHERE ip = ?",
+                             (json.dumps(result, ensure_ascii=False), ip))
+            return changed
+
     def get_v2_results(
         self,
         limit: int = 100000,
@@ -149,6 +183,10 @@ class ScannerV2StorageMixin:
             for row in rows:
                 try:
                     r = json.loads(row["result_json"])
+                    from ip2domain.data.geo_city_db import normalize_geo
+                    clean_geo = normalize_geo(r)
+                    r.update(city=clean_geo["city"], region=clean_geo["region"])
+                    r.setdefault("geo_precision", clean_geo["precision"])
                     r["in_go2rtc"] = bool(row["in_go2rtc"])
 
                     # Missing evidence stays unknown, never fabricate a 401.

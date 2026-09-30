@@ -50,7 +50,10 @@ function v2UpdateResultsCount(filteredCount) {
 window.v2UpdateResultsCount = v2UpdateResultsCount;
 
 async function v2LoadStoredResults(force = false) {
-    if (window.V2State.isLoadingResults) return;
+    if (window.V2State.isLoadingResults) {
+        if (force) window.V2State.reloadResultsAfterLoad = true;
+        return;
+    }
     if (!force && window.V2State.resultsLoaded && (window.V2State.results || []).length > 0) {
         v2RenderResults();
         return;
@@ -74,6 +77,10 @@ async function v2LoadStoredResults(force = false) {
         console.error('[v2] Error loading stored results:', e);
     } finally {
         window.V2State.isLoadingResults = false;
+        if (window.V2State.reloadResultsAfterLoad) {
+            window.V2State.reloadResultsAfterLoad = false;
+            v2LoadStoredResults(true);
+        }
     }
 }
 window.v2LoadStoredResults = v2LoadStoredResults;
@@ -514,12 +521,17 @@ function v2RenderCameraCard(cam) {
     </button>`;
 
     let locationHtml = '';
-    if (cam.city) {
-        const flag = cam.country_code === 'BY' ? '🇧🇾' : '🇷🇺';
-        locationHtml = `<div class="v2-camera-location" onclick="v2SetGeoFilter('city:${_esc(cam.city)}')" title="Фильтровать по городу ${_esc(cam.city)}${cam.region ? ' • ' + _esc(cam.region) : ''}${cam.isp ? ' • ' + _esc(cam.isp) : ''}">
-            <span class="v2-geo-pin">📍</span>
-            <strong class="v2-geo-city">${flag} ${_esc(cam.city)}</strong>
-            ${cam.region && cam.region !== cam.city ? `<span class="v2-geo-region">${_esc(cam.region)}</span>` : ''}
+    if (cam.city || cam.region || cam.country_code) {
+        const flag = cam.country_code === 'BY' ? '🇧🇾' : cam.country_code === 'RU' ? '🇷🇺' : '';
+        const country = cam.country_code === 'RU' ? 'Россия' : cam.country_code === 'BY' ? 'Беларусь' : cam.country_code;
+        const label = cam.city || `${cam.region || country} · город не определён`;
+        const filter = cam.city ? `city:${cam.city}` : cam.region ? `region:${cam.region}` : `country:${cam.country_code}`;
+        const accuracy = cam.geo_accuracy_radius_km != null ? ` · радиус оценки ${cam.geo_accuracy_radius_km} км` : '';
+        const title = `Оценка местоположения по IP${accuracy}${cam.geo_database_date ? ' · база от ' + cam.geo_database_date : ''}`;
+        locationHtml = `<div class="v2-camera-location" onclick="v2SetGeoFilter('${_esc(filter)}')" title="${_esc(title)}">
+            <span class="v2-geo-pin">📍</span><strong class="v2-geo-city">${flag} ${_esc(label)}</strong>
+            ${cam.city && cam.region && cam.region !== cam.city ? `<span class="v2-geo-region">${_esc(cam.region)}</span>` : ''}
+            <span class="v2-geo-region">GeoIP${_esc(accuracy)}</span>
         </div>`;
     }
 
@@ -713,15 +725,19 @@ async function v2CapturePreview(ip, event) {
         }
 
         const camObj = (window.V2State.results || []).find(c => c.ip === ip);
-        if (camObj && !camObj.city) {
+        if (camObj && !camObj.geo_source) {
             fetch(`/api/geo/lookup?ip=${encodeURIComponent(ip)}`)
                 .then(r => r.json())
                 .then(j => {
-                    if (j.found && j.data && j.data.city) {
-                        camObj.city = j.data.city;
+                    if (j.found && j.data) {
+                        camObj.city = j.data.city || '';
                         camObj.region = j.data.region || '';
                         camObj.country_code = j.data.country_code || '';
                         camObj.isp = j.data.isp || '';
+                        camObj.geo_source = j.data.source || j.source || '';
+                        camObj.geo_precision = j.data.precision || 'unknown';
+                        camObj.geo_accuracy_radius_km = j.data.accuracy_radius_km;
+                        camObj.geo_database_date = j.data.database_date || '';
                         v2RenderResults();
                     }
                 }).catch(() => {});

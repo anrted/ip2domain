@@ -21,7 +21,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
 
-from ip2domain.data.geo_city_db import geo_city_db
+from ip2domain.data.geo_city_db import geo_city_db, normalize_ip, normalize_geo
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/geo", tags=["city_ip"])
@@ -115,16 +115,19 @@ async def get_all_cidrs(
 async def lookup_geo(ip: str = Query(..., description="IP address or CIDR to lookup")):
     """Reverse lookup GeoIP information for an IP address or subnet."""
     raw = ip.strip()
+    try:
+        clean_ip = normalize_ip(raw)
+    except ValueError:
+        return JSONResponse(content={"found": False, "source": "none", "data": None, "query": raw})
     # 1. Check local indexed DB
-    local_info = geo_city_db.find_by_ip(raw)
+    local_info = geo_city_db.find_by_ip(clean_ip)
     if local_info:
-        return JSONResponse(content={"found": True, "source": "local_db", "data": local_info})
+        return JSONResponse(content={"found": True, "source": local_info.get("source", "local_db"), "data": local_info})
 
     # 2. Try online fallback (ip-api / 2ip)
-    clean_ip = raw.split("/", 1)[0].strip()
     try:
         ip_obj = ipaddress.ip_address(clean_ip)
-        if ip_obj.is_link_local or ip_obj.is_loopback:
+        if not ip_obj.is_global:
             return JSONResponse(content={"found": False, "source": "none", "data": None, "query": raw})
     except ValueError:
         return JSONResponse(content={"found": False, "source": "none", "data": None, "query": raw})
@@ -148,7 +151,7 @@ async def lookup_geo(ip: str = Query(..., description="IP address or CIDR to loo
                         "lon": d.get("lon", 0.0),
                         "ip_count": 1,
                     }
-                    return JSONResponse(content={"found": True, "source": "ip-api", "data": data})
+                    return JSONResponse(content={"found": True, "source": "ip-api", "data": normalize_geo(dict(data, source="ip-api"))})
     except Exception:
         pass
 

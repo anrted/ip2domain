@@ -7,6 +7,7 @@ setup(
     author="Antigravity",
     packages=find_packages(exclude=("tests", "tests.*")),
     install_requires=[
+        "maxminddb>=2.6,<4",
         "aiohttp>=3.8.0",
         "tabulate>=0.9.0",
         "fastapi>=0.110.0",
