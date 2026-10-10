@@ -8,9 +8,7 @@ venv/
 *.egg-info/
 dist/
 build/
-ip2domain.db
-ip2domain.db-shm
-ip2domain.db-wal
+ip2domain.db*
 *.sqlite
 *.sqlite3
 output*.json
@@ -38,4 +36,5 @@ captures/
 Thumbs.db
 .vscode/
 .idea/
+.codex/
 

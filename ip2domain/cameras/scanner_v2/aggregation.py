@@ -34,7 +34,7 @@ def merge_host_cameras(cameras: List[CameraResult]) -> Optional[CameraResult]:
     for camera in cameras:
         if camera.ip != host.ip:
             raise ValueError("Cannot merge different hosts")
-        for key in ("brand", "model", "serial", "firmware", "city", "region", "country_code", "isp", "timestamp"):
+        for key in ("brand", "model", "serial", "firmware", "city", "region", "country_code", "isp", "timestamp", "device_category", "web_title", "web_url", "web_screenshot"):
             if not getattr(host, key):
                 setattr(host, key, getattr(camera, key))
         for key in ("http_port", "rtsp_port", "rtmp_port", "onvif_port"):
@@ -278,32 +278,115 @@ def merge_camera_results(
                 camera.streams.append(StreamInfo(url=url, stream_type=stype))
         detected = True
 
-    # 14. Generic HTTP fallback (only if HTTP returned working snapshot/stream)
-    if not detected and generic_r.get("success"):
-        camera.brand = generic_r.get("brand", "Generic IPCam")
-        camera.http_port = generic_r.get("http_port", 0)
-        camera.protocols.append("http_generic")
+    # 13. Router / Gateway detection
+    router_r = res_map.get("router", {})
+    if router_r.get("success"):
+        camera.brand = camera.brand or router_r.get("brand", "Generic Router")
+        camera.model = camera.model or router_r.get("model", "")
+        camera.device_category = "router"
+        camera.http_port = camera.http_port or router_r.get("web_port", 0)
+        camera.web_title = camera.web_title or router_r.get("title", "")
+        camera.web_url = camera.web_url or router_r.get("web_url", "")
+        if router_r.get("auth_required") is not None:
+            camera.auth_required = router_r.get("auth_required")
+        for p in router_r.get("protocols", []):
+            if p not in camera.protocols:
+                camera.protocols.append(p)
         detected = True
-        # Try RTSP on dedicated RTSP ports only
-        for p in open_ports:
-            if p in RTSP_PORTS or p == 554:
-                url = f"rtsp://{ip}:{p}/"
-                if not any(s.url == url for s in camera.streams):
+
+    # 14. Generic HTTP fallback (only if HTTP returned working snapshot/stream/panel)
+    if generic_r.get("success"):
+        if not detected:
+            camera.brand = generic_r.get("brand", "Generic Web Device")
+            camera.model = generic_r.get("model", "")
+            camera.device_category = generic_r.get("device_category", "generic_web")
+            camera.http_port = generic_r.get("http_port", 0)
+            camera.web_title = generic_r.get("title", "")
+            camera.web_url = generic_r.get("web_url", "")
+            camera.protocols.append("http_generic")
+            detected = True
+            # Try RTSP on dedicated RTSP ports only
+            for p in open_ports:
+                if p in RTSP_PORTS or p == 554:
+                    url = f"rtsp://{ip}:{p}/"
+                    if not any(s.url == url for s in camera.streams):
+                        from .models import StreamInfo as _SI
+                        camera.streams.append(_SI(url=url, stream_type="rtsp"))
+                    break
+            # Try HTTP snapshot candidates on the detected HTTP port ONLY for camera candidates
+            if generic_r.get("http_port") and generic_r.get("device_category") == "camera":
+                hp = generic_r['http_port']
+                from .models import HTTPS_PORTS
+                scheme = "https" if hp in HTTPS_PORTS or "443" in str(hp) else "http"
+                base_g = f"{scheme}://{ip}:{hp}"
+                candidates = []
+                if generic_r.get("snapshot_path"):
+                    candidates.append(f"{base_g}{generic_r['snapshot_path']}")
+                candidates.extend([
+                    f"{base_g}/jpg/image.jpg",
+                    f"{base_g}/cgi-bin/snapshot.cgi?channel=1",
+                    f"{base_g}/snapshot.jpg",
+                    f"{base_g}/image.jpg",
+                ])
+                for c_url in candidates:
+                    if not any(s.url == c_url for s in camera.streams):
+                        camera.streams.append(StreamInfo(url=c_url, stream_type="http_snapshot"))
+                if generic_r.get("rtsp_path"):
+                    rtsp_url = f"rtsp://{ip}:{hp}{generic_r['rtsp_path']}"
+                    if not any(s.url == rtsp_url for s in camera.streams):
+                        from .models import StreamInfo as _SI
+                        camera.streams.append(_SI(url=rtsp_url, stream_type="rtsp"))
+            if generic_r.get("credentials"):
+                camera.credentials = generic_r["credentials"]
+            if generic_r.get("auth_required") is not None and camera.auth_required is None:
+                camera.auth_required = generic_r["auth_required"]
+        else:
+            if not camera.brand or camera.brand in ("Generic RTSP", "Generic Web Device", "ONVIF"):
+                if generic_r.get("brand"):
+                    camera.brand = generic_r["brand"]
+            if not camera.model and generic_r.get("model"):
+                camera.model = generic_r["model"]
+            if not camera.web_title:
+                camera.web_title = generic_r.get("title", "")
+            if not camera.web_url:
+                camera.web_url = generic_r.get("web_url", "")
+            if generic_r.get("credentials") and not camera.credentials:
+                camera.credentials = generic_r["credentials"]
+            if generic_r.get("http_port") and generic_r.get("snapshot_path"):
+                hp = generic_r['http_port']
+                from .models import HTTPS_PORTS
+                scheme = "https" if hp in HTTPS_PORTS or "443" in str(hp) else "http"
+                snap_u = f"{scheme}://{ip}:{hp}{generic_r['snapshot_path']}"
+                if not any(s.url == snap_u for s in camera.streams):
+                    camera.streams.append(StreamInfo(url=snap_u, stream_type="http_snapshot"))
+            if generic_r.get("http_port") and generic_r.get("rtsp_path"):
+                hp = generic_r['http_port']
+                rtsp_u = f"rtsp://{ip}:{hp}{generic_r['rtsp_path']}"
+                if not any(s.url == rtsp_u for s in camera.streams):
                     from .models import StreamInfo as _SI
-                    camera.streams.append(_SI(url=url, stream_type="rtsp"))
-                break
-        # Try HTTP snapshot candidates on the detected HTTP port
-        if generic_r.get("http_port"):
-            hp = generic_r['http_port']
-            base_g = f"http://{ip}:{hp}"
-            candidates = [
-                f"{base_g}/cgi-bin/snapshot.cgi?channel=1",
-                f"{base_g}/snapshot.jpg",
-                f"{base_g}/image.jpg",
-            ]
-            for c_url in candidates:
-                if not any(s.url == c_url for s in camera.streams):
-                    camera.streams.append(StreamInfo(url=c_url, stream_type="http_snapshot"))
+                    camera.streams.append(_SI(url=rtsp_u, stream_type="rtsp"))
+            if generic_r.get("device_category") and camera.device_category == "camera" and not camera.streams:
+                camera.device_category = generic_r.get("device_category")
+
+    if camera.device_category in ("router", "generic_web", "device"):
+        # For non-camera devices, filter out any generic video/snapshot assumptions
+        camera.streams = [
+            s for s in camera.streams
+            if s.stream_type != "http_snapshot" and "snapshot.cgi" not in s.url and "snapshot.jpg" not in s.url
+        ]
+        if not camera.streams and (camera.web_url or camera.http_port or open_ports):
+            web_port = camera.http_port or (open_ports[0] if open_ports else 80)
+            from .models import HTTPS_PORTS
+            scheme = "https" if web_port in HTTPS_PORTS or "443" in str(web_port) else "http"
+            web_url = camera.web_url or f"{scheme}://{camera.ip}:{web_port}/"
+            camera.web_url = web_url
+            from .models import StreamInfo as _SI
+            camera.streams.append(_SI(
+                url=web_url,
+                stream_type="web_panel",
+                verified=bool(camera.web_screenshot),
+                screenshot_path=camera.web_screenshot,
+            ))
 
     if any(r.get("auth_required") for r in (onvif_r, hik_r, dahua_r, axis_r, rtsp_r)):
         camera.auth_required = True
@@ -338,9 +421,15 @@ def merge_camera_results(
             from .models import StreamInfo as _SI
             camera.streams.append(_SI(url=f"rtsp://{ip}:554/cam/realmonitor?channel=1&subtype=0", stream_type="rtsp", auth_required=None))
             detected = True
+        elif 8291 in open_ports:
+            # MikroTik Winbox dedicated port
+            camera.brand = "MikroTik"
+            camera.model = "RouterOS"
+            camera.device_category = "router"
+            camera.protocols.append("winbox")
+            detected = True
 
     if not detected:
-        # Not a camera at all — discard
         return None
 
     # Default brand if still empty

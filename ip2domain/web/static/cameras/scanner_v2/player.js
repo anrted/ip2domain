@@ -61,12 +61,14 @@ if (typeof window.v2AddSpecificStreamToGo2rtc !== 'function') {
         const safeIp = ip.replace(/\./g, '_');
         const streamName = `v2_${safeIp}_ch${channelIdx}`;
         try {
+            const isHttp = streamUrl.startsWith('http://') || streamUrl.startsWith('https://');
+            const urls = isHttp ? [streamUrl] : [streamUrl, `ffmpeg:${streamUrl}#video=copy`];
             const resp = await fetch("/api/go2rtc/streams", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     name: streamName,
-                    url: [streamUrl, `ffmpeg:${streamUrl}#video=copy`]
+                    url: urls
                 })
             });
             if (resp.ok) {
@@ -80,6 +82,60 @@ if (typeof window.v2AddSpecificStreamToGo2rtc !== 'function') {
         }
     };
 }
+
+window._v2LiveSnapshotTimer = null;
+
+function v2ToggleLiveSnapshot(ip, streamUrl) {
+    const badge = document.getElementById('v2-modal-live-badge');
+    const toggleBtn = document.getElementById('v2-modal-live-toggle');
+    if (window._v2LiveSnapshotTimer) {
+        clearInterval(window._v2LiveSnapshotTimer);
+        window._v2LiveSnapshotTimer = null;
+        if (badge) {
+            badge.style.color = '#94a3b8';
+            badge.innerHTML = '⏸ На паузе';
+        }
+        if (toggleBtn) {
+            toggleBtn.style.borderColor = 'rgba(255,255,255,0.2)';
+            toggleBtn.style.background = 'rgba(255,255,255,0.08)';
+            toggleBtn.textContent = '▶ Запуск';
+        }
+    } else {
+        if (badge) {
+            badge.style.color = '#10b981';
+            badge.innerHTML = '🟢 Realtime Live';
+        }
+        if (toggleBtn) {
+            toggleBtn.style.borderColor = '#10b981';
+            toggleBtn.style.background = 'rgba(16,185,129,0.2)';
+            toggleBtn.textContent = '⏸ Пауза';
+        }
+        v2RefreshSingleSnapshot(ip, streamUrl);
+        window._v2LiveSnapshotTimer = setInterval(() => {
+            v2RefreshSingleSnapshot(ip, streamUrl);
+        }, 1200);
+    }
+}
+window.v2ToggleLiveSnapshot = v2ToggleLiveSnapshot;
+
+function v2RefreshSingleSnapshot(ip, streamUrl) {
+    const img = document.getElementById('v2-modal-live-img');
+    const err = document.getElementById('v2-modal-live-err');
+    if (img) {
+        const nextUrl = `/api/v2/preview?ip=${encodeURIComponent(ip)}&stream_url=${encodeURIComponent(streamUrl)}&_t=${Date.now()}`;
+        const testImg = new Image();
+        testImg.onload = () => {
+            img.src = nextUrl;
+            img.style.display = '';
+            if (err) err.style.display = 'none';
+        };
+        testImg.onerror = () => {
+            if (err && !img.complete) err.style.display = 'flex';
+        };
+        testImg.src = nextUrl;
+    }
+}
+window.v2RefreshSingleSnapshot = v2RefreshSingleSnapshot;
 
 function v2OpenStreamModal(ip) {
     const cam = (window.V2State.results || []).find(c => c.ip === ip);
@@ -219,6 +275,10 @@ async function v2OpenStreamPlayer(srcUrl, camName, ip, currentIdx = 0) {
         dialog.style.boxShadow = '0 25px 50px -12px rgba(0, 0, 0, 0.7)';
 
         dialog.addEventListener('close', async () => {
+            if (window._v2LiveSnapshotTimer) {
+                clearInterval(window._v2LiveSnapshotTimer);
+                window._v2LiveSnapshotTimer = null;
+            }
             const tempName = dialog.dataset.tempStreamName;
             if (tempName) {
                 fetch(`/api/go2rtc/streams/${encodeURIComponent(tempName)}`, { method: "DELETE" }).catch(() => {});
@@ -325,11 +385,17 @@ async function v2OpenStreamPlayer(srcUrl, camName, ip, currentIdx = 0) {
                         <div id="v2-modal-live-err" style="display: none; flex-direction: column; align-items: center; justify-content: center; gap: 0.5rem; color: #ef4444; font-size: 0.85rem;">
                             <span>⚠️ Поток недоступен (камера не отвечает по HTTP)</span>
                         </div>
-                        <div style="position: absolute; bottom: 12px; right: 12px; display: flex; gap: 6px; background: rgba(0,0,0,0.6); padding: 4px 8px; border-radius: 6px;">
-                            <button type="button" class="btn btn-ghost btn-small" style="font-size: 0.72rem; padding: 3px 8px; border-radius:4px; background:rgba(255,255,255,0.1); color:#fff;" onclick="const img=document.getElementById('v2-modal-live-img'); const err=document.getElementById('v2-modal-live-err'); if(img){ img.style.display=''; img.src='/api/v2/preview?ip=${encodeURIComponent(ip)}&stream_url=${encodeURIComponent(srcUrl)}&_t='+Date.now(); } if(err) err.style.display='none';">🔄 Обновить</button>
+                        <div style="position: absolute; bottom: 12px; right: 12px; display: flex; gap: 6px; background: rgba(0,0,0,0.65); padding: 4px 10px; border-radius: 6px; align-items: center; z-index: 20; backdrop-filter: blur(4px);">
+                            <span id="v2-modal-live-badge" style="font-size: 0.72rem; color: #10b981; font-weight: 600; display: flex; align-items: center; gap: 4px;">🟢 Realtime Live</span>
+                            <button type="button" id="v2-modal-live-toggle" class="btn btn-ghost btn-small" style="font-size: 0.72rem; padding: 3px 8px; border-radius:4px; background:rgba(16,185,129,0.2); border:1px solid #10b981; color:#fff;" onclick="v2ToggleLiveSnapshot('${_esc(ip)}', '${_esc(srcUrl)}')">⏸ Пауза</button>
+                            <button type="button" class="btn btn-ghost btn-small" style="font-size: 0.72rem; padding: 3px 8px; border-radius:4px; background:rgba(255,255,255,0.1); color:#fff;" onclick="v2RefreshSingleSnapshot('${_esc(ip)}', '${_esc(srcUrl)}')">🔄 Обновить</button>
                         </div>
                     </div>
                 `;
+                if (window._v2LiveSnapshotTimer) clearInterval(window._v2LiveSnapshotTimer);
+                window._v2LiveSnapshotTimer = setInterval(() => {
+                    v2RefreshSingleSnapshot(ip, srcUrl);
+                }, 1200);
             }
             return;
         }
@@ -362,9 +428,9 @@ async function v2OpenStreamPlayer(srcUrl, camName, ip, currentIdx = 0) {
             }
         }
 
-        const mainUrl = actualSrcUrl.includes('#')
-            ? actualSrcUrl
-            : `${actualSrcUrl}#transport=tcp#backchannel=0`;
+        const mainUrl = (actualSrcUrl.startsWith('rtsp://') || actualSrcUrl.startsWith('rtsps://'))
+            ? (actualSrcUrl.includes('#') ? actualSrcUrl : `${actualSrcUrl}#transport=tcp#backchannel=0`)
+            : actualSrcUrl;
         const ffUrl = `ffmpeg:${actualSrcUrl}#video=copy`;
 
         const regResp = await fetch("/api/go2rtc/streams", {

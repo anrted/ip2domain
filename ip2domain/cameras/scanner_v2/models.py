@@ -78,6 +78,10 @@ class CameraResult:
     auth_required: Optional[bool] = None
     endpoints: List[Dict[str, Any]] = field(default_factory=list)
     timestamp: str = ""
+    device_category: str = "camera"  # "camera" | "router" | "generic_web" | "nas" | "server"
+    web_title: str = ""
+    web_url: str = ""
+    web_screenshot: str = ""
 
     @classmethod
     def from_dict(cls, data):
@@ -121,6 +125,10 @@ class CameraResult:
             "in_go2rtc": self.in_go2rtc,
             "auth_required": self.auth_required,
             "timestamp": self.timestamp,
+            "device_category": self.device_category,
+            "web_title": self.web_title,
+            "web_url": self.web_url,
+            "web_screenshot": self.web_screenshot,
         }
 
 
@@ -242,14 +250,17 @@ CAMERA_PORTS_V2 = (
     49152, 49153, 49154,
     # Additional
     1026, 7070, 4747, 2600,
+    # Router / Network gear ports
+    8291, 7547, 8728, 8729, 8181, 8880, 9443, 10443, 4567,
 )
 
 # Ports that indicate HTTP services
-HTTP_PORTS = {80, 81, 85, 88, 99, 1984, 2020, 7001, 8000, 8001, 8002, 8005, 8008, 8080, 8081, 8082, 8083, 8085, 8086, 8087, 8088, 8089, 8090, 8099, 8888, 8889, 8899, 9000, 9999}
-HTTPS_PORTS = {443, 8443}
+HTTP_PORTS = {80, 81, 85, 88, 99, 1984, 2020, 4567, 7001, 8000, 8001, 8002, 8005, 8008, 8080, 8081, 8082, 8083, 8085, 8086, 8087, 8088, 8089, 8090, 8099, 8181, 8880, 8888, 8889, 8899, 9000, 9999}
+HTTPS_PORTS = {443, 8443, 9443, 10443}
 # Dedicated RTSP ports (port 80 removed to avoid fake RTSP URLs on web servers)
 RTSP_PORTS = {554, 555, 8554, 10554, 5544, 6554, 7447, 322, 5555}
 RTMP_PORTS = {1935}
 DVR_PORTS = {37777, 34567, 34599, 8899, 37810, 4550, 5550, 6036, 9101, 9102, 30001, 4520}
 ONVIF_PORTS = {80, 8080, 8899, 5000, 8000}
+ROUTER_PORTS = {80, 443, 8080, 8443, 8081, 8888, 8000, 8008, 8181, 8880, 9443, 10443, 4567, 8291, 7547, 8728, 8729}
 

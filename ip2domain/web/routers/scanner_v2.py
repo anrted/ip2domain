@@ -164,6 +164,31 @@ async def cancel_scan(job_id: str):
 
 
 
+def _sanitize_v2_result(r: dict) -> dict:
+    if not isinstance(r, dict):
+        return r
+    cat = r.get("device_category") or "camera"
+    if cat in ("router", "generic_web", "device"):
+        # Strip synthetic camera snapshot URLs for non-cameras
+        cleaned_streams = [
+            s for s in r.get("streams", [])
+            if s.get("type") != "http_snapshot" and "snapshot.cgi" not in s.get("url", "") and "snapshot.jpg" not in s.get("url", "")
+        ]
+        if not cleaned_streams and (r.get("web_url") or r.get("http_port")):
+            port = r.get("http_port") or (r.get("open_ports", [80])[0] if r.get("open_ports") else 80)
+            from ip2domain.cameras.scanner_v2.models import HTTPS_PORTS
+            scheme = "https" if port in HTTPS_PORTS or "443" in str(port) else "http"
+            web_url = r.get("web_url") or f"{scheme}://{r.get('ip')}:{port}/"
+            cleaned_streams = [{
+                "url": web_url,
+                "type": "web_panel",
+                "verified": bool(r.get("web_screenshot")),
+                "screenshot": r.get("web_screenshot", ""),
+            }]
+        r["streams"] = cleaned_streams
+    return r
+
+
 @router.get("/results")
 async def get_results(
     limit: int = Query(default=100000, le=500000),
@@ -172,6 +197,7 @@ async def get_results(
     has_preview: bool = Query(default=False),
     verified_only: bool = Query(default=False),
     auth_status: str = Query(default="all"),
+    category: str = Query(default=""),
 ):
     """Return stored v2 results from DB."""
     results = storage.get_v2_results(
@@ -181,7 +207,9 @@ async def get_results(
         has_preview=has_preview,
         verified_only=verified_only,
         auth_status=auth_status,
+        category=category,
     )
+    results = [_sanitize_v2_result(r) for r in results]
     stats = storage.get_v2_stats()
     return JSONResponse(content={
         "results": results,
@@ -232,7 +260,7 @@ async def get_result(ip: str):
     result = storage.get_v2_result(ip)
     if not result:
         raise HTTPException(status_code=404, detail="Result not found")
-    return JSONResponse(content=result)
+    return JSONResponse(content=_sanitize_v2_result(result))
 
 
 @router.delete("/results")
@@ -354,6 +382,40 @@ async def get_stream_preview(
     ok = False
     path = ""
     codec, w, h = "", 0, 0
+
+    # For router / web devices or web_panel streams, capture web screenshot instead of ffmpeg
+    if (res and res.get("device_category") in ("router", "generic_web", "device")) or selected.get("type") == "web_panel" or ("snapshot.cgi" in stream_url and (not res or res.get("device_category") != "camera")):
+        from ip2domain.cameras.scanner_v2.web_capture import capture_web_screenshot
+        web_port = (res or {}).get("http_port") or (res.get("open_ports", [80])[0] if res and res.get("open_ports") else 80)
+        web_url = (res or {}).get("web_url") or stream_url
+        if "snapshot.cgi" in web_url or "snapshot.jpg" in web_url:
+            web_url = (res or {}).get("web_url") or f"http://{ip}:{web_port}/"
+        try:
+            sc_url = await capture_web_screenshot(
+                ip=ip,
+                port=web_port,
+                web_url=web_url,
+                capture_dir=Path(_V2_CAPTURE_DIR),
+                brand=(res or {}).get("brand", ""),
+                model=(res or {}).get("model", ""),
+                title=(res or {}).get("web_title", ""),
+                category=(res or {}).get("device_category", "generic_web"),
+            )
+            if sc_url:
+                filename = Path(sc_url).name
+                full_path = Path(_V2_CAPTURE_DIR) / filename
+                if full_path.exists():
+                    if res:
+                        res["web_screenshot"] = sc_url
+                        for s in res.get("streams", []):
+                            if s.get("type") == "web_panel" or s.get("url") == stream_url:
+                                s["verified"] = True
+                                s["verification_status"] = "verified"
+                                s["screenshot"] = sc_url
+                        storage.save_v2_result(res)
+                    return FileResponse(str(full_path), media_type="image/jpeg", headers={"Cache-Control": "private, max-age=5"})
+        except Exception:
+            pass
 
     if (stream_url.startswith("http://") or stream_url.startswith("https://")) and ".m3u8" not in stream_url and "mjpg" not in stream_url.lower() and "video.cgi" not in stream_url.lower():
         # Try direct HTTP snapshot download first

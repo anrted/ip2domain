@@ -53,6 +53,10 @@ _CAMERA_BRANDS = {
     "ubiquiti": "Ubiquiti UniFi",
     "unifi video": "Ubiquiti UniFi",
     "tapo": "TP-Link Tapo",
+    "tp-link": "TP-Link",
+    "tplink": "TP-Link",
+    "tl-sc": "TP-Link",
+    "mag_52": "TP-Link",
     "vstarcam": "VStarcam",
     "sricam": "Sricam",
     "srihome": "SriHome",
@@ -81,6 +85,45 @@ async def _probe_generic_http(
 
     async with httpx.AsyncClient(verify=False, timeout=3.0, follow_redirects=True) as client:
         for port in ports[:4]:  # test max 4 HTTP ports
+            # 1. Specialized TP-Link TL-SC camera metadata probe (/prod)
+            try:
+                prod_resp = await client.get(f"http://{ip}:{port}/prod", timeout=2.0)
+                if prod_resp.status_code == 200 and "initProd" in prod_resp.text:
+                    p_text = prod_resp.text
+                    nbr_m = re.search(r'initProdNbr\s*=\s*["\']([^"\']+)["\']', p_text)
+                    name_m = re.search(r'initProdFullName\s*=\s*["\']([^"\']+)["\']', p_text)
+                    model_val = nbr_m.group(1).strip() if nbr_m else "TL-SC Camera"
+                    title_val = name_m.group(1).strip() if name_m else "Wireless Surveillance Camera"
+                    result.update({
+                        "success": True,
+                        "brand": "TP-Link",
+                        "model": model_val,
+                        "title": title_val,
+                        "http_port": port,
+                        "device_category": "camera",
+                        "web_url": f"http://{ip}:{port}/",
+                        "snapshot_path": "/jpg/image.jpg",
+                        "rtsp_path": "/video.mp4",
+                    })
+                    # Probe root to see if credentials or auth is needed
+                    try:
+                        r0 = await client.get(f"http://{ip}:{port}/", timeout=2.0)
+                        if r0.status_code == 401:
+                            result["auth_required"] = True
+                            for u, p in credentials[:2]:
+                                if not u:
+                                    continue
+                                r_auth = await client.get(f"http://{ip}:{port}/jpg/image.jpg", auth=(u, p), timeout=2.0)
+                                if r_auth.status_code == 200:
+                                    result["credentials"] = {"user": u, "password": p}
+                                    result["auth_required"] = False
+                                    break
+                    except Exception:
+                        pass
+                    return result
+            except Exception:
+                pass
+
             for user, password in credentials[:2]:
                 auth = (user, password) if user else None
                 try:
@@ -91,6 +134,24 @@ async def _probe_generic_http(
                     title_m = re.search(r"<title[^>]*>([^<]{1,128})</title>", text, re.IGNORECASE)
                     title = title_m.group(1).strip() if title_m else ""
                     combined = (title + " " + server + " " + www_auth + " " + text[:512]).lower()
+
+                    # Check TP-Link realm signature (mag_52, mag_*)
+                    if re.search(r'realm=["\']mag_\d+["\']', www_auth, re.IGNORECASE):
+                        result.update({
+                            "success": True,
+                            "brand": "TP-Link",
+                            "model": "TL-SC Camera",
+                            "title": title or "Wireless Surveillance Camera",
+                            "http_port": port,
+                            "device_category": "camera",
+                            "web_url": f"http://{ip}:{port}/",
+                            "auth_required": resp.status_code == 401,
+                            "snapshot_path": "/jpg/image.jpg",
+                            "rtsp_path": "/video.mp4",
+                        })
+                        if auth and resp.status_code == 200:
+                            result["credentials"] = {"user": user, "password": password}
+                        return result
 
                     brand = ""
                     for keyword, brand_name in _CAMERA_BRANDS.items():
@@ -111,8 +172,54 @@ async def _probe_generic_http(
                             "brand": brand or "Generic IPCam",
                             "title": title,
                             "http_port": port,
+                            "device_category": "camera",
+                            "web_url": f"http://{ip}:{port}/",
                         })
                         return result
+
+                    # Check router signatures
+                    from .router import ROUTER_BRAND_SIGNATURES, GENERIC_ROUTER_KEYWORDS
+                    for r_brand, patterns in ROUTER_BRAND_SIGNATURES:
+                        if any(re.search(pat, combined, re.IGNORECASE) for pat in patterns):
+                            result.update({
+                                "success": True,
+                                "brand": r_brand,
+                                "model": title or f"{r_brand} Router",
+                                "title": title,
+                                "http_port": port,
+                                "device_category": "router",
+                                "web_url": f"http://{ip}:{port}/",
+                            })
+                            return result
+
+                    if any(re.search(pat, combined, re.IGNORECASE) for pat in GENERIC_ROUTER_KEYWORDS):
+                        result.update({
+                            "success": True,
+                            "brand": "Generic Router",
+                            "model": title or "Broadband Router",
+                            "title": title,
+                            "http_port": port,
+                            "device_category": "router",
+                            "web_url": f"http://{ip}:{port}/",
+                        })
+                        return result
+
+                    # Generic web device fallback (never drop active HTTP services)
+                    server_label = (server.split("/")[0].strip() if server else "").strip()
+                    result.update({
+                        "success": True,
+                        "brand": "Generic Web Device",
+                        "model": server_label or "Web Service",
+                        "title": title or f"HTTP {resp.status_code}",
+                        "http_port": port,
+                        "device_category": "generic_web",
+                        "web_url": f"http://{ip}:{port}/",
+                    })
+                    return result
                 except Exception:
                     continue
     return result
+
+
+probe_generic_http = _probe_generic_http
+

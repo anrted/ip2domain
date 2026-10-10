@@ -10,6 +10,7 @@ _EXPORTS = {
     "probe_rtmp": "rtmp",
     "probe_hls_mjpeg": "hls",
     "probe_sprecord": "sprecord",
+    "probe_router": "router",
     "run_local_discovery": "discovery",
 }
 __all__ = list(_EXPORTS)

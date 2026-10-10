@@ -20,7 +20,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-_TIMEOUT = 4.0
+_TIMEOUT = 2.5
 _ONVIF_PATH = "/onvif/device_service"
 
 
@@ -113,8 +113,8 @@ async def probe_onvif(
             onvif_service_confirmed = False
             auth_challenge = False
 
-            # Try GetDeviceInformation with each credential pair
-            for u_str, auth_val in credentials or [("", "")]:
+            # Try GetDeviceInformation with each credential pair (cap at 8 to avoid long brute)
+            for u_str, auth_val in (credentials or [("", "")])[:8]:
                 xml = await _soap_post(
                     client, url,
                     "<tds:GetDeviceInformation/>",
@@ -187,6 +187,13 @@ async def probe_onvif(
                             uri = _extract_xml_value(stream_xml, "Uri")
                             if uri.startswith(("rtsp://", "rtsps://")):
                                 rtsp_urls.append(uri)
+                                parsed_uri = urlsplit(uri)
+                                if parsed_uri.hostname and parsed_uri.hostname != ip:
+                                    r_port = parsed_uri.port or (port if port != 80 else 554)
+                                    for p_try in dict.fromkeys([r_port, port, 554]):
+                                        netloc = f"{ip}:{p_try}" if p_try not in (554, None) else ip
+                                        rewritten = urlunsplit((parsed_uri.scheme, netloc, parsed_uri.path, parsed_uri.query, parsed_uri.fragment))
+                                        rtsp_urls.append(rewritten)
 
                 result["rtsp_urls"] = list(dict.fromkeys(rtsp_urls))  # dedup
                 return result

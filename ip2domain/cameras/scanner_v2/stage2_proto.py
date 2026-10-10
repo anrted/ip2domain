@@ -26,6 +26,7 @@ from .protocols.ingram import probe_ingram
 from .protocols.sofia import probe_sofia
 from .protocols.dahua_media import probe_dahua_media
 from .protocols.sprecord import probe_sprecord
+from .protocols.router import probe_router
 
 
 def camera_probe_runner() -> ProbeRunner:
@@ -44,6 +45,7 @@ def camera_probe_runner() -> ProbeRunner:
         "dahua_media": probe_dahua_media,
         "sprecord": probe_sprecord,
         "ingram": probe_ingram,
+        "router": probe_router,
         "generic": _probe_generic_http,
     }))
 

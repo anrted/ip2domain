@@ -44,6 +44,15 @@ class InventoryRepository(CheckpointMixin, StageQueueMixin, GraphRepositoryMixin
     def __init__(self, path):
         self.path = str(path)
         with self.connect() as db:
+            if not self.path.startswith(":memory:"):
+                try:
+                    db.execute("PRAGMA journal_mode=WAL")
+                except Exception:
+                    pass
+            try:
+                db.execute("PRAGMA synchronous=NORMAL")
+            except Exception:
+                pass
             db.executescript(SCHEMA)
             db.executescript(CHECKPOINT_SCHEMA)
             db.executescript(STAGE_SCHEMA)
@@ -51,9 +60,18 @@ class InventoryRepository(CheckpointMixin, StageQueueMixin, GraphRepositoryMixin
 
     @contextmanager
     def connect(self):
-        db = sqlite3.connect(self.path, timeout=10)
+        db = sqlite3.connect(self.path, timeout=60.0)
         db.row_factory = sqlite3.Row
-        db.execute("PRAGMA busy_timeout=10000")
+        db.execute("PRAGMA busy_timeout=60000")
+        if not self.path.startswith(":memory:"):
+            try:
+                db.execute("PRAGMA journal_mode=WAL")
+            except Exception:
+                pass
+        try:
+            db.execute("PRAGMA synchronous=NORMAL")
+        except Exception:
+            pass
         try:
             with db:
                 yield db

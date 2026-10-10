@@ -10,6 +10,7 @@ const V2State = window.V2State || {
     selectedStreams: {},   // { [ip]: streamUrl }
     previewCache: {},      // { [ip]: blobUrl }
     filterBrand: 'all',
+    filterCategory: 'all',
     filterProtocol: 'all',
     filterGeo: 'all',
     geoSearch: '',

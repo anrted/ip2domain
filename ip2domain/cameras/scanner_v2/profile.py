@@ -13,7 +13,7 @@ from ip2domain.scanning import Endpoint, ProbeContext, ProbeData, ProbeRegistry,
 from .models import HTTP_PORTS, HTTPS_PORTS, DVR_PORTS, RTSP_PORTS, RTMP_PORTS, ONVIF_PORTS
 
 DEFAULT_PROTOCOLS = frozenset({
-    "onvif", "hikvision", "dahua", "axis", "rtsp", "hls", "rtmp", "webrtc", "vms",
+    "onvif", "hikvision", "dahua", "axis", "rtsp", "hls", "rtmp", "webrtc", "vms", "router",
 })
 _PRIMARY_RTSP = {554, 555, 8554, 10554, 5544, 6554, 7447, 322, 5555}
 
@@ -66,6 +66,20 @@ def build_camera_registry(probes: Mapping[str, Callable]) -> ProbeRegistry:
             return ProbeData(detected=bool(raw.get("success")), attributes=raw)
         return run
 
+    # External timeout caps applied by asyncio.wait_for() in runner.py.
+    # None = probe manages its own timeouts internally.
+    _PROBE_TIMEOUTS: Dict[str, Optional[float]] = {
+        "onvif":      None,   # 2.5s x 8 creds x ports, already bounded
+        "rtsp":       50.0,   # safety net; probe has internal 45s deadline
+        "hikvision":  15.0,
+        "dahua":      15.0,
+        "axis":       12.0,
+        "hls":        20.0,
+        "rtmp":        8.0,
+        "webrtc":     12.0,
+        "vms":        12.0,
+    }
+
     specs = []
     for key, group in (
         ("onvif", "onvif"), ("hikvision", "http"), ("dahua", "http"),
@@ -77,21 +91,26 @@ def build_camera_registry(probes: Mapping[str, Callable]) -> ProbeRegistry:
                 key not in ("rtsp", "rtmp") or bool(candidate_ports(context)[group])
             )
         specs.append(ProbeSpec(key, adapt(key, group), applies, categories=("video",),
-                               **({"timeout": None} if key == "onvif" else {})))
+                               timeout=_PROBE_TIMEOUTS.get(key)))
 
     specs.extend((
         ProbeSpec(
             "sofia", adapt("sofia", port=34567),
             lambda c: 34567 in c.ports() or bool(enabled(c) & {"sofia", "xiongmai"}),
             categories=("video",),
+            timeout=8.0,
         ),
         ProbeSpec(
             "dahua_media", adapt("dahua_media", port=37777),
             lambda c: 37777 in c.ports() or bool(enabled(c) & {"dahua", "dhip"}),
             categories=("video",),
+            timeout=8.0,
         ),
-        ProbeSpec("sprecord", adapt("sprecord"), categories=("voice",)),
-        ProbeSpec("ingram", adapt("ingram"), categories=("video",)),
-        ProbeSpec("generic", adapt("generic"), categories=("web", "video")),
+        ProbeSpec("sprecord", adapt("sprecord"), categories=("voice",), timeout=20.0),
+        ProbeSpec("ingram", adapt("ingram"), categories=("video",), timeout=25.0),
+        ProbeSpec("router", adapt("router", group="http"),
+                  lambda c: "router" in enabled(c),
+                  categories=("network", "router"), timeout=10.0),
+        ProbeSpec("generic", adapt("generic"), categories=("web", "video"), timeout=10.0),
     ))
     return ProbeRegistry(specs)

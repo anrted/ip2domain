@@ -444,7 +444,8 @@ async def probe_rtsp_direct(
         "auth_required": False,
     }
 
-    ports_to_try = rtsp_ports or [554]
+    ports_to_try = (rtsp_ports or [554])[:3]  # cap: probe at most 3 RTSP ports
+    _probe_deadline = asyncio.get_event_loop().time() + 45.0  # hard 45s cap on entire probe
 
     for port in ports_to_try:
         reader = None
@@ -561,6 +562,7 @@ async def probe_rtsp_direct(
                 p for p in probe_paths
                 if not re.search(r"\.(html?|png|jpe?g|gif|css|js|asp|txt|xml|ico)($|\?)", p, re.IGNORECASE)
             ]
+            probe_paths = probe_paths[:35]  # cap: at most 35 paths per port
 
             found_urls: List[str] = []
             failed_auth_paths = 0
@@ -574,6 +576,8 @@ async def probe_rtsp_direct(
             active_creds = credentials if credentials else default_creds
 
             for path in probe_paths:
+                if asyncio.get_event_loop().time() > _probe_deadline:
+                    break  # hard deadline: stop probing this host
                 url = base_url + path
                 r, w = await ensure_conn()
                 if not r or not w:
@@ -593,7 +597,7 @@ async def probe_rtsp_direct(
                 # immediately try candidate credentials to avoid socket resets from unauthenticated requests
                 if not cached_working_cred and cached_auth_hdr_challenge and not auth_exhausted:
                     authed = False
-                    for u_item, p_item in active_creds[:6]:
+                    for u_item, p_item in active_creds[:3]:  # cap: 3 cred pairs max
                         headers_to_try = []
                         if "digest" in cached_auth_hdr_challenge.lower():
                             d_hdr = _build_digest_header(u_item, p_item, "DESCRIBE", url, cached_auth_hdr_challenge)
@@ -639,7 +643,7 @@ async def probe_rtsp_direct(
                             break
 
                     if authed:
-                        if len(found_urls) >= 128:
+                        if len(found_urls) >= 16:
                             break
                         continue
                     else:
@@ -703,7 +707,7 @@ async def probe_rtsp_direct(
                     if cached_working_cred:
                         cred_candidates = [cached_working_cred]
                     else:
-                        cred_candidates = active_creds[:6]
+                        cred_candidates = active_creds[:3]  # cap: 3 cred pairs max
 
                     for u_item, p_item in cred_candidates:
                         headers_to_try = []
@@ -752,14 +756,14 @@ async def probe_rtsp_direct(
                             break
 
                     if authed:
-                        if len(found_urls) >= 128:
+                        if len(found_urls) >= 16:
                             break
                     else:
                         if not cached_working_cred:
                             # Candidate credentials all failed on challenged stream: avoid lockout
                             auth_exhausted = True
                         failed_auth_paths += 1
-                        if failed_auth_paths >= 20:
+                        if failed_auth_paths >= 5:  # stop after 5 failed auth paths
                             break
 
             # Deduplicate preserving order

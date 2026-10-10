@@ -620,6 +620,56 @@
     box-shadow: 0 0 12px rgba(16, 185, 129, 0.4);
 }
 
+.v2-filter-row-categories {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    align-items: center;
+    padding-bottom: 0.6rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    margin-bottom: 0.6rem;
+    width: 100%;
+}
+
+.v2-filter-btn-cat {
+    font-size: 0.75rem !important;
+    padding: 0.35rem 0.85rem !important;
+    border-radius: 8px !important;
+    font-weight: 700 !important;
+}
+
+.v2-filter-btn-camera {
+    border-color: rgba(168, 85, 247, 0.35) !important;
+    color: #c084fc !important;
+}
+.v2-filter-btn-camera.active {
+    background: rgba(168, 85, 247, 0.35) !important;
+    color: #ffffff !important;
+    border-color: #a855f7 !important;
+    box-shadow: 0 0 10px rgba(168, 85, 247, 0.4);
+}
+
+.v2-filter-btn-router {
+    border-color: rgba(2, 132, 199, 0.4) !important;
+    color: #38bdf8 !important;
+}
+.v2-filter-btn-router.active {
+    background: rgba(2, 132, 199, 0.35) !important;
+    color: #ffffff !important;
+    border-color: #0284c7 !important;
+    box-shadow: 0 0 12px rgba(2, 132, 199, 0.4);
+}
+
+.v2-filter-btn-web {
+    border-color: rgba(148, 163, 184, 0.35) !important;
+    color: #cbd5e1 !important;
+}
+.v2-filter-btn-web.active {
+    background: rgba(100, 116, 139, 0.35) !important;
+    color: #ffffff !important;
+    border-color: #94a3b8 !important;
+    box-shadow: 0 0 10px rgba(100, 116, 139, 0.35);
+}
 
 .v2-count-sub {
     font-size: 0.78rem;

@@ -177,7 +177,7 @@ async def add_go2rtc_stream(req: Request):
             if ":***@" in raw_target:
                 raw_target = re.sub(r":[^/@]+@", f":{cp}@", raw_target)
                 parsed = urllib.parse.urlsplit(raw_target)
-            elif not parsed.username and parsed.scheme in ("rtsp", "rtsps"):
+            elif not parsed.username and parsed.scheme in ("rtsp", "rtsps", "http", "https"):
                 netloc = f"{cu}:{cp}@{parsed.netloc}"
                 raw_target = urllib.parse.urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))
                 parsed = urllib.parse.urlsplit(raw_target)

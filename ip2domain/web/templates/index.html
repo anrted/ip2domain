@@ -11,7 +11,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
     <link rel="stylesheet" href="/static/style.css?v=20260905-card-layout-fix">
-    <link rel="stylesheet" href="/static/style_v2.css?v=20260907-v2-bruter-fix">
+    <link rel="stylesheet" href="/static/style_v2.css?v=20261010-devices-ui-v2">
 </head>
 
 <body>
@@ -1300,38 +1300,87 @@
                         <!-- Results Card -->
                         <div class="v2-results-card" id="v2-results-card" style="margin-top:1rem;">
                             <div class="v2-results-header">
-                                <div>
-                                    <span class="v2-results-title">Обнаруженные камеры</span>
-                                    <span class="v2-results-count" id="v2-results-count" style="margin-left:0.75rem;">0
-                                        камер</span>
+                                <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;width:100%;margin-bottom:0.85rem;">
+                                    <div>
+                                        <span class="v2-results-title">Обнаруженные устройства</span>
+                                        <span class="v2-results-count" id="v2-results-count" style="margin-left:0.75rem;">0 устройств</span>
+                                    </div>
+                                    <div class="v2-results-actions">
+                                        <button class="v2-btn-small" id="v2-btn-bulk-capture"
+                                            style="background:rgba(16,185,129,0.2);border:1px solid rgba(16,185,129,0.45);color:#34d399;font-weight:600;"
+                                            onclick="v2ToggleBulkCapture(this)"
+                                            title="Снять превью и скриншоты для всех устройств в базе">📸 Снять все превью</button>
+                                        <button class="v2-btn-small" id="v2-btn-resolve-geo"
+                                            style="background:rgba(14,165,233,0.2);border:1px solid rgba(14,165,233,0.45);color:#38bdf8;font-weight:600;"
+                                            onclick="v2ResolveAllGeo(this)"
+                                            title="Определить город и гео-локацию для всех хостов">📍 Определить города</button>
+                                        <button class="v2-btn-small" id="v2-btn-export-401"
+                                            style="background:rgba(245,158,11,0.2);border:1px solid rgba(245,158,11,0.45);color:#fbbf24;font-weight:600;"
+                                            onclick="v2Export401()" title="Скачать список IP:порт с ошибкой 401 (для брутфорса)">📋 Экспорт 401</button>
+                                        <button class="v2-btn-small" id="v2-btn-open-bruter"
+                                            style="background:linear-gradient(135deg, rgba(239,68,68,0.25), rgba(185,28,28,0.35));border:1px solid rgba(239,68,68,0.5);color:#fca5a5;font-weight:600;"
+                                            onclick="v2OpenBruterModal()" title="Запустить подбор паролей rtspBrute для камер">🔨 RTSP Brute</button>
+                                        <button class="v2-btn-small v2-btn-green" onclick="v2ExportAllToGo2rtc()" title="Добавить обнаруженные видеопотоки в go2rtc">+ Камеры в go2rtc</button>
+                                        <button class="v2-btn-small" onclick="v2ExportJson()">⬇ JSON</button>
+                                        <button class="v2-btn-small v2-btn-danger" onclick="v2ClearResults()" title="Очистить все результаты">🗑</button>
+                                    </div>
                                 </div>
+
+                                <!-- Category Row -->
+                                <div class="v2-filter-row-categories">
+                                    <span style="font-size:0.75rem;color:#94a3b8;font-weight:700;margin-right:4px;">Тип:</span>
+                                    <button class="v2-filter-btn v2-filter-btn-cat active" id="v2-filter-cat-all" data-value="all"
+                                        onclick="v2SetFilter('category','all')">Все устройства</button>
+                                    <button class="v2-filter-btn v2-filter-btn-cat v2-filter-btn-camera" id="v2-filter-cat-camera" data-value="camera"
+                                        onclick="v2SetFilter('category','camera')" title="IP-камеры, NVR, DVR регистраторы">🎥 Камеры</button>
+                                    <button class="v2-filter-btn v2-filter-btn-cat v2-filter-btn-router" id="v2-filter-cat-router" data-value="router"
+                                        onclick="v2SetFilter('category','router')" title="Роутеры, шлюзы, точки доступа (MikroTik, Keenetic, TP-Link и др.)">🌐 Роутеры и шлюзы</button>
+                                    <button class="v2-filter-btn v2-filter-btn-cat v2-filter-btn-web" id="v2-filter-cat-generic_web" data-value="generic_web"
+                                        onclick="v2SetFilter('category','generic_web')" title="Веб-серверы, сайты, веб-панели управления">💻 Веб-сервисы</button>
+                                    <button class="v2-filter-btn v2-filter-btn-cat v2-filter-btn-audio" id="v2-filter-cat-sprecord" data-value="sprecord"
+                                        onclick="v2SetFilter('category','sprecord')" title="Серверы записи телефонных разговоров SpRecord">🎙️ SpRecord Аудио</button>
+                                    <button class="v2-filter-btn v2-filter-btn-cat" id="v2-filter-cat-device" data-value="device"
+                                        onclick="v2SetFilter('category','device')" title="Сетевые хосты с открытыми портами">🖥️ Сетевые узлы</button>
+                                </div>
+
+                                <!-- Filter Pills Bar -->
                                 <div class="v2-filter-bar">
-                                    <button class="v2-filter-btn active" id="v2-filter-brand-all" data-value="all"
-                                        onclick="v2SetFilter('brand','all')">Все</button>
+                                    <span style="font-size:0.7rem;color:#64748b;font-weight:700;margin-right:2px;">Фильтры:</span>
                                     <button class="v2-filter-btn v2-filter-btn-live" id="v2-filter-status-live" data-value="live"
-                                        onclick="v2SetFilter('status','live')" title="Только живые камеры с проверенными потоками">🟢 Живые (Live)</button>
+                                        onclick="v2SetFilter('status','live')" title="Только живые устройства с проверенными потоками или веб-панелями">🟢 Живые (Live)</button>
                                     <button class="v2-filter-btn v2-filter-btn-preview" id="v2-filter-status-preview" data-value="preview"
-                                        onclick="v2SetFilter('status','preview')" title="Только камеры со снимками/превью">🖼️ С превью</button>
+                                        onclick="v2SetFilter('status','preview')" title="Только устройства со снимками или веб-скриншотами">🖼️ С превью / скриншотом</button>
                                     <button class="v2-filter-btn v2-filter-btn-auth-open" id="v2-filter-auth-open" data-value="open"
-                                        onclick="v2SetFilter('auth','open')" title="Есть хотя бы один поток с подтверждённым кадром">✓ Видео подтверждено</button>
+                                        onclick="v2SetFilter('auth','open')" title="Подтверждённый доступ">✓ Доступ подтверждён</button>
                                     <button class="v2-filter-btn v2-filter-btn-auth-401" id="v2-filter-auth-401" data-value="401"
-                                        onclick="v2SetFilter('auth','401')" title="Один или несколько сервисов требуют авторизацию">🔒 Требуют авторизацию</button>
+                                        onclick="v2SetFilter('auth','401')" title="Требуют логин и пароль">🔒 Требуют авторизацию</button>
+
+                                    <!-- Vendors (Routers & Cameras) -->
+                                    <span style="border-left:1px solid rgba(255,255,255,0.1);height:14px;margin:0 4px;"></span>
+                                    <button class="v2-filter-btn" id="v2-filter-brand-MikroTik" data-value="MikroTik"
+                                        onclick="v2SetFilter('brand','MikroTik')">MikroTik</button>
+                                    <button class="v2-filter-btn" id="v2-filter-brand-Keenetic" data-value="Keenetic"
+                                        onclick="v2SetFilter('brand','Keenetic')">Keenetic</button>
+                                    <button class="v2-filter-btn" id="v2-filter-brand-TP-Link" data-value="TP-Link"
+                                        onclick="v2SetFilter('brand','TP-Link')">TP-Link</button>
+                                    <button class="v2-filter-btn" id="v2-filter-brand-ASUS" data-value="ASUS"
+                                        onclick="v2SetFilter('brand','ASUS')">ASUS</button>
                                     <button class="v2-filter-btn" id="v2-filter-brand-Hikvision" data-value="Hikvision"
                                         onclick="v2SetFilter('brand','Hikvision')">Hikvision</button>
                                     <button class="v2-filter-btn" id="v2-filter-brand-Dahua" data-value="Dahua"
                                         onclick="v2SetFilter('brand','Dahua')">Dahua</button>
                                     <button class="v2-filter-btn" id="v2-filter-brand-Axis" data-value="Axis"
                                         onclick="v2SetFilter('brand','Axis')">Axis</button>
-                                    <button class="v2-filter-btn" id="v2-filter-brand-Mobotix" data-value="Mobotix"
-                                        onclick="v2SetFilter('brand','Mobotix')">Mobotix</button>
                                     <button class="v2-filter-btn" id="v2-filter-brand-Xiongmai" data-value="Xiongmai"
                                         onclick="v2SetFilter('brand','Xiongmai')">Xiongmai (XM)</button>
-                                    <button class="v2-filter-btn v2-filter-btn-audio" id="v2-filter-brand-SpRecord" data-value="SpRecord"
-                                        onclick="v2SetFilter('brand','SpRecord')" title="Системы записи разговоров SpRecord">🎙️ SpRecord</button>
+
+                                    <!-- Protocols -->
+                                    <span style="border-left:1px solid rgba(255,255,255,0.1);height:14px;margin:0 4px;"></span>
+                                    <button class="v2-filter-btn" id="v2-filter-proto-winbox" data-value="winbox"
+                                        onclick="v2SetFilter('protocol','winbox')">Winbox:8291</button>
                                     <button class="v2-filter-btn" id="v2-filter-proto-onvif" data-value="onvif"
                                         onclick="v2SetFilter('protocol','onvif')">ONVIF</button>
-                                    <button class="v2-filter-btn" id="v2-filter-proto-rtsp_direct"
-                                        data-value="rtsp_direct"
+                                    <button class="v2-filter-btn" id="v2-filter-proto-rtsp_direct" data-value="rtsp_direct"
                                         onclick="v2SetFilter('protocol','rtsp_direct')">RTSP</button>
                                     <button class="v2-filter-btn" id="v2-filter-proto-sofia" data-value="xiongmai_sofia"
                                         onclick="v2SetFilter('protocol','xiongmai_sofia')">Sofia:34567</button>
@@ -1339,33 +1388,6 @@
                                         onclick="v2SetFilter('protocol','dahua_dhip')">DHIP:37777</button>
                                     <button class="v2-filter-btn" id="v2-filter-proto-webrtc" data-value="webrtc"
                                         onclick="v2SetFilter('protocol','webrtc')">WebRTC</button>
-                                    <button class="v2-filter-btn" id="v2-filter-proto-http_snapshot"
-                                        data-value="http_snapshot"
-                                        onclick="v2SetFilter('protocol','http_snapshot')">Snapshots</button>
-                                    <button class="v2-filter-btn v2-filter-btn-audio" id="v2-filter-proto-sprecord"
-                                        data-value="sprecord_audio"
-                                        onclick="v2SetFilter('protocol','sprecord_audio')" title="Аудиозаписи звонков SpRecord">🎙️ Аудиозаписи</button>
-                                </div>
-                                <div class="v2-results-actions">
-                                    <button class="v2-btn-small" id="v2-btn-bulk-capture"
-                                        style="background:rgba(16,185,129,0.2);border:1px solid rgba(16,185,129,0.45);color:#34d399;font-weight:600;"
-                                        onclick="v2ToggleBulkCapture(this)"
-                                        title="Получить недостающие превью всех потоков из базы; уже проверенные кадры пропускаются">📸 Получить все превью</button>
-                                    <button class="v2-btn-small" id="v2-btn-resolve-geo"
-                                        style="background:rgba(14,165,233,0.2);border:1px solid rgba(14,165,233,0.45);color:#38bdf8;font-weight:600;"
-                                        onclick="v2ResolveAllGeo(this)"
-                                        title="Определить город и гео-локацию для всех отсканированных камер">📍
-                                        Определить города</button>
-                                    <button class="v2-btn-small" id="v2-btn-export-401"
-                                        style="background:rgba(245,158,11,0.2);border:1px solid rgba(245,158,11,0.45);color:#fbbf24;font-weight:600;"
-                                        onclick="v2Export401()" title="Скачать список IP:порт камер с ошибкой 401 (для брутфорса)">📋 Экспорт 401</button>
-                                    <button class="v2-btn-small" id="v2-btn-open-bruter"
-                                        style="background:linear-gradient(135deg, rgba(239,68,68,0.25), rgba(185,28,28,0.35));border:1px solid rgba(239,68,68,0.5);color:#fca5a5;font-weight:600;"
-                                        onclick="v2OpenBruterModal()" title="Запустить подбор паролей rtspBrute для камер с 401">🔨 RTSP Brute</button>
-                                    <button class="v2-btn-small v2-btn-green" onclick="v2ExportAllToGo2rtc()">+ Все в
-                                        go2rtc</button>
-                                    <button class="v2-btn-small" onclick="v2ExportJson()">⬇ JSON</button>
-                                    <button class="v2-btn-small v2-btn-danger" onclick="v2ClearResults()">🗑</button>
                                 </div>
                             </div>
 
@@ -1612,7 +1634,7 @@
     <script src="/static/cameras/scanner.js?v=20260814-m7-skip-existing"></script>
     <script src="/static/cameras/go2rtc.js?v=20260814-m7-skip-existing"></script>
     <script src="/static/cameras/strix.js?v=20260818-db-presets-v5"></script>
-    <script src="/static/cameras/scanner_v2.js?v=20260930-geo-bulk-v2"></script>
+    <script src="/static/cameras/scanner_v2.js?v=20261010-devices-ui-v2"></script>
     <script src="/static/city_ip.js?geo_bulk_v2=1&v=20260821-v1"></script>
 </body>
 

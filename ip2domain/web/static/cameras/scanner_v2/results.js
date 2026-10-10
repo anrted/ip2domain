@@ -29,22 +29,51 @@ window.v2MergeResults = v2MergeResults;
 function v2UpdateResultsCount(filteredCount) {
     const el = document.getElementById('v2-results-count');
     if (!el) return;
-    const totalLoaded = (window.V2State.results || []).length;
+    const results = window.V2State.results || [];
+    const totalLoaded = results.length;
     const totalDb = window.V2State.totalInDb || totalLoaded;
     const total = Math.max(totalLoaded, totalDb);
-    const withScreens = (window.V2State.results || []).filter(c =>
-        (c.streams || []).some(s => s.screenshot && String(s.screenshot).trim().length > 0)
-    ).length;
-    const verified = (window.V2State.results || []).filter(c =>
-        (c.streams || []).some(s => s.verified || (s.screenshot && String(s.screenshot).trim().length > 0))
-    ).length;
+
+    let camCount = 0;
+    let routerCount = 0;
+    let webCount = 0;
+    let sprecordCount = 0;
+    let screenCount = 0;
+    let verifiedCount = 0;
+
+    for (const c of results) {
+        if (_isSpRecord(c)) {
+            sprecordCount++;
+        } else if (c.device_category === 'router' || (c.protocols || []).includes('router') || (c.protocols || []).includes('winbox')) {
+            routerCount++;
+        } else if (c.device_category === 'generic_web' || (c.protocols || []).includes('http_generic')) {
+            webCount++;
+        } else if (c.device_category === 'camera' || (!c.device_category && (c.streams || []).length > 0)) {
+            camCount++;
+        }
+
+        const hasScreen = (c.streams || []).some(s => s.screenshot && String(s.screenshot).trim().length > 0);
+        if (hasScreen) screenCount++;
+        const isVerified = (c.streams || []).some(s => s.verified || (s.screenshot && String(s.screenshot).trim().length > 0));
+        if (isVerified) verifiedCount++;
+    }
 
     const fmt = n => Number(n).toLocaleString('ru-RU');
 
+    const details = [];
+    if (camCount > 0) details.push(`🎥 ${fmt(camCount)} камер`);
+    if (routerCount > 0) details.push(`🌐 ${fmt(routerCount)} роутеров`);
+    if (webCount > 0) details.push(`💻 ${fmt(webCount)} веб`);
+    if (sprecordCount > 0) details.push(`🎙️ ${fmt(sprecordCount)} SpRecord`);
+    if (screenCount > 0) details.push(`🖼️ ${fmt(screenCount)} превью`);
+    else if (verifiedCount > 0) details.push(`✓ ${fmt(verifiedCount)} подтверждено`);
+
+    const subText = details.length ? ` <span class="v2-count-sub">(${details.join(' · ')})</span>` : '';
+
     if (filteredCount !== undefined && filteredCount !== total) {
-        el.innerHTML = `<strong>${fmt(filteredCount)}</strong> из ${fmt(total)} IP <span class="v2-count-sub">(${fmt(verified)} с видео · ${fmt(withScreens)} с превью)</span>`;
+        el.innerHTML = `<strong>${fmt(filteredCount)}</strong> из ${fmt(total)} устройств${subText}`;
     } else {
-        el.innerHTML = `<strong>${fmt(total)}</strong> IP <span class="v2-count-sub">(${fmt(verified)} с видео · ${fmt(withScreens)} с превью)</span>`;
+        el.innerHTML = `<strong>${fmt(total)}</strong> устройств${subText}`;
     }
 }
 window.v2UpdateResultsCount = v2UpdateResultsCount;
@@ -195,6 +224,20 @@ function v2RenderResults() {
     if (!grid) return;
 
     let filtered = window.V2State.results || [];
+    if (window.V2State.filterCategory && window.V2State.filterCategory !== 'all') {
+        const cat = window.V2State.filterCategory;
+        if (cat === 'sprecord') {
+            filtered = filtered.filter(c => _isSpRecord(c));
+        } else if (cat === 'camera') {
+            filtered = filtered.filter(c => !_isSpRecord(c) && (c.device_category === 'camera' || (!c.device_category && (c.streams || []).length > 0)));
+        } else if (cat === 'router') {
+            filtered = filtered.filter(c => c.device_category === 'router' || (c.protocols || []).includes('router') || (c.protocols || []).includes('winbox'));
+        } else if (cat === 'generic_web') {
+            filtered = filtered.filter(c => c.device_category === 'generic_web' || (c.protocols || []).includes('http_generic') || (c.protocols || []).includes('http'));
+        } else if (cat === 'device') {
+            filtered = filtered.filter(c => c.device_category === 'device');
+        }
+    }
     if (window.V2State.filterBrand !== 'all') {
         filtered = filtered.filter(c => (c.brand || '').toLowerCase().includes(window.V2State.filterBrand.toLowerCase()));
     }
@@ -250,8 +293,8 @@ function v2RenderResults() {
 
     if (!filtered.length) {
         grid.innerHTML = `<div class="v2-empty-state" style="grid-column:1/-1">
-            <div class="v2-empty-icon">📷</div>
-            <p>Камеры не найдены по выбранным фильтрам.</p>
+            <div class="v2-empty-icon">🌐</div>
+            <p>Устройства не найдены по выбранным фильтрам.</p>
             ${window.V2State.filterGeo !== 'all' || window.V2State.geoSearch ? `<button type="button" class="v2-btn-small" onclick="v2ClearGeoFilter()" style="margin-top:0.5rem">Сбросить гео-фильтр</button>` : ''}
         </div>`;
         if (paginationContainer) paginationContainer.style.display = 'none';
@@ -349,6 +392,15 @@ function _streamScore(s) {
 function v2RenderCameraCard(cam) {
     const safeIp = cam.ip.replace(/\./g, '_');
     const isAudioDevice = _isSpRecord(cam);
+    const isRouter = cam.device_category === 'router' || (cam.protocols || []).includes('router') || (cam.protocols || []).includes('winbox');
+    const isWebDevice = cam.device_category === 'generic_web' || (cam.protocols || []).includes('http_generic') || (cam.protocols || []).includes('http');
+    const isNetworkDevice = cam.device_category === 'device' || (cam.protocols || []).includes('tcp');
+    const isNonCamera = isRouter || isWebDevice || isNetworkDevice;
+
+    const webPort = cam.http_port || (cam.open_ports && cam.open_ports.find(p => [80, 443, 8080, 8443, 8081, 8888, 8181, 9443, 10443, 8000, 8008, 7547].includes(p))) || 80;
+    const isHttps = [443, 8443, 9443, 10443].includes(webPort) || String(webPort).includes('443');
+    const webUrl = cam.web_url || `${isHttps ? 'https' : 'http'}://${cam.ip}:${webPort}/`;
+
     const rawStreams = cam.streams || [];
     const totalStreams = rawStreams.length;
 
@@ -361,7 +413,7 @@ function v2RenderCameraCard(cam) {
     const curStreamObj = streams.find(s => s.url === curSelected);
 
     if (!curSelected || !curStreamObj) {
-        window.V2State.selectedStreams[cam.ip] = bestStream?.url || '';
+        window.V2State.selectedStreams[cam.ip] = bestStream?.url || (isNonCamera ? webUrl : '');
     }
     const currentStreamUrl = window.V2State.selectedStreams[cam.ip];
     const currentStreamObj = streams.find(s => s.url === currentStreamUrl) || streams[0];
@@ -373,7 +425,7 @@ function v2RenderCameraCard(cam) {
     // A frame belongs to exactly one URL, including its port and channel.
     const previewKey = JSON.stringify([cam.ip, currentStreamUrl]);
     const cachedBlobUrl = window.V2State.previewCache[previewKey] || '';
-    const screenshotPath = currentStreamObj?.screenshot || cachedBlobUrl;
+    const screenshotPath = cam.web_screenshot || currentStreamObj?.screenshot || cachedBlobUrl;
 
     // Preview area HTML
     let previewHtml = '';
@@ -422,7 +474,23 @@ function v2RenderCameraCard(cam) {
                         <button class="v2-capture-now-btn" onclick="v2CapturePreview('${_esc(cam.ip)}', event)">▶ Загрузить превью</button>
                     </div>
                 </div>
-                <button class="v2-refresh-preview-btn" onclick="v2CapturePreview('${_esc(cam.ip)}', event)" title="Обновить снимок потока">🔄 Обновить</button>
+                <button class="v2-refresh-preview-btn" onclick="v2CapturePreview('${_esc(cam.ip)}', event)" title="Обновить снимок">🔄 Обновить</button>
+            </div>
+        `;
+    } else if (isNonCamera) {
+        const icon = isRouter ? '🌐' : (isWebDevice ? '💻' : '🖥️');
+        const defaultTitle = isRouter ? 'Роутер / Сетевой шлюз' : (isWebDevice ? 'Веб-сервер / Сервис' : 'Сетевое устройство');
+        previewHtml = `
+            <div class="v2-preview-wrapper" id="v2-preview-box-${safeIp}">
+                <div class="v2-camera-screenshot-placeholder" style="background: radial-gradient(circle at 50% 30%, rgba(30, 41, 59, 0.8), rgba(15, 23, 42, 0.95))">
+                    <div class="v2-placeholder-inner">
+                        <span style="font-size:2rem">${icon}</span>
+                        <div style="font-size:0.75rem;color:#94a3b8;margin-bottom:8px;font-weight:600;max-width:90%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${_esc(cam.web_title || defaultTitle)}">${_esc(cam.web_title || defaultTitle)}</div>
+                        <button class="v2-capture-now-btn" onclick="v2CapturePreview('${_esc(cam.ip)}', event)" title="Сделать скриншот веб-страницы">
+                            ▶ Скриншот страницы
+                        </button>
+                    </div>
+                </div>
             </div>
         `;
     } else {
@@ -440,18 +508,35 @@ function v2RenderCameraCard(cam) {
         `;
     }
 
-    const verified = streams.some(s => s.verified);
-    const verifiedBadge = isAudioDevice
-        ? '<span class="v2-verified-badge" style="background:#059669">🎙️ Аудиосервер</span>'
-        : (verified ? '<span class="v2-verified-badge">✓ Live</span>' : '');
-    const is401 = _isCam401(cam);
-    const authBadge = isAudioDevice
-        ? '<span class="v2-auth-badge auth-open">🔓 admin: без пароля</span>'
-        : (is401
+    const verified = streams.some(s => s.verified) || Boolean(cam.web_screenshot);
+    let verifiedBadge = '';
+    let authBadge = '';
+
+    if (isAudioDevice) {
+        verifiedBadge = '<span class="v2-verified-badge" style="background:#059669">🎙️ Аудиосервер</span>';
+        authBadge = '<span class="v2-auth-badge auth-open">🔓 admin: без пароля</span>';
+    } else if (isRouter) {
+        verifiedBadge = '<span class="v2-verified-badge" style="background:#0284c7">🌐 Роутер</span>';
+        authBadge = cam.auth_required
+            ? '<span class="v2-auth-badge auth-locked" title="Требуется авторизация">🔒 Доступ по паролю</span>'
+            : '<span class="v2-auth-badge auth-open">✓ Веб-панель активна</span>';
+    } else if (isWebDevice) {
+        verifiedBadge = '<span class="v2-verified-badge" style="background:#475569">💻 Веб-сервис</span>';
+        authBadge = cam.auth_required
+            ? '<span class="v2-auth-badge auth-locked" title="Требуется авторизация">🔒 Доступ по паролю</span>'
+            : '<span class="v2-auth-badge auth-open">✓ Сервис онлайн</span>';
+    } else if (isNetworkDevice) {
+        verifiedBadge = '<span class="v2-verified-badge" style="background:#334155">🖥️ Сетевой хост</span>';
+        authBadge = '<span class="v2-auth-badge auth-open">✓ Порты открыты</span>';
+    } else {
+        verifiedBadge = verified ? '<span class="v2-verified-badge">✓ Live</span>' : '';
+        const is401 = _isCam401(cam);
+        authBadge = is401
             ? '<span class="v2-auth-badge auth-locked" title="Один или несколько сервисов требуют авторизацию">🔒 Требуется авторизация</span>'
             : (verified
                 ? '<span class="v2-auth-badge auth-open">✓ Видео подтверждено</span>'
-                : '<span class="v2-auth-badge">○ Видео не подтверждено</span>'));
+                : '<span class="v2-auth-badge">○ Видео не подтверждено</span>');
+    }
 
     let credsBadge = '';
     if (cam.credentials && cam.credentials.user) {
@@ -463,6 +548,7 @@ function v2RenderCameraCard(cam) {
     const badges = protocols.map(p => `<span class="v2-proto-badge ${_protoBadgeClass(p)}">${_protoLabel(p)}</span>`).join('');
 
     // Stream selector dropdown (top 15 streams sorted by quality/preview)
+    const hasMediaStreams = streams.some(s => s.stream_type === 'rtsp' || s.stream_type === 'rtmp' || s.stream_type === 'hls');
     let streamSelectorHtml = '';
     if (isAudioDevice) {
         const recordCountMatch = (cam.model || '').match(/\(([^)]+)\)/);
@@ -478,6 +564,24 @@ function v2RenderCameraCard(cam) {
                 <div style="font-size:0.75rem;color:#94a3b8;margin-top:4px;display:flex;align-items:center;justify-content:space-between">
                     <span>🌐 Портал: <strong style="color:#e2e8f0">${_esc(cam.ip)}:${cam.http_port || 8002}</strong></span>
                     <button type="button" class="v2-btn-small" onclick="v2OpenSpRecordPlayer('${_esc(cam.ip)}')" style="padding:2px 8px;font-size:0.75rem;background:rgba(16,185,129,0.25);color:#34d399;border:1px solid rgba(16,185,129,0.4)">▶ Записи</button>
+                </div>
+            </div>
+        `;
+    } else if (isNonCamera && !hasMediaStreams) {
+        const titleText = cam.web_title || (isRouter ? 'Панель управления' : (isWebDevice ? 'Веб-сервис' : 'Сетевой узел'));
+        streamSelectorHtml = `
+            <div class="v2-stream-selector-row">
+                <div class="v2-stream-info-header">
+                    <span style="color:rgba(255,255,255,0.45)">Веб-интерфейс:</span>
+                    <span class="v2-stream-count-badge" onclick="window.open('${_esc(webUrl)}', '_blank')" title="Открыть веб-интерфейс в новой вкладке" style="background:rgba(2,132,199,0.2);color:#38bdf8;border-color:rgba(2,132,199,0.4);cursor:pointer">
+                        🌐 ${_esc(titleText)}
+                    </span>
+                </div>
+                <div style="font-size:0.75rem;color:#94a3b8;margin-top:4px;display:flex;align-items:center;justify-content:space-between;gap:6px">
+                    <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${_esc(webUrl)}">
+                        🔗 <a href="${_esc(webUrl)}" target="_blank" rel="noopener noreferrer" style="color:#38bdf8;text-decoration:none">${_esc(webUrl)}</a>
+                    </span>
+                    <button type="button" class="v2-btn-small" onclick="window.open('${_esc(webUrl)}', '_blank')" style="padding:2px 8px;font-size:0.75rem;background:rgba(2,132,199,0.25);color:#38bdf8;border:1px solid rgba(2,132,199,0.4);white-space:nowrap">↗ Открыть</button>
                 </div>
             </div>
         `;
@@ -541,6 +645,15 @@ function v2RenderCameraCard(cam) {
             <div class="v2-camera-actions">
                 <button class="v2-camera-btn" onclick="v2OpenSpRecordPlayer('${_esc(cam.ip)}')" title="Открыть аудиоплеер разговоров" style="background:rgba(16,185,129,0.25);color:#6ee7b7;border:1px solid rgba(16,185,129,0.5);font-weight:700">▶ Слушать записи</button>
                 <button class="v2-camera-btn" onclick="window.open('http://${_esc(cam.ip)}:${cam.http_port || 8002}/', '_blank')" title="Открыть веб-интерфейс SpRecord Web" style="background:rgba(59,130,246,0.2);color:#93c5fd;border:1px solid rgba(59,130,246,0.4)">🌐 SpRecord Web</button>
+                <button class="v2-camera-btn" onclick="v2ShowDetails('${_esc(cam.ip)}')" title="Подробности">ℹ️</button>
+            </div>
+        `;
+    } else if (isNonCamera && !hasMediaStreams) {
+        actionsHtml = `
+            <div class="v2-camera-actions">
+                <button class="v2-camera-btn" onclick="window.open('${_esc(webUrl)}', '_blank')" title="Открыть веб-интерфейс в новой вкладке" style="background:rgba(2,132,199,0.25);color:#38bdf8;border:1px solid rgba(2,132,199,0.45);font-weight:600">🌐 Открыть веб</button>
+                <button class="v2-camera-btn" onclick="v2CapturePreview('${_esc(cam.ip)}', event)" title="Снять скриншот веб-страницы" style="background:rgba(59,130,246,0.2);color:#93c5fd;border:1px solid rgba(59,130,246,0.4)">📷 Скриншот</button>
+                <button class="v2-camera-btn" onclick="navigator.clipboard.writeText('${_esc(webUrl)}');alert('Скопировано: ${_esc(webUrl)}')" title="Скопировать URL веб-интерфейса">📋</button>
                 <button class="v2-camera-btn" onclick="v2ShowDetails('${_esc(cam.ip)}')" title="Подробности">ℹ️</button>
             </div>
         `;
@@ -639,10 +752,24 @@ async function v2CapturePreview(ip, event) {
     if (event) event.stopPropagation();
     const safeIp = ip.replace(/\./g, '_');
     let box = document.getElementById(`v2-preview-box-${safeIp}`);
-    const streamUrl = window.V2State.selectedStreams[ip] || '';
+    const cam = (window.V2State.results || []).find(c => c.ip === ip);
+    const isRouter = cam && (cam.device_category === 'router' || (cam.protocols || []).includes('router') || (cam.protocols || []).includes('winbox'));
+    const isWebDevice = cam && (cam.device_category === 'generic_web' || (cam.protocols || []).includes('http_generic'));
+    const isNetworkDevice = cam && cam.device_category === 'device';
+    const isNonCamera = isRouter || isWebDevice || isNetworkDevice;
+
+    let streamUrl = window.V2State.selectedStreams[ip] || '';
+    if (!streamUrl && cam) {
+        streamUrl = cam.web_url || (cam.streams && cam.streams[0]?.url) || '';
+        if (!streamUrl && isNonCamera) {
+            const p = cam.http_port || (cam.open_ports && cam.open_ports[0]) || 80;
+            const scheme = [443, 8443, 9443, 10443].includes(p) ? 'https' : 'http';
+            streamUrl = `${scheme}://${ip}:${p}/`;
+        }
+    }
 
     if (!streamUrl) {
-        alert('Нет URL потока для захвата кадра');
+        alert('Нет URL потока или веб-адреса для захвата кадра');
         return false;
     }
 
@@ -650,12 +777,11 @@ async function v2CapturePreview(ip, event) {
         box.innerHTML = `
             <div class="v2-placeholder-inner" style="background:rgba(0,0,0,0.7)">
                 <div class="v2-spinner" style="width:24px;height:24px;border-width:3px"></div>
-                <span style="font-size:0.7rem;color:#6ee7b7">Захват кадра...</span>
+                <span style="font-size:0.7rem;color:#6ee7b7">${isNonCamera ? 'Захват веб-скриншота...' : 'Захват кадра...'}</span>
             </div>
         `;
     }
 
-    const cam = (window.V2State.results || []).find(c => c.ip === ip);
     const selected = (cam?.streams || []).find(s => s.url === streamUrl);
     const credentials = selected?.credentials ?? cam?.credentials ?? {};
     const user = credentials.user || '';
@@ -683,7 +809,7 @@ async function v2CapturePreview(ip, event) {
                 box.innerHTML = `
                     <div class="v2-placeholder-inner">
                         <span style="font-size:1.6rem">⚠️</span>
-                        <span style="font-size:0.65rem;color:#fca5a5">Поток не ответил</span>
+                        <span style="font-size:0.65rem;color:#fca5a5">${isNonCamera ? 'Скриншот недоступен' : 'Поток не ответил'}</span>
                         <button class="v2-capture-now-btn" onclick="v2CapturePreview('${_esc(ip)}', event)">Повторить</button>
                     </div>
                 `;
@@ -699,8 +825,9 @@ async function v2CapturePreview(ip, event) {
         window.V2State.previewCache[previewKey] = objUrl;
 
         if (cam) {
+            cam.web_screenshot = objUrl;
             for (const s of (cam.streams || [])) {
-                if (s.url === streamUrl) {
+                if (s.url === streamUrl || s.type === 'web_panel') {
                     s.verified = true;
                     s.verification_status = 'verified';
                     s.auth_required = false;
@@ -709,10 +836,10 @@ async function v2CapturePreview(ip, event) {
             }
         }
 
-        if (box && window.V2State.selectedStreams[ip] === streamUrl) {
+        if (box) {
             box.innerHTML = `
                 <img class="v2-camera-screenshot" src="${objUrl}" alt="${_esc(ip)}">
-                <button class="v2-refresh-preview-btn" onclick="v2CapturePreview('${_esc(ip)}', event)" title="Обновить снимок потока">🔄 Обновить</button>
+                <button class="v2-refresh-preview-btn" onclick="v2CapturePreview('${_esc(ip)}', event)" title="Обновить снимок">🔄 Обновить</button>
             `;
         }
 
@@ -720,7 +847,7 @@ async function v2CapturePreview(ip, event) {
         if (card && !card.querySelector('.v2-verified-badge')) {
             const badge = document.createElement('span');
             badge.className = 'v2-verified-badge';
-            badge.textContent = '✓ Live';
+            badge.textContent = isNonCamera ? (isRouter ? '🌐 Роутер' : '💻 Веб-сервис') : '✓ Live';
             card.appendChild(badge);
         }
 

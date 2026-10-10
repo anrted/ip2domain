@@ -153,6 +153,7 @@ class ScannerV2StorageMixin:
         has_preview: bool = False,
         verified_only: bool = False,
         auth_status: str = "all",
+        category: str = "",
     ) -> List[Dict]:
         """Retrieve v2 scanner results, prioritizing cameras with preview/verified streams."""
         with self._get_connection() as conn:
@@ -164,10 +165,13 @@ class ScannerV2StorageMixin:
             if protocol:
                 query += " AND protocols LIKE ?"
                 params.append(f"%{protocol}%")
+            if category:
+                query += " AND result_json LIKE ?"
+                params.append(f'%"device_category": "{category}"%')
             if has_preview:
-                query += " AND (streams_json LIKE '%/v2_captures/%' OR streams_json LIKE '%\"screenshot\": \"/%')"
+                query += " AND (streams_json LIKE '%/v2_captures/%' OR streams_json LIKE '%\"screenshot\": \"/%' OR result_json LIKE '%\"web_screenshot\": \"/%')"
             elif verified_only:
-                query += " AND (streams_json LIKE '%\"verified\": true%' OR streams_json LIKE '%/v2_captures/%')"
+                query += " AND (streams_json LIKE '%\"verified\": true%' OR streams_json LIKE '%/v2_captures/%' OR result_json LIKE '%\"web_screenshot\": \"/%')"
 
             # SQL sorting: cameras with captured screenshots or verified live streams FIRST, then recent
             query += """ ORDER BY 

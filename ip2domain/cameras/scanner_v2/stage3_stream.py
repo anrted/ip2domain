@@ -37,6 +37,12 @@ _FFMPEG_ARGS = {
         "-timeout", "7000000",
         "-analyzeduration", "2000000",
     ],
+    "rtsp_http": [
+        "-rtsp_transport", "http",
+        "-timeout", "7000000",
+        "-analyzeduration", "2000000",
+        "-probesize", "1000000",
+    ],
     "hls": [
         "-protocol_whitelist", "http,https,tcp,tls,file,crypto",
     ],
@@ -96,13 +102,26 @@ async def capture_stream_frame(
     capture_dir.mkdir(parents=True, exist_ok=True)
     final_path = _capture_path(capture_dir, stream_url)
 
+    if stream_type == "http_snapshot":
+        local_path = await _download_http_snapshot(stream_url, capture_dir, credentials)
+        if local_path and _valid_frame(Path(local_path)):
+            w, h = 0, 0
+            try:
+                from PIL import Image
+                with Image.open(local_path) as frame:
+                    w, h = frame.size
+            except Exception:
+                pass
+            return True, str(local_path), "JPEG", w, h
+        return False, "", "", 0, 0
+
     input_url = _format_input_url(stream_url, credentials)
     stype_key = stream_type if stream_type in _FFMPEG_ARGS else "default"
 
-    # For RTSP, try TCP first, then fall back to UDP
+    # For RTSP, try TCP first, then HTTP, then fall back to UDP
     attempts = [stype_key]
-    if stream_type == "rtsp":
-        attempts = ["rtsp", "rtsp_udp"]
+    if stream_type in ("rtsp", "rtsps"):
+        attempts = ["rtsp", "rtsp_http", "rtsp_udp"]
 
     for attempt_key in attempts:
         # Unique output prevents old frames and concurrent requests from

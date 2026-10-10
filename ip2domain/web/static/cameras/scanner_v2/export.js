@@ -501,7 +501,18 @@ function _showV2Toast(msg) {
 
 function v2SetFilter(type, value) {
     window.V2State.visibleCount = window.V2State.pageSize || 48;
-    if (type === 'status') {
+    if (type === 'category') {
+        const cur = window.V2State.filterCategory || 'all';
+        window.V2State.filterCategory = (cur === value && value !== 'all') ? 'all' : value;
+        const activeCat = window.V2State.filterCategory;
+        document.querySelectorAll('.v2-filter-btn-cat').forEach(btn => btn.classList.remove('active'));
+        const targetBtn = document.getElementById(`v2-filter-cat-${activeCat}`);
+        if (targetBtn) {
+            targetBtn.classList.add('active');
+        } else {
+            document.getElementById('v2-filter-cat-all')?.classList.add('active');
+        }
+    } else if (type === 'status') {
         const cur = window.V2State.filterStatus || 'all';
         window.V2State.filterStatus = (cur === value) ? 'all' : value;
         const activeVal = window.V2State.filterStatus;
@@ -517,10 +528,12 @@ function v2SetFilter(type, value) {
         window.V2State.filterBrand = value;
         if (value === 'all') {
             window.V2State.filterProtocol = 'all';
+            window.V2State.filterCategory = 'all';
             window.V2State.filterStatus = 'all';
             window.V2State.filterAuth = 'all';
             document.querySelectorAll('.v2-filter-btn').forEach(btn => btn.classList.remove('active'));
             document.getElementById('v2-filter-brand-all')?.classList.add('active');
+            document.getElementById('v2-filter-cat-all')?.classList.add('active');
             document.getElementById('v2-filter-auth-open')?.classList.remove('active');
             document.getElementById('v2-filter-auth-401')?.classList.remove('active');
         } else {
@@ -537,6 +550,7 @@ function v2SetFilter(type, value) {
 
     const isAll = window.V2State.filterBrand === 'all' &&
                   window.V2State.filterProtocol === 'all' &&
+                  (!window.V2State.filterCategory || window.V2State.filterCategory === 'all') &&
                   (!window.V2State.filterStatus || window.V2State.filterStatus === 'all') &&
                   (!window.V2State.filterAuth || window.V2State.filterAuth === 'all');
     document.getElementById('v2-filter-brand-all')?.classList.toggle('active', isAll);
