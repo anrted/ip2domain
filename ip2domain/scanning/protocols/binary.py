@@ -71,7 +71,7 @@ def smb_response(data):
     dialect=int.from_bytes(data[72:74],'little')
     names={0x202:'2.0.2',0x210:'2.1',0x300:'3.0',0x302:'3.0.2',0x311:'3.1.1'}
     if dialect not in names:return None
-    return dict(dialect='SMB '+names[dialect],version=names[dialect],server_guid=data[76:92].hex(),security_mode=int.from_bytes(data[70:72],'little'))
+    return dict(server="Microsoft Windows / Samba SMB",dialect='SMB '+names[dialect],version=names[dialect],server_guid=data[76:92].hex(),security_mode=int.from_bytes(data[70:72],'little'))
 
 
 def rdp_request():

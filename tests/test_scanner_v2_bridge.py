@@ -198,10 +198,14 @@ def test_smb_and_rdp_probes_registered():
 
 
 def test_smb_and_rdp_parsing():
+    import struct
     from ip2domain.scanning.protocols.binary import smb_response, rdp_response, smb_request, rdp_request
 
     # Test SMB2 response parsing
-    mock_smb_resp = b"\x00\x00\x00\x48\xfeSMB" + b"\x00" * 60 + b"\x02\x02" + b"\x00" * 10
+    header = struct.pack('<4sHHIHHIIQIIQ16s', b'\xfeSMB', 64, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, b'\x00'*16)
+    body = struct.pack('<HHHHI16sQ', 65, 1, 0x202, 0, 0, b'\x01'*16, 0) + b"\x00" * 32
+    payload = header + body
+    mock_smb_resp = b'\x00' + len(payload).to_bytes(3, 'big') + payload
     parsed_smb = smb_response(mock_smb_resp)
     assert parsed_smb is not None
     assert "Microsoft Windows / Samba SMB" in parsed_smb["server"]

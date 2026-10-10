@@ -87,6 +87,8 @@ def merge_host_cameras(cameras: List[CameraResult]) -> Optional[CameraResult]:
     # Credentials belong to their endpoint, never to all cameras behind an IP.
     host.credentials = dict(cameras[0].credentials) if len(cameras) == 1 else {}
     host.auth_required = True if any(c.auth_required is True for c in cameras) else None
+    if host.domain and (443 in host.open_ports or host.http_port == 443 or "443" in str(host.web_url)):
+        host.web_url = f"https://{host.domain}/"
     return host
 
 
@@ -344,6 +346,8 @@ def merge_camera_results(
                     break
             if generic_r.get("domain"):
                 camera.domain = generic_r["domain"]
+            if camera.domain and (443 in open_ports or generic_r.get("http_port") == 443 or "443" in str(camera.web_url)):
+                camera.web_url = f"https://{camera.domain}/"
             # Try HTTP snapshot candidates on the detected HTTP port ONLY for camera candidates
             if generic_r.get("http_port") and generic_r.get("device_category") == "camera":
                 hp = generic_r['http_port']
@@ -361,37 +365,18 @@ def merge_camera_results(
                         f"{base_g}/cgi-bin/camctrl/snapshot.cgi?channel=1",
                         f"{base_g}/cgi-bin/viewer/video.jpg",
                     ])
-                elif "flussonic" in b_low:
-                    flus_streams = [
-                        "live", "stream1", "stream", "cam1", "cam2", "cam3", "cam4",
-                        "1", "2", "3", "4", "p1", "p2", "dvor", "parking", "ch1",
-                    ]
-                    for sname in flus_streams:
-                        embed_u = f"{base_g}/{sname}/embed.html"
-                        if not any(s.url == embed_u for s in camera.streams):
-                            camera.streams.append(StreamInfo(url=embed_u, stream_type="embed"))
-                        h_url = f"{base_g}/{sname}/index.m3u8"
-                        if not any(s.url == h_url for s in camera.streams):
-                            camera.streams.append(StreamInfo(url=h_url, stream_type="hls"))
-                        candidates.append(f"{base_g}/{sname}/preview.jpg")
-                    if camera.domain:
-                        dom_base = f"https://{camera.domain}" if hp == 443 else f"{scheme}://{camera.domain}:{hp}"
-                        for sname in flus_streams[:6]:
-                            e_dom = f"{dom_base}/{sname}/embed.html"
-                            if not any(s.url == e_dom for s in camera.streams):
-                                camera.streams.append(StreamInfo(url=e_dom, stream_type="embed"))
-                            candidates.append(f"{dom_base}/{sname}/preview.jpg")
                 elif "unimo" in b_low:
                     candidates.extend([
                         f"{base_g}/cgi-bin/webapp.cgi?MODE=8&ID=admin&PW=&VER=3000&CH=1",
                         f"{base_g}/cgi-bin/webapp.cgi",
                     ])
-                candidates.extend([
-                    f"{base_g}/jpg/image.jpg",
-                    f"{base_g}/cgi-bin/snapshot.cgi?channel=1",
-                    f"{base_g}/snapshot.jpg",
-                    f"{base_g}/image.jpg",
-                ])
+                if "flussonic" not in b_low:
+                    candidates.extend([
+                        f"{base_g}/jpg/image.jpg",
+                        f"{base_g}/cgi-bin/snapshot.cgi?channel=1",
+                        f"{base_g}/snapshot.jpg",
+                        f"{base_g}/image.jpg",
+                    ])
                 for c_url in candidates:
                     if not any(s.url == c_url for s in camera.streams):
                         camera.streams.append(StreamInfo(url=c_url, stream_type="http_snapshot"))
@@ -703,7 +688,7 @@ def universal_observation_to_camera_result(obs) -> Optional[CameraResult]:
             elif "unimo" in brand_lower or "udrocx" in brand_lower:
                 paths_to_add = _UNIMO_PATHS
             elif "flussonic" in brand_lower:
-                paths_to_add = _FLUSSONIC_PATHS
+                paths_to_add = []
             elif "ants" in brand_lower or "dvr" in brand_lower:
                 paths_to_add = _ANTS_PATHS
             else:
@@ -847,3 +832,49 @@ def project_observation_to_cameras(obs, storage=None) -> Optional[CameraResult]:
             logging.getLogger(__name__).warning("Error projecting camera to storage: %s", err)
 
     return camera
+
+
+def prune_unverified_streams(camera: CameraResult) -> None:
+    """Prune speculative unverified candidate streams from camera.streams.
+
+    Rules:
+    1. Verified streams (frames successfully captured or confirmed) are ALWAYS kept.
+    2. If any stream is verified, all other unverified speculative candidates are discarded.
+    3. If NO stream is verified:
+       - Speculative HTTP snapshot guesses (/jpg/image.jpg, /snapshot.jpg), embed.html,
+         and index.m3u8 guesses that failed are purged.
+       - For media servers (Flussonic), routers, web devices: all failed streams are pruned,
+         keeping only web_panel if present.
+       - For CCTV cameras with open RTSP ports: keep at most 1 canonical primary RTSP URL
+         (e.g. protocol-advertised stream or main RTSP channel) so the device is known to have
+         RTSP endpoints requiring authentication, but discard all multi-path brute-force guesses.
+    """
+    if not camera or not camera.streams:
+        return
+
+    verified = [s for s in camera.streams if s.verified]
+    if verified:
+        camera.streams = verified
+        return
+
+    b_low = (camera.brand or "").lower()
+    cat = getattr(camera, "device_category", "camera")
+    if "flussonic" in b_low or cat in ("server", "router", "generic_web", "device"):
+        camera.streams = [s for s in camera.streams if s.stream_type == "web_panel"]
+        return
+
+    kept = []
+    seen = set()
+    for s in camera.streams:
+        if s.stream_type in ("rtsp", "rtsps") and s.url not in seen:
+            seen.add(s.url)
+            if s.auth_required or s.source_port in (554, 8554) or "/Streaming/Channels" in s.url or "/cam/realmonitor" in s.url:
+                kept.append(s)
+                if len(kept) >= 1:
+                    break
+    if not kept:
+        for s in camera.streams:
+            if s.stream_type in ("rtsp", "rtsps"):
+                kept.append(s)
+                break
+    camera.streams = kept

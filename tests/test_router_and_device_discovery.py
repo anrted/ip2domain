@@ -538,7 +538,7 @@ def test_vivotek_fingerprint_and_candidates():
     asyncio.run(_test())
 
 
-def test_flussonic_fingerprint_and_candidates():
+def test_flussonic_fingerprint_and_clean_discovery():
     from ip2domain.cameras.scanner_v2.protocols.generic_http import probe_generic_http
     from ip2domain.cameras.scanner_v2.aggregation import merge_camera_results
 
@@ -552,13 +552,59 @@ def test_flussonic_fingerprint_and_candidates():
             res = await probe_generic_http("93.85.235.253", [443], [])
             assert res["success"] is True
             assert res["brand"] == "Flussonic"
-            assert res["device_category"] == "camera"
+            assert res["model"] == "Streamer 26.07"
 
             merged = merge_camera_results("93.85.235.253", [443], {"generic_http": res})
             urls = [s.url for s in merged.streams]
-            assert any("/live/preview.jpg" in u for u in urls)
-            assert any("/live/index.m3u8" in u for u in urls)
+            # Flussonic must not be spammed with speculative dummy streams
+            assert not any("/live/preview.jpg" in u for u in urls)
+            assert not any("/live/index.m3u8" in u for u in urls)
+            assert not any("/live/embed.html" in u for u in urls)
     asyncio.run(_test())
+
+
+def test_prune_unverified_streams():
+    from ip2domain.cameras.scanner_v2.models import CameraResult, StreamInfo
+    from ip2domain.cameras.scanner_v2.aggregation import prune_unverified_streams
+
+    # 1. When one stream is verified, failed candidates are discarded
+    cam = CameraResult(
+        ip="1.2.3.4", brand="Hikvision",
+        streams=[
+            StreamInfo(url="rtsp://1.2.3.4:554/Streaming/Channels/101", stream_type="rtsp", verified=True),
+            StreamInfo(url="rtsp://1.2.3.4:554/live/ch0", stream_type="rtsp", verified=False),
+            StreamInfo(url="http://1.2.3.4:80/jpg/image.jpg", stream_type="http_snapshot", verified=False),
+        ]
+    )
+    prune_unverified_streams(cam)
+    assert len(cam.streams) == 1
+    assert cam.streams[0].url == "rtsp://1.2.3.4:554/Streaming/Channels/101"
+    assert cam.streams[0].verified is True
+
+    # 2. For Flussonic, if nothing is verified, all unverified candidates are pruned
+    flus = CameraResult(
+        ip="178.124.169.154", brand="Flussonic", model="Streamer 26.07",
+        streams=[
+            StreamInfo(url="http://178.124.169.154:80/live/embed.html", stream_type="embed", verified=False),
+            StreamInfo(url="http://178.124.169.154:80/live/index.m3u8", stream_type="hls", verified=False),
+        ]
+    )
+    prune_unverified_streams(flus)
+    assert len(flus.streams) == 0
+
+    # 3. For CCTV camera with RTSP port open where all ffmpeg captures failed (e.g. auth required),
+    # keep at most 1 canonical endpoint, prune candidate guesses
+    cam2 = CameraResult(
+        ip="5.6.7.8", brand="Generic RTSP", rtsp_port=554,
+        streams=[
+            StreamInfo(url="rtsp://5.6.7.8:554/Streaming/Channels/101", stream_type="rtsp", verified=False, auth_required=True),
+            StreamInfo(url="rtsp://5.6.7.8:554/live/ch0", stream_type="rtsp", verified=False),
+            StreamInfo(url="http://5.6.7.8:80/jpg/image.jpg", stream_type="http_snapshot", verified=False),
+        ]
+    )
+    prune_unverified_streams(cam2)
+    assert len(cam2.streams) == 1
+    assert cam2.streams[0].url == "rtsp://5.6.7.8:554/Streaming/Channels/101"
 
 
 def test_map_complex_menu_system_fingerprint():

@@ -154,7 +154,7 @@ async def _capture_job_streams(job, capture_dir, storage):
             completed += 1
             job.stage = f"Stage 3: Захвачено превью {completed}/{total}"
             job.progress_pct = 85 + int(completed / max(1, total) * 14)
-            if storage:
+            if stream.verified and storage:
                 storage.save_v2_result(camera.to_dict())
         try:
             if camera.streams:
@@ -164,12 +164,14 @@ async def _capture_job_streams(job, capture_dir, storage):
             job.stage3_status = "error"
             raise
         finally:
+            from .aggregation import prune_unverified_streams
+            prune_unverified_streams(camera)
             completed += 1
             job.stage3_completed += 1
             if storage:
                 storage.save_v2_result(camera.to_dict())
 
-        # 2. Web screenshot capture for routers, web devices, and web cameras
+        # 2. Web screenshot capture for routers, web devices, media servers, and cameras
         from .models import HTTP_PORTS, HTTPS_PORTS
         from .web_capture import capture_web_screenshot
         from .models import StreamInfo as _SI
@@ -178,6 +180,7 @@ async def _capture_job_streams(job, capture_dir, storage):
         should_capture_web = (
             web_port > 0 and (
                 camera.device_category in ("router", "generic_web", "nas", "server")
+                or "flussonic" in (camera.brand or "").lower()
                 or not any(s.verified for s in camera.streams)
             )
         )
@@ -200,7 +203,7 @@ async def _capture_job_streams(job, capture_dir, storage):
                 )
                 if sc_url:
                     camera.web_screenshot = sc_url
-                    if not camera.streams or camera.device_category in ("router", "generic_web"):
+                    if not camera.streams or camera.device_category in ("router", "generic_web", "server") or "flussonic" in (camera.brand or "").lower():
                         camera.streams.insert(0, _SI(
                             url=web_url,
                             stream_type="web_panel",
@@ -678,10 +681,11 @@ async def run_v2_scan_pipeline(
             valid_cameras = []
             verified_count = 0
             for cam in job.results:
+                from .aggregation import prune_unverified_streams
+                prune_unverified_streams(cam)
                 has_verified = any(s.verified for s in cam.streams) or bool(cam.web_screenshot)
                 if has_verified:
                     verified_count += 1
-                # Always save — even unverified cameras/devices with URLs are useful
                 valid_cameras.append(cam)
                 if storage:
                     try:
