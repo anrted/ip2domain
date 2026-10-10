@@ -52,6 +52,14 @@ _CAMERA_BRANDS = {
     "app-webs": "Hikvision",
     "flussonic": "Flussonic",
     "streamer": "Flussonic",
+    "unimo": "Unimo",
+    "udrocx": "Unimo",
+    "vivotek": "Vivotek",
+    "vvtk": "Vivotek",
+    "vvtk-http-server": "Vivotek",
+    "ants_dvr": "Generic DVR",
+    "pcviewx": "Generic DVR",
+    "webcamx": "Generic DVR",
     "novicam": "Novicam",
     "ltv": "LTV",
     "milesight": "Milesight",
@@ -156,7 +164,7 @@ async def _probe_generic_http(
                     www_auth = resp.headers.get("www-authenticate", "")
                     title_m = re.search(r"<title[^>]*>([^<]{1,128})</title>", text, re.IGNORECASE)
                     title = title_m.group(1).strip() if title_m else ""
-                    combined = (title + " " + server + " " + www_auth + " " + text[:512]).lower()
+                    combined = (title + " " + server + " " + www_auth + " " + text).lower()
                     server_l = server.lower()
 
                     # Check TP-Link realm signature (mag_52, mag_*)
@@ -199,6 +207,97 @@ async def _probe_generic_http(
                             "http_port": port,
                             "device_category": "generic_web",
                             "web_url": f"{scheme}://{ip}:{port}/",
+                        })
+                        return result
+
+                    # Menu planning / enterprise web application («МАП Комплекс» / MapWebServer)
+                    if "mapwebserver" in combined or "мап комплекс" in combined:
+                        result.update({
+                            "success": True,
+                            "brand": "МАП Комплекс (Меню)",
+                            "model": "MapWebServer",
+                            "title": title or "МАП Комплекс",
+                            "http_port": port,
+                            "device_category": "generic_web",
+                            "web_url": f"{scheme}://{ip}:{port}/",
+                        })
+                        return result
+
+                    # Unimo DVR ActiveX (UDROCX_H264)
+                    if "udrocx" in combined or "dvr_h264 activex" in combined or "unimo" in combined:
+                        result.update({
+                            "success": True,
+                            "brand": "Unimo",
+                            "model": "DVR_H264",
+                            "title": title or "DVR_H264 ActiveX",
+                            "http_port": port,
+                            "device_category": "camera",
+                            "web_url": f"{scheme}://{ip}:{port}/",
+                            "snapshot_path": "/cgi-bin/webapp.cgi?MODE=8&ID=admin&PW=&VER=3000&CH=1",
+                            "rtsp_path": "/live.sdp",
+                        })
+                        return result
+
+                    # Ants DVR Web Client (ants_dvr / dvr_setup.exe)
+                    if "ants_dvr" in combined or "dvr_setup.exe" in combined or "setdvrip" in combined:
+                        result.update({
+                            "success": True,
+                            "brand": "Generic DVR",
+                            "model": "Ants H.264 DVR",
+                            "title": title or "Web Client (Ants DVR)",
+                            "http_port": port,
+                            "device_category": "camera",
+                            "web_url": f"{scheme}://{ip}:{port}/",
+                            "snapshot_path": "/cgi-bin/snapshot.cgi?channel=1",
+                            "rtsp_path": "/live/ch0",
+                        })
+                        return result
+
+                    # Chinese DVR / IP Camera with Live.html frameset (PCViewX / WebCamX / cookieFun)
+                    if "connect the dvr server" in combined or "pcviewx" in combined or "webcamx" in combined or ("cookiefun.js" in combined and "ocxcookie" in combined) or "main_live.html" in combined:
+                        result.update({
+                            "success": True,
+                            "brand": "Generic DVR",
+                            "model": "H.264 DVR (Live WebViewer)",
+                            "title": title or "DVR WebViewer Live",
+                            "http_port": port,
+                            "device_category": "camera",
+                            "web_url": f"{scheme}://{ip}:{port}/Live.html",
+                            "snapshot_path": "/snapshot.jpg",
+                            "rtsp_path": "/live/ch0",
+                        })
+                        return result
+
+                    # Vivotek Camera / NVR (VVTK-HTTP-Server / realm ND8322P)
+                    if "vvtk-http-server" in server_l or "vivotek" in combined or "vvtk" in combined or 'realm="nd8322' in www_auth.lower():
+                        m = re.search(r"vivotek\s+([a-z0-9_-]+)", title, re.IGNORECASE)
+                        model_val = m.group(1).strip() if m else ("ND8322P" if "nd8322" in combined else "Vivotek Camera/NVR")
+                        result.update({
+                            "success": True,
+                            "brand": "Vivotek",
+                            "model": model_val,
+                            "title": title or f"Vivotek {model_val}",
+                            "http_port": port,
+                            "device_category": "camera",
+                            "web_url": f"{scheme}://{ip}:{port}/",
+                            "snapshot_path": "/cgi-bin/camctrl/snapshot.cgi",
+                            "rtsp_path": "/live.sdp",
+                            "auth_required": resp.status_code == 401 or "digest" in www_auth.lower(),
+                        })
+                        return result
+
+                    # Flussonic Streamer
+                    if "streamer" in server_l or "flussonic" in server_l or "flussonic" in combined:
+                        result.update({
+                            "success": True,
+                            "brand": "Flussonic",
+                            "model": server.strip() or "Flussonic Streamer",
+                            "title": title or "Flussonic Video Server",
+                            "http_port": port,
+                            "device_category": "camera",
+                            "web_url": f"{scheme}://{ip}:{port}/",
+                            "snapshot_path": "/live/preview.jpg",
+                            "rtsp_path": "/live",
                         })
                         return result
 

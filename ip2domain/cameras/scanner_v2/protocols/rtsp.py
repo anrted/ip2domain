@@ -234,6 +234,54 @@ _MILESIGHT_PATHS = [
     "/sub",
 ]
 
+# Vivotek
+_VIVOTEK_PATHS = [
+    "/live.sdp",
+    "/live1.sdp",
+    "/live2.sdp",
+    "/live.sdp?channel=1",
+    "/live.sdp?channel=2",
+    "/video.mp4",
+    "/live/ch0",
+    "/",
+]
+
+# Unimo DVR
+_UNIMO_PATHS = [
+    "/live.sdp",
+    "/ch01.264",
+    "/live/ch0",
+    "/h264",
+    "/0",
+    "/1",
+    "/h264_stream",
+    "/",
+]
+
+# Ants DVR
+_ANTS_PATHS = [
+    "/live/ch0",
+    "/ch01.264",
+    "/ch1.264",
+    "/live.sdp",
+    "/h264",
+    "/0",
+    "/1",
+    "/",
+]
+
+# Flussonic
+_FLUSSONIC_PATHS = [
+    "/live",
+    "/live/index.m3u8",
+    "/stream1",
+    "/stream1/index.m3u8",
+    "/stream",
+    "/ch1",
+    "/",
+]
+
+
 # Tiandy / Grandstream / Foscam / Generic / Other DVR
 _GENERIC_PATHS = [
     "/av0_0",
@@ -314,7 +362,11 @@ _RTSP_BRAND_PATTERNS = [
     (r"grandstream", "Grandstream"),
     (r"tplink|tp-link|tapo", "TP-Link"),
     (r"mobotix", "Mobotix"),
-    (r"vivotek", "Vivotek"),
+    (r"vvtk|vivotek", "Vivotek"),
+    (r"unimo|udrocx", "Unimo"),
+    (r"ants[_-]?dvr", "Generic DVR"),
+    (r"flussonic", "Flussonic"),
+    (r"streamer", "Flussonic"),
     (r"tiandy", "Tiandy"),
     (r"geovision", "GeoVision"),
     (r"milesight", "Milesight"),
@@ -534,6 +586,14 @@ async def probe_rtsp_direct(
                 probe_paths = _PANASONIC_PATHS + [p for p in db_brand_paths if p not in _PANASONIC_PATHS]
             elif result["brand"] == "Hanwha":
                 probe_paths = _SAMSUNG_PATHS + [p for p in db_brand_paths if p not in _SAMSUNG_PATHS]
+            elif result["brand"] == "Vivotek":
+                probe_paths = _VIVOTEK_PATHS + [p for p in db_brand_paths if p not in _VIVOTEK_PATHS]
+            elif result["brand"] == "Unimo":
+                probe_paths = _UNIMO_PATHS + [p for p in db_brand_paths if p not in _UNIMO_PATHS]
+            elif result["brand"] == "Flussonic":
+                probe_paths = _FLUSSONIC_PATHS + [p for p in db_brand_paths if p not in _FLUSSONIC_PATHS]
+            elif result["brand"] == "Generic DVR":
+                probe_paths = _ANTS_PATHS + [p for p in db_brand_paths if p not in _ANTS_PATHS]
             elif db_brand_paths:
                 probe_paths = db_brand_paths[:60]
             else:

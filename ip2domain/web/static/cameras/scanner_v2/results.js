@@ -122,7 +122,8 @@ const _V2_CAMERA_BRAND_PATTERNS = [
     'wisenet', 'samsung', 'topsvision', 'topsee', 'jovision', 'h264', 'netip', 'netsurveillance',
     'cp plus', 'bosch', 'pelco', 'vivotek', 'grandstream', 'beward', 'activecam', 'polyvision',
     'novicam', 'ltv', 'milesight', 'tvt', 'sunell', 'avigilon', 'flir', 'ubiquiti unifi', 'tapo',
-    'tl-sc', 'vstarcam', 'sricam', 'srihome', 'herospeed', 'onvif'
+    'tl-sc', 'vstarcam', 'sricam', 'srihome', 'herospeed', 'onvif', 'unimo', 'udrocx', 'ants',
+    'vvtk', 'nd8322p'
 ];
 
 const _V2_CAMERA_PROTOCOLS = [

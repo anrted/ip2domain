@@ -17,6 +17,10 @@ from .protocols.rtsp import (
     _REOLINK_PATHS,
     _BEWARD_PATHS,
     _SAMSUNG_PATHS,
+    _VIVOTEK_PATHS,
+    _UNIMO_PATHS,
+    _ANTS_PATHS,
+    _FLUSSONIC_PATHS,
     _GENERIC_PATHS,
 )
 from .protocols.rtmp import _RTMP_PATHS
@@ -29,7 +33,8 @@ _KNOWN_CAMERA_BRAND_SUBSTRINGS = (
     "wisenet", "samsung", "topsvision", "topsee", "jovision", "h264", "netip", "netsurveillance",
     "cp plus", "bosch", "pelco", "vivotek", "grandstream", "beward", "activecam", "polyvision",
     "novicam", "ltv", "milesight", "tvt", "sunell", "avigilon", "flir", "ubiquiti unifi", "tapo",
-    "tl-sc", "vstarcam", "sricam", "srihome", "herospeed", "onvif",
+    "tl-sc", "vstarcam", "sricam", "srihome", "herospeed", "onvif", "unimo", "udrocx", "ants",
+    "vvtk", "nd8322p", "pcviewx", "webcamx",
 )
 
 def _is_camera_brand(brand: str) -> bool:
@@ -346,6 +351,30 @@ def merge_camera_results(
                 candidates = []
                 if generic_r.get("snapshot_path"):
                     candidates.append(f"{base_g}{generic_r['snapshot_path']}")
+                b_low = (camera.brand or "").lower()
+                if "vivotek" in b_low or "vvtk" in b_low:
+                    candidates.extend([
+                        f"{base_g}/cgi-bin/camctrl/snapshot.cgi",
+                        f"{base_g}/cgi-bin/camctrl/snapshot.cgi?channel=0",
+                        f"{base_g}/cgi-bin/camctrl/snapshot.cgi?channel=1",
+                        f"{base_g}/cgi-bin/viewer/video.jpg",
+                    ])
+                elif "flussonic" in b_low:
+                    candidates.extend([
+                        f"{base_g}/live/preview.jpg",
+                        f"{base_g}/stream1/preview.jpg",
+                        f"{base_g}/stream/preview.jpg",
+                        f"{base_g}/ch1/preview.jpg",
+                    ])
+                    for hls_path in ("/live/index.m3u8", "/stream1/index.m3u8", "/stream/index.m3u8", "/ch1/index.m3u8"):
+                        h_url = f"{base_g}{hls_path}"
+                        if not any(s.url == h_url for s in camera.streams):
+                            camera.streams.append(StreamInfo(url=h_url, stream_type="hls"))
+                elif "unimo" in b_low:
+                    candidates.extend([
+                        f"{base_g}/cgi-bin/webapp.cgi?MODE=8&ID=admin&PW=&VER=3000&CH=1",
+                        f"{base_g}/cgi-bin/webapp.cgi",
+                    ])
                 candidates.extend([
                     f"{base_g}/jpg/image.jpg",
                     f"{base_g}/cgi-bin/snapshot.cgi?channel=1",
@@ -658,6 +687,14 @@ def universal_observation_to_camera_result(obs) -> Optional[CameraResult]:
                 paths_to_add = _BEWARD_PATHS
             elif "samsung" in brand_lower or "hanwha" in brand_lower:
                 paths_to_add = _SAMSUNG_PATHS[:6]
+            elif "vivotek" in brand_lower or "vvtk" in brand_lower:
+                paths_to_add = _VIVOTEK_PATHS
+            elif "unimo" in brand_lower or "udrocx" in brand_lower:
+                paths_to_add = _UNIMO_PATHS
+            elif "flussonic" in brand_lower:
+                paths_to_add = _FLUSSONIC_PATHS
+            elif "ants" in brand_lower or "dvr" in brand_lower:
+                paths_to_add = _ANTS_PATHS
             else:
                 brand_db_paths = _get_brand_rtsp_paths(camera.brand)
                 if brand_db_paths:

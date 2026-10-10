@@ -458,6 +458,128 @@ def test_camera_with_both_rtsp_and_web_ports():
     assert "http://192.168.1.100:80/jpg/image.jpg" in urls
 
 
+def test_unimo_dvr_activex_fingerprint():
+    from ip2domain.cameras.scanner_v2.protocols.generic_http import probe_generic_http
+
+    async def _test():
+        mock_resp = AsyncMock()
+        mock_resp.text = "<html><head><title>DVR_H264 ActiveX</title></head><body><object codebase='UDROCX_H264.cab#Version=1,13,0,0'></object></body></html>"
+        mock_resp.headers = {"server": "thttpd/2.25b"}
+        mock_resp.status_code = 200
+
+        with patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=mock_resp):
+            res = await probe_generic_http("86.57.132.236", [85], [])
+            assert res["success"] is True
+            assert res["brand"] == "Unimo"
+            assert res["model"] == "DVR_H264"
+            assert res["device_category"] == "camera"
+            assert res["http_port"] == 85
+            assert "webapp.cgi" in res["snapshot_path"]
+    asyncio.run(_test())
+
+
+def test_ants_dvr_fingerprint():
+    from ip2domain.cameras.scanner_v2.protocols.generic_http import probe_generic_http
+
+    async def _test():
+        mock_resp = AsyncMock()
+        mock_resp.text = "<html><head><title>Web Client</title><script>var ants_dvr = document.getElementById('ants_dvr'); ants_dvr.SetDVRIP(dev);</script></head><body><a href='dvr_setup.exe'>Download</a></body></html>"
+        mock_resp.headers = {}
+        mock_resp.status_code = 200
+
+        with patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=mock_resp):
+            res = await probe_generic_http("82.209.206.147", [88], [])
+            assert res["success"] is True
+            assert res["brand"] == "Generic DVR"
+            assert res["model"] == "Ants H.264 DVR"
+            assert res["device_category"] == "camera"
+            assert res["http_port"] == 88
+    asyncio.run(_test())
+
+
+def test_chinese_dvr_live_html_fingerprint():
+    from ip2domain.cameras.scanner_v2.protocols.generic_http import probe_generic_http
+
+    async def _test():
+        mock_resp = AsyncMock()
+        mock_resp.text = '<html><script src="cookieFun.js"></script><script>var Msg="Please open another IE application to connect the DVR server!";</script></html>'
+        mock_resp.headers = {}
+        mock_resp.status_code = 200
+
+        with patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=mock_resp):
+            res = await probe_generic_http("86.57.152.122", [5550], [])
+            assert res["success"] is True
+            assert res["brand"] == "Generic DVR"
+            assert res["device_category"] == "camera"
+            assert res["web_url"].endswith("/Live.html")
+    asyncio.run(_test())
+
+
+def test_vivotek_fingerprint_and_candidates():
+    from ip2domain.cameras.scanner_v2.protocols.generic_http import probe_generic_http
+    from ip2domain.cameras.scanner_v2.aggregation import merge_camera_results
+
+    async def _test():
+        mock_resp = AsyncMock()
+        mock_resp.text = "<html><head><title>Vivotek ND8322P</title></head></html>"
+        mock_resp.headers = {"server": "VVTK-HTTP-Server", "www-authenticate": 'Digest realm="ND8322P"'}
+        mock_resp.status_code = 200
+
+        with patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=mock_resp):
+            res = await probe_generic_http("213.184.224.100", [80], [])
+            assert res["success"] is True
+            assert res["brand"] == "Vivotek"
+            assert res["model"] == "ND8322P"
+            assert res["device_category"] == "camera"
+
+            merged = merge_camera_results("213.184.224.100", [80], {"generic_http": res})
+            urls = [s.url for s in merged.streams]
+            assert "http://213.184.224.100:80/cgi-bin/camctrl/snapshot.cgi" in urls
+    asyncio.run(_test())
+
+
+def test_flussonic_fingerprint_and_candidates():
+    from ip2domain.cameras.scanner_v2.protocols.generic_http import probe_generic_http
+    from ip2domain.cameras.scanner_v2.aggregation import merge_camera_results
+
+    async def _test():
+        mock_resp = AsyncMock()
+        mock_resp.text = "<html><head><title>Flussonic</title></head></html>"
+        mock_resp.headers = {"server": "Streamer 26.07"}
+        mock_resp.status_code = 200
+
+        with patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=mock_resp):
+            res = await probe_generic_http("93.85.235.253", [443], [])
+            assert res["success"] is True
+            assert res["brand"] == "Flussonic"
+            assert res["device_category"] == "camera"
+
+            merged = merge_camera_results("93.85.235.253", [443], {"generic_http": res})
+            urls = [s.url for s in merged.streams]
+            assert any("/live/preview.jpg" in u for u in urls)
+            assert any("/live/index.m3u8" in u for u in urls)
+    asyncio.run(_test())
+
+
+def test_map_complex_menu_system_fingerprint():
+    from ip2domain.cameras.scanner_v2.protocols.generic_http import probe_generic_http
+
+    async def _test():
+        mock_resp = AsyncMock()
+        mock_resp.text = '<html><head><title>МАП Комплекс [8077]</title><link href="/mapwebserver.dll/cache/Map.ico"></head></html>'
+        mock_resp.headers = {"server": "Apache/2.4.10 (Win32)"}
+        mock_resp.status_code = 200
+
+        with patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=mock_resp):
+            res = await probe_generic_http("82.209.194.111", [8088], [])
+            assert res["success"] is True
+            assert res["brand"] == "МАП Комплекс (Меню)"
+            assert res["model"] == "MapWebServer"
+            assert res["device_category"] == "generic_web"
+    asyncio.run(_test())
+
+
+
 
 
 
