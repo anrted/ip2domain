@@ -388,6 +388,77 @@ def test_plain_website_generic_web_not_rvi():
     asyncio.run(_test())
 
 
+def test_icecast_server_fingerprint():
+    from ip2domain.cameras.scanner_v2.protocols.generic_http import probe_generic_http
+
+    async def _test():
+        mock_resp = AsyncMock()
+        mock_resp.text = "<html><head><title>Icecast Streaming Media Server</title></head><body><h1>Icecast2 Status</h1></body></html>"
+        mock_resp.headers = {"server": "Icecast 2.4.4"}
+        mock_resp.status_code = 200
+
+        with patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=mock_resp):
+            res = await probe_generic_http("134.17.94.177", [8000], [])
+            assert res["success"] is True
+            assert res["brand"] == "Icecast"
+            assert res["device_category"] == "generic_web"
+            assert res["http_port"] == 8000
+    asyncio.run(_test())
+
+
+def test_hplc_simulator_fingerprint():
+    from ip2domain.cameras.scanner_v2.protocols.generic_http import probe_generic_http
+
+    async def _test():
+        mock_resp = AsyncMock()
+        mock_resp.text = "<html><head><title>HPLC Simulator</title></head><body>High Performance Liquid Chromatography Simulator</body></html>"
+        mock_resp.headers = {"server": "Apache/2.4.37"}
+        mock_resp.status_code = 200
+
+        with patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=mock_resp):
+            res = await probe_generic_http("hplcsim.com", [443], [])
+            assert res["success"] is True
+            assert res["brand"] == "HPLC Simulator"
+            assert res["device_category"] == "generic_web"
+    asyncio.run(_test())
+
+
+def test_camera_with_both_rtsp_and_web_ports():
+    from ip2domain.cameras.scanner_v2.aggregation import merge_camera_results
+    from ip2domain.cameras.scanner_v2.models import StreamInfo
+
+    res_map = {
+        "generic_http": {
+            "success": True,
+            "brand": "Hikvision",
+            "model": "DS-2CD2043G0-I",
+            "title": "Hikvision Web",
+            "device_category": "camera",
+            "http_port": 80,
+            "web_url": "http://192.168.1.100:80/",
+            "snapshot_path": "/jpg/image.jpg",
+        },
+        "rtsp": {
+            "success": True,
+            "streams": [
+                StreamInfo(url="rtsp://192.168.1.100:554/Streaming/Channels/101", stream_type="rtsp", source_port=554)
+            ],
+            "rtsp_port": 554,
+        }
+    }
+    merged = merge_camera_results("192.168.1.100", [80, 554], res_map)
+    assert merged is not None
+    assert merged.device_category == "camera"
+    assert merged.brand == "Hikvision"
+    assert merged.http_port == 80
+    assert merged.rtsp_port == 554
+    assert merged.web_url == "http://192.168.1.100:80/"
+    urls = [s.url for s in merged.streams]
+    assert "rtsp://192.168.1.100:554/Streaming/Channels/101" in urls
+    assert "http://192.168.1.100:80/jpg/image.jpg" in urls
+
+
+
 
 
 

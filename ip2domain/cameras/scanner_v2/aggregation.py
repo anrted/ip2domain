@@ -100,7 +100,7 @@ def merge_camera_results(
     sofia_r = res_map.get("sofia", {})
     dahua_media_r = res_map.get("dahua_media", {})
     ingram_r = res_map.get("ingram", {})
-    generic_r = res_map.get("generic", {})
+    generic_r = res_map.get("generic") or res_map.get("generic_http", {})
 
     camera = CameraResult(ip=ip, open_ports=sorted(open_ports))
     detected = False
@@ -190,6 +190,13 @@ def merge_camera_results(
         for url in rtsp_r.get("rtsp_urls", []):
             if not any(s.url == url for s in camera.streams):
                 camera.streams.append(StreamInfo(url=url, stream_type="rtsp"))
+        for item in rtsp_r.get("streams", []):
+            u = item.url if hasattr(item, "url") else (item.get("url") if isinstance(item, dict) else str(item))
+            if u and not any(s.url == u for s in camera.streams):
+                if isinstance(item, StreamInfo):
+                    camera.streams.append(item)
+                else:
+                    camera.streams.append(StreamInfo(url=u, stream_type="rtsp"))
         detected = True
 
     # 7. RTMP

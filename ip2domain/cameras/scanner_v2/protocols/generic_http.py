@@ -134,16 +134,30 @@ async def _probe_generic_http(
                 pass
 
             creds_to_try = credentials[:2] if credentials else [("", "")]
+            scheme = "https" if port in (443, 8443, 9443, 10443) or "443" in str(port) else "http"
             for user, password in creds_to_try:
                 auth = (user, password) if user else None
                 try:
-                    resp = await client.get(f"http://{ip}:{port}/", auth=auth, timeout=3.0)
+                    try:
+                        resp = await client.get(f"{scheme}://{ip}:{port}/", auth=auth, timeout=3.0)
+                    except Exception:
+                        if scheme == "http":
+                            resp = await client.get(f"https://{ip}:{port}/", auth=auth, timeout=3.0)
+                            scheme = "https"
+                        else:
+                            raise
+
+                    if resp.status_code == 400 and ("https" in resp.text.lower() or "ssl" in resp.text.lower()):
+                        resp = await client.get(f"https://{ip}:{port}/", auth=auth, timeout=3.0)
+                        scheme = "https"
+
                     text = resp.text[:4096]
                     server = resp.headers.get("server", "")
                     www_auth = resp.headers.get("www-authenticate", "")
                     title_m = re.search(r"<title[^>]*>([^<]{1,128})</title>", text, re.IGNORECASE)
                     title = title_m.group(1).strip() if title_m else ""
                     combined = (title + " " + server + " " + www_auth + " " + text[:512]).lower()
+                    server_l = server.lower()
 
                     # Check TP-Link realm signature (mag_52, mag_*)
                     if re.search(r'realm=["\']mag_\d+["\']', www_auth, re.IGNORECASE):
@@ -154,7 +168,7 @@ async def _probe_generic_http(
                             "title": title or "Wireless Surveillance Camera",
                             "http_port": port,
                             "device_category": "camera",
-                            "web_url": f"http://{ip}:{port}/",
+                            "web_url": f"{scheme}://{ip}:{port}/",
                             "auth_required": resp.status_code == 401,
                             "snapshot_path": "/jpg/image.jpg",
                             "rtsp_path": "/video.mp4",
@@ -163,8 +177,32 @@ async def _probe_generic_http(
                             result["credentials"] = {"user": user, "password": password}
                         return result
 
+                    # Dedicated web / media server detection (Icecast, HPLC simulator, etc.)
+                    if "icecast" in server_l or "icecast" in combined:
+                        result.update({
+                            "success": True,
+                            "brand": "Icecast",
+                            "model": server.strip() or "Icecast Media Server",
+                            "title": title or "Icecast Streaming Media Server",
+                            "http_port": port,
+                            "device_category": "generic_web",
+                            "web_url": f"{scheme}://{ip}:{port}/",
+                        })
+                        return result
+
+                    if "hplc simulator" in combined or "hplcsim" in combined:
+                        result.update({
+                            "success": True,
+                            "brand": "HPLC Simulator",
+                            "model": "Web Application",
+                            "title": title or "HPLC Simulator",
+                            "http_port": port,
+                            "device_category": "generic_web",
+                            "web_url": f"{scheme}://{ip}:{port}/",
+                        })
+                        return result
+
                     brand = ""
-                    server_l = server.lower()
 
                     # 1. Specialized surveillance server headers
                     if any(s in server_l for s in ("dnvrs", "hikvision-webs", "app-webs", "dvrdvs-webs")):
@@ -201,7 +239,7 @@ async def _probe_generic_http(
                             "title": title,
                             "http_port": port,
                             "device_category": "camera",
-                            "web_url": f"http://{ip}:{port}/",
+                            "web_url": f"{scheme}://{ip}:{port}/",
                         })
                         return result
 

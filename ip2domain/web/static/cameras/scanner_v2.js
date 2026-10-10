@@ -1322,10 +1322,13 @@ function v2RenderCameraCard(cam) {
             </div>
         `;
     } else {
+        const hasWebInterface = Boolean(cam.http_port || (cam.open_ports && cam.open_ports.some(p => [80, 443, 8080, 8443, 8081, 8888, 8181, 9443, 10443, 8000, 8008, 7547, 8001].includes(p))));
+        const webBtn = hasWebInterface ? `<button class="v2-camera-btn" onclick="window.open('${_esc(webUrl)}', '_blank')" title="Открыть веб-интерфейс (${_esc(webUrl)})" style="background:rgba(2,132,199,0.2);color:#38bdf8;border:1px solid rgba(2,132,199,0.4)">🌐 Веб</button>` : '';
         actionsHtml = `
             <div class="v2-camera-actions">
                 <button class="v2-camera-btn" onclick="v2OpenSelectedStreamPlayer('${_esc(cam.ip)}')" title="Тест видеопотока в реальном времени (WebRTC / MSE плеер)" style="background:rgba(99,102,241,0.25);color:#c4b5fd;border:1px solid rgba(99,102,241,0.45);font-weight:600">▶ Тест</button>
                 ${goBtn}
+                ${webBtn}
                 <button class="v2-camera-btn" onclick="v2CopySelectedUrl('${_esc(cam.ip)}')" title="Скопировать выбранный URL">📋</button>
                 <button class="v2-camera-btn" onclick="v2OpenStreamModal('${_esc(cam.ip)}')" title="Просмотр всех ${totalStreams} потоков">⚡ ${totalStreams}</button>
                 <button class="v2-camera-btn" onclick="v2ShowDetails('${_esc(cam.ip)}')" title="Подробности">ℹ️</button>
