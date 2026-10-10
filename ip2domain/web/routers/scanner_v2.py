@@ -255,6 +255,62 @@ async def export_401_cameras(format: str = Query(default="txt")):
         )
 
 
+@router.get("/export/ips")
+@router.get("/results/export-ips")
+async def export_filtered_ips(
+    category: str = Query(default="all"),
+    brand: str = Query(default="all"),
+    protocol: str = Query(default="all"),
+    status: str = Query(default="all"),
+    auth_status: str = Query(default="all"),
+):
+    """Export clean plain-text list of IP addresses (without ports) matching active filters."""
+    has_preview = status == "preview"
+    verified_only = status == "live"
+    cat_param = "" if category == "all" else category
+    brand_param = "" if brand == "all" else brand
+    proto_param = "" if protocol == "all" else protocol
+
+    results = storage.get_v2_results(
+        limit=100000,
+        brand=brand_param,
+        protocol=proto_param,
+        has_preview=has_preview,
+        verified_only=verified_only,
+        auth_status=auth_status,
+        category=cat_param,
+    )
+
+    seen = set()
+    ips = []
+    for c in results:
+        ip = (c.get("ip") or "").strip()
+        if ip.startswith("http://") or ip.startswith("https://"):
+            ip = ip.split("//")[-1].split("/")[0]
+        if ":" in ip and not ip.startswith("["):
+            ip = ip.split(":")[0]
+        if ip and ip not in seen:
+            seen.add(ip)
+            ips.append(ip)
+
+    parts = ["ips"]
+    if category != "all":
+        parts.append(category)
+    if brand != "all":
+        parts.append(brand.lower().replace(" ", "_"))
+    if status != "all":
+        parts.append(status)
+    filename = f"{'_'.join(parts)}_{len(ips)}.txt"
+
+    content = "\n".join(ips) + ("\n" if ips else "")
+    return Response(
+        content=content,
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+
 @router.get("/results/{ip}")
 async def get_result(ip: str):
     result = storage.get_v2_result(ip)

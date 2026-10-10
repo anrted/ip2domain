@@ -318,4 +318,22 @@ def test_merge_camera_results_tplink_sc():
     assert "rtsp://82.209.197.84:8082/video.mp4" in stream_urls
 
 
+def test_export_filtered_ips_endpoint():
+    from fastapi.testclient import TestClient
+    from ip2domain.web.app import app
+
+    client = TestClient(app)
+    # Test export with brand filter
+    resp = client.get("/api/v2/export/ips?brand=TP-Link")
+    assert resp.status_code == 200
+    assert "text/plain" in resp.headers["content-type"]
+    text = resp.text
+    # Should be clean list of IPs without ports (no colons)
+    lines = [line.strip() for line in text.strip().splitlines() if line.strip()]
+    for line in lines:
+        assert ":" not in line
+        assert not line.startswith("http")
+
+
+
 

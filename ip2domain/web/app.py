@@ -73,6 +73,7 @@ async def require_authentication(request: Request, call_next):
         or request.url.path.startswith("/api/strix/asn-prefixes")
         or request.url.path.startswith("/api/asn/lookup")
         or request.url.path.startswith("/api/v2/tools")
+        or request.url.path.startswith("/api/v2/export")
         or request.url.path.startswith("/api/v2/resolve_geo")
         or request.url.path.startswith("/api/v2/results/resolve-geo")
         or request.url.path.startswith("/api/geo/")

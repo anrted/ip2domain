@@ -219,10 +219,7 @@ function _isCam401(c) {
 
 window._isCam401 = _isCam401;
 
-function v2RenderResults() {
-    const grid = document.getElementById('v2-camera-grid');
-    if (!grid) return;
-
+function v2GetFilteredResults() {
     let filtered = window.V2State.results || [];
     if (window.V2State.filterCategory && window.V2State.filterCategory !== 'all') {
         const cat = window.V2State.filterCategory;
@@ -238,10 +235,10 @@ function v2RenderResults() {
             filtered = filtered.filter(c => c.device_category === 'device');
         }
     }
-    if (window.V2State.filterBrand !== 'all') {
+    if (window.V2State.filterBrand && window.V2State.filterBrand !== 'all') {
         filtered = filtered.filter(c => (c.brand || '').toLowerCase().includes(window.V2State.filterBrand.toLowerCase()));
     }
-    if (window.V2State.filterProtocol !== 'all') {
+    if (window.V2State.filterProtocol && window.V2State.filterProtocol !== 'all') {
         if (window.V2State.filterProtocol === 'sprecord_audio' || window.V2State.filterProtocol === 'sprecord') {
             filtered = filtered.filter(c => _isSpRecord(c));
         } else {
@@ -285,7 +282,15 @@ function v2RenderResults() {
             (c.ip || '').includes(q)
         );
     }
+    return filtered;
+}
+window.v2GetFilteredResults = v2GetFilteredResults;
 
+function v2RenderResults() {
+    const grid = document.getElementById('v2-camera-grid');
+    if (!grid) return;
+
+    let filtered = v2GetFilteredResults();
     v2UpdateResultsCount(filtered.length);
     v2UpdateGeoDropdown();
 

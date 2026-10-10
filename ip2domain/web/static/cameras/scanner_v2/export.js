@@ -115,6 +115,219 @@ function v2Export401() {
 }
 window.v2Export401 = v2Export401;
 
+function v2GetActiveFilterSummary() {
+    const parts = [];
+    if (window.V2State.filterCategory && window.V2State.filterCategory !== 'all') {
+        const catMap = {
+            'camera': 'Камеры',
+            'router': 'Роутеры и шлюзы',
+            'generic_web': 'Веб-сервисы',
+            'sprecord': 'SpRecord Аудио',
+            'device': 'Сетевые узлы'
+        };
+        parts.push(`Тип: ${catMap[window.V2State.filterCategory] || window.V2State.filterCategory}`);
+    }
+    if (window.V2State.filterBrand && window.V2State.filterBrand !== 'all') {
+        parts.push(`Бренд: ${window.V2State.filterBrand}`);
+    }
+    if (window.V2State.filterProtocol && window.V2State.filterProtocol !== 'all') {
+        parts.push(`Протокол: ${window.V2State.filterProtocol}`);
+    }
+    if (window.V2State.filterStatus && window.V2State.filterStatus !== 'all') {
+        parts.push(window.V2State.filterStatus === 'live' ? 'Только Live' : 'С превью');
+    }
+    if (window.V2State.filterAuth === '401') {
+        parts.push('Требуют авторизацию (401)');
+    } else if (window.V2State.filterAuth === 'open') {
+        parts.push('Без авторизации');
+    }
+    if (window.V2State.filterGeo && window.V2State.filterGeo !== 'all') {
+        parts.push(`Гео: ${window.V2State.filterGeo}`);
+    }
+    if (window.V2State.geoSearch && window.V2State.geoSearch.trim()) {
+        parts.push(`Поиск: "${window.V2State.geoSearch.trim()}"`);
+    }
+    return parts.length ? parts.join(' · ') : 'Все устройства (без фильтрации)';
+}
+window.v2GetActiveFilterSummary = v2GetActiveFilterSummary;
+
+function v2GetFilteredIpsList() {
+    const filtered = (typeof window.v2GetFilteredResults === 'function')
+        ? window.v2GetFilteredResults()
+        : (window.V2State.results || []);
+
+    const seen = new Set();
+    const ips = [];
+    for (const c of filtered) {
+        let ip = (c.ip || '').trim();
+        if (ip.startsWith('http://') || ip.startsWith('https://')) {
+            ip = ip.split('//')[1].split('/')[0];
+        }
+        if (ip.includes(':') && !ip.startsWith('[')) {
+            ip = ip.split(':')[0];
+        }
+        if (ip && !seen.has(ip)) {
+            seen.add(ip);
+            ips.push(ip);
+        }
+    }
+    return ips;
+}
+window.v2GetFilteredIpsList = v2GetFilteredIpsList;
+
+function v2OpenExportIpsModal() {
+    document.getElementById('v2-export-ips-modal-overlay')?.remove();
+
+    const ips = v2GetFilteredIpsList();
+    const filterDesc = v2GetActiveFilterSummary();
+    const ipText = ips.join('\n');
+
+    const overlay = document.createElement('div');
+    overlay.className = 'v2-modal-overlay';
+    overlay.id = 'v2-export-ips-modal-overlay';
+    overlay.onclick = (e) => { if (e.target === overlay) v2CloseExportIpsModal(); };
+
+    overlay.innerHTML = `
+        <div class="v2-modal-content" style="max-width:620px">
+            <div class="v2-modal-header">
+                <div class="v2-modal-title">
+                    <span>📄</span>
+                    <span>Экспорт списка IP-адресов</span>
+                </div>
+                <button class="v2-modal-close" onclick="v2CloseExportIpsModal()">✕</button>
+            </div>
+            <div class="v2-modal-body" style="padding:1.2rem;display:flex;flex-direction:column;gap:0.85rem;">
+                <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:0.75rem 1rem;font-size:0.8rem;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                        <span style="color:#94a3b8;">Активные фильтры выборки:</span>
+                        <strong style="color:#60a5fa;font-size:0.88rem;">${ips.length} уникальных IP</strong>
+                    </div>
+                    <div style="color:#cbd5e1;font-size:0.75rem;line-height:1.4;">${_esc(filterDesc)}</div>
+                </div>
+
+                <div style="display:flex;flex-direction:column;gap:0.35rem;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <label style="font-size:0.75rem;color:#94a3b8;font-weight:600;">Список IP (без портов, готов к сканированию):</label>
+                        <span style="font-size:0.7rem;color:#64748b;">${ips.length ? `${ips.length} строк` : 'Пусто'}</span>
+                    </div>
+                    <textarea id="v2-export-ips-textarea" readonly rows="12"
+                        style="width:100%;font-family:monospace;font-size:0.8rem;background:rgba(0,0,0,0.5);border:1px solid rgba(255,255,255,0.12);color:#e2e8f0;border-radius:6px;padding:0.6rem;resize:vertical;line-height:1.45;"
+                        placeholder="Нет IP для выгрузки">${_esc(ipText)}</textarea>
+                </div>
+
+                <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-top:0.25rem;">
+                    <div style="display:flex;gap:6px;">
+                        <button type="button" class="v2-btn-small" style="background:#2563eb;color:#fff;border:none;padding:0.45rem 0.9rem;font-weight:600;" onclick="v2DownloadFilteredIps()">
+                            ⬇ Скачать .txt
+                        </button>
+                        <button type="button" id="v2-btn-copy-ips" class="v2-btn-small" style="background:rgba(255,255,255,0.1);color:#fff;border:1px solid rgba(255,255,255,0.2);padding:0.45rem 0.9rem;font-weight:600;" onclick="v2CopyIpsToClipboard()">
+                            📋 Скопировать
+                        </button>
+                    </div>
+                    <div style="display:flex;gap:6px;">
+                        <button type="button" class="v2-btn-small" style="background:rgba(16,185,129,0.2);border:1px solid rgba(16,185,129,0.5);color:#34d399;padding:0.45rem 0.9rem;font-weight:600;" onclick="v2InsertIpsIntoScannerTargets()">
+                            📥 Вставить в цели сканера
+                        </button>
+                        <button type="button" class="v2-btn-small" style="background:transparent;border:1px solid rgba(255,255,255,0.1);color:#94a3b8;padding:0.45rem 0.75rem;" onclick="v2CloseExportIpsModal()">
+                            Закрыть
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(overlay);
+}
+window.v2OpenExportIpsModal = v2OpenExportIpsModal;
+
+function v2CloseExportIpsModal() {
+    document.getElementById('v2-export-ips-modal-overlay')?.remove();
+}
+window.v2CloseExportIpsModal = v2CloseExportIpsModal;
+
+function v2DownloadFilteredIps() {
+    const ips = v2GetFilteredIpsList();
+    if (!ips.length) {
+        alert('Нет IP-адресов для скачивания по текущим фильтрам');
+        return;
+    }
+    const textContent = ips.join('\n') + '\n';
+    const parts = ['ips'];
+    if (window.V2State.filterCategory && window.V2State.filterCategory !== 'all') {
+        parts.push(window.V2State.filterCategory);
+    }
+    if (window.V2State.filterBrand && window.V2State.filterBrand !== 'all') {
+        parts.push(window.V2State.filterBrand.toLowerCase().replace(/[^a-z0-9_-]/g, ''));
+    }
+    if (window.V2State.filterStatus && window.V2State.filterStatus !== 'all') {
+        parts.push(window.V2State.filterStatus);
+    }
+    const filename = `${parts.join('_')}_${ips.length}_${new Date().toISOString().slice(0, 10)}.txt`;
+    const blob = new Blob([textContent], { type: 'text/plain;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
+}
+window.v2DownloadFilteredIps = v2DownloadFilteredIps;
+
+async function v2CopyIpsToClipboard() {
+    const ips = v2GetFilteredIpsList();
+    if (!ips.length) {
+        alert('Нет IP-адресов для копирования');
+        return;
+    }
+    const textContent = ips.join('\n');
+    try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(textContent);
+        } else {
+            const ta = document.getElementById('v2-export-ips-textarea');
+            if (ta) {
+                ta.select();
+                document.execCommand('copy');
+            }
+        }
+        const btn = document.getElementById('v2-btn-copy-ips');
+        if (btn) {
+            const oldText = btn.textContent;
+            btn.textContent = '✓ Скопировано!';
+            btn.style.color = '#34d399';
+            setTimeout(() => {
+                btn.textContent = oldText;
+                btn.style.color = '#fff';
+            }, 1800);
+        }
+    } catch (e) {
+        alert('Не удалось скопировать: ' + e.message);
+    }
+}
+window.v2CopyIpsToClipboard = v2CopyIpsToClipboard;
+
+function v2InsertIpsIntoScannerTargets() {
+    const ips = v2GetFilteredIpsList();
+    if (!ips.length) {
+        alert('Нет IP-адресов для вставки');
+        return;
+    }
+    const targetArea = document.getElementById('v2-targets');
+    if (targetArea) {
+        targetArea.value = ips.join('\n');
+        if (typeof v2CalculateTargetsCount === 'function') {
+            v2CalculateTargetsCount();
+        }
+        targetArea.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        targetArea.focus();
+        v2CloseExportIpsModal();
+    }
+}
+window.v2InsertIpsIntoScannerTargets = v2InsertIpsIntoScannerTargets;
+
+
 // ── RTSP Brute Force Modal & Real-time Runner ───────────────────────
 let _v2BruterPollTimer = null;
 
