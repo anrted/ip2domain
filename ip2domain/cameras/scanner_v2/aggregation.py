@@ -21,6 +21,23 @@ from .protocols.rtsp import (
 )
 from .protocols.rtmp import _RTMP_PATHS
 
+_KNOWN_CAMERA_BRAND_SUBSTRINGS = (
+    "hikvision", "hiwatch", "dahua", "axis", "reolink", "trassir", "xiongmai", "flussonic",
+    "streamer", "dnvrs", "rvi", "uniview", "unv", "tiandy", "mobotix", "generic nvr", "generic dvr",
+    "generic ipcam", "generic webcam", "generic surveillance", "generic video server", "generic rtsp",
+    "unknown camera", "tp-link", "ezviz", "hilook", "imou", "lorex", "foscam", "amcrest", "hanwha",
+    "wisenet", "samsung", "topsvision", "topsee", "jovision", "h264", "netip", "netsurveillance",
+    "cp plus", "bosch", "pelco", "vivotek", "grandstream", "beward", "activecam", "polyvision",
+    "novicam", "ltv", "milesight", "tvt", "sunell", "avigilon", "flir", "ubiquiti unifi", "tapo",
+    "tl-sc", "vstarcam", "sricam", "srihome", "herospeed", "onvif",
+)
+
+def _is_camera_brand(brand: str) -> bool:
+    if not brand:
+        return False
+    b = brand.lower()
+    return any(p in b for p in _KNOWN_CAMERA_BRAND_SUBSTRINGS)
+
 
 def merge_host_cameras(cameras: List[CameraResult]) -> Optional[CameraResult]:
     """Keep all endpoint identities and distinct stream URLs for one host."""
@@ -364,11 +381,13 @@ def merge_camera_results(
                 rtsp_u = f"rtsp://{ip}:{hp}{generic_r['rtsp_path']}"
                 if not any(s.url == rtsp_u for s in camera.streams):
                     from .models import StreamInfo as _SI
-                    camera.streams.append(_SI(url=rtsp_u, stream_type="rtsp"))
-            if generic_r.get("device_category") and camera.device_category == "camera" and not camera.streams:
+            if generic_r.get("device_category") and camera.device_category == "camera" and not camera.streams and not _is_camera_brand(camera.brand):
                 camera.device_category = generic_r.get("device_category")
 
-    if camera.device_category in ("router", "generic_web", "device"):
+    if _is_camera_brand(camera.brand):
+        camera.device_category = "camera"
+
+    if camera.device_category in ("router", "generic_web", "device") and not _is_camera_brand(camera.brand):
         # For non-camera devices, filter out any generic video/snapshot assumptions
         camera.streams = [
             s for s in camera.streams

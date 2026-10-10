@@ -318,6 +318,7 @@ def test_merge_camera_results_tplink_sc():
     assert "rtsp://82.209.197.84:8082/video.mp4" in stream_urls
 
 
+
 def test_export_filtered_ips_endpoint():
     from fastapi.testclient import TestClient
     from ip2domain.web.app import app
@@ -333,6 +334,59 @@ def test_export_filtered_ips_endpoint():
     for line in lines:
         assert ":" not in line
         assert not line.startswith("http")
+
+
+def test_dnvrs_camera_fingerprint():
+    from ip2domain.cameras.scanner_v2.protocols.generic_http import probe_generic_http
+
+    async def _test():
+        mock_resp = AsyncMock()
+        mock_resp.text = "<html><head><title></title></head><body>DNVRS-Webs login</body></html>"
+        mock_resp.headers = {"server": "DNVRS-Webs"}
+        mock_resp.status_code = 200
+
+        with patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=mock_resp):
+            res = await probe_generic_http("93.84.121.54", [8001], [])
+            assert res["success"] is True
+            assert res["brand"] == "Hikvision"
+            assert res["device_category"] == "camera"
+    asyncio.run(_test())
+
+
+def test_flussonic_streamer_fingerprint():
+    from ip2domain.cameras.scanner_v2.protocols.generic_http import probe_generic_http
+
+    async def _test():
+        mock_resp = AsyncMock()
+        mock_resp.text = "<html><head><title>Flussonic</title></head><body>Admin</body></html>"
+        mock_resp.headers = {"server": "Streamer 26.07"}
+        mock_resp.status_code = 200
+
+        with patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=mock_resp):
+            res = await probe_generic_http("93.85.235.253", [80], [])
+            assert res["success"] is True
+            assert res["brand"] == "Flussonic"
+            assert res["device_category"] == "camera"
+    asyncio.run(_test())
+
+
+def test_plain_website_generic_web_not_rvi():
+    from ip2domain.cameras.scanner_v2.protocols.generic_http import probe_generic_http
+
+    async def _test():
+        mock_resp = AsyncMock()
+        mock_resp.text = '<html><head><title>Онлайн-кассы, платежные терминалы</title><meta name="description" content="СейлСервисСолюшенс"></head><body>SaleService Solutions pos terminals</body></html>'
+        mock_resp.headers = {"server": "nginx", "x-powered-by": "PHP/7.1.33"}
+        mock_resp.status_code = 200
+
+        with patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=mock_resp):
+            res = await probe_generic_http("37.17.36.8", [80], [])
+            assert res["success"] is True
+            assert res["brand"] == "Generic Web Device"
+            assert res["brand"] != "RVi"
+            assert res["device_category"] == "generic_web"
+    asyncio.run(_test())
+
 
 
 

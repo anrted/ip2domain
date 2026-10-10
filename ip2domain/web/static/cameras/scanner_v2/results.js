@@ -44,12 +44,12 @@ function v2UpdateResultsCount(filteredCount) {
     for (const c of results) {
         if (_isSpRecord(c)) {
             sprecordCount++;
-        } else if (c.device_category === 'router' || (c.protocols || []).includes('router') || (c.protocols || []).includes('winbox')) {
+        } else if (_isRouterDevice(c)) {
             routerCount++;
-        } else if (c.device_category === 'generic_web' || (c.protocols || []).includes('http_generic')) {
-            webCount++;
-        } else if (c.device_category === 'camera' || (!c.device_category && (c.streams || []).length > 0)) {
+        } else if (_isCameraDevice(c)) {
             camCount++;
+        } else if (_isWebDevice(c)) {
+            webCount++;
         }
 
         const hasScreen = (c.streams || []).some(s => s.screenshot && String(s.screenshot).trim().length > 0);
@@ -114,6 +114,22 @@ async function v2LoadStoredResults(force = false) {
 }
 window.v2LoadStoredResults = v2LoadStoredResults;
 
+const _V2_CAMERA_BRAND_PATTERNS = [
+    'hikvision', 'hiwatch', 'dahua', 'axis', 'reolink', 'trassir', 'xiongmai', 'flussonic',
+    'streamer', 'dnvrs', 'rvi', 'uniview', 'unv', 'tiandy', 'mobotix', 'generic nvr', 'generic dvr',
+    'generic ipcam', 'generic webcam', 'generic surveillance', 'generic video server', 'generic rtsp',
+    'unknown camera', 'tp-link', 'ezviz', 'hilook', 'imou', 'lorex', 'foscam', 'amcrest', 'hanwha',
+    'wisenet', 'samsung', 'topsvision', 'topsee', 'jovision', 'h264', 'netip', 'netsurveillance',
+    'cp plus', 'bosch', 'pelco', 'vivotek', 'grandstream', 'beward', 'activecam', 'polyvision',
+    'novicam', 'ltv', 'milesight', 'tvt', 'sunell', 'avigilon', 'flir', 'ubiquiti unifi', 'tapo',
+    'tl-sc', 'vstarcam', 'sricam', 'srihome', 'herospeed', 'onvif'
+];
+
+const _V2_CAMERA_PROTOCOLS = [
+    'onvif', 'rtsp', 'rtsp_direct', 'dhip', 'sofia', 'hls', 'webrtc', 'isapi',
+    'dahua_cgi', 'hikvision_isapi', 'rtmp'
+];
+
 function _isSpRecord(cam) {
     if (!cam) return false;
     const b = (cam.brand || '').toLowerCase();
@@ -122,6 +138,57 @@ function _isSpRecord(cam) {
     return b.includes('sprecord') || m.includes('sprecord') || p.includes('sprecord_audio') || p.includes('sprecord');
 }
 window._isSpRecord = _isSpRecord;
+
+function _isRouterDevice(c) {
+    if (!c) return false;
+    if (c.device_category === 'router') return true;
+    const protos = c.protocols || [];
+    return protos.includes('router') || protos.includes('winbox');
+}
+window._isRouterDevice = _isRouterDevice;
+
+function _isCameraDevice(c) {
+    if (!c || _isSpRecord(c)) return false;
+    if (_isRouterDevice(c)) return false;
+
+    // Explicit camera category
+    if (c.device_category === 'camera') return true;
+
+    // Brand matches known camera brand
+    const brand = (c.brand || '').toLowerCase();
+    if (_V2_CAMERA_BRAND_PATTERNS.some(b => brand.includes(b))) return true;
+
+    // Known camera protocols
+    const protos = c.protocols || [];
+    if (_V2_CAMERA_PROTOCOLS.some(p => protos.includes(p))) return true;
+
+    // Verified stream or real screenshot
+    if ((c.streams || []).some(s => s.verified || (s.screenshot && String(s.screenshot).trim().length > 0))) return true;
+
+    // If explicitly marked as generic_web or device, not a camera
+    if (c.device_category === 'generic_web' || c.device_category === 'device') return false;
+
+    // Has video streams and is not generic web
+    if ((c.streams || []).length > 0 && !brand.includes('generic web device')) return true;
+
+    return false;
+}
+window._isCameraDevice = _isCameraDevice;
+
+function _isNetworkDevice(c) {
+    if (!c || _isSpRecord(c) || _isRouterDevice(c) || _isCameraDevice(c)) return false;
+    return c.device_category === 'device' || (c.protocols || []).includes('tcp');
+}
+window._isNetworkDevice = _isNetworkDevice;
+
+function _isWebDevice(c) {
+    if (!c || _isSpRecord(c) || _isRouterDevice(c) || _isCameraDevice(c)) return false;
+    if (c.device_category === 'generic_web') return true;
+    const brand = (c.brand || '').toLowerCase();
+    if (brand.includes('generic web device') || brand.includes('web service')) return true;
+    return true;
+}
+window._isWebDevice = _isWebDevice;
 
 function _cameraScore(cam) {
     let score = 0;
@@ -226,13 +293,13 @@ function v2GetFilteredResults() {
         if (cat === 'sprecord') {
             filtered = filtered.filter(c => _isSpRecord(c));
         } else if (cat === 'camera') {
-            filtered = filtered.filter(c => !_isSpRecord(c) && (c.device_category === 'camera' || (!c.device_category && (c.streams || []).length > 0)));
+            filtered = filtered.filter(c => _isCameraDevice(c));
         } else if (cat === 'router') {
-            filtered = filtered.filter(c => c.device_category === 'router' || (c.protocols || []).includes('router') || (c.protocols || []).includes('winbox'));
+            filtered = filtered.filter(c => _isRouterDevice(c));
         } else if (cat === 'generic_web') {
-            filtered = filtered.filter(c => c.device_category === 'generic_web' || (c.protocols || []).includes('http_generic') || (c.protocols || []).includes('http'));
+            filtered = filtered.filter(c => _isWebDevice(c));
         } else if (cat === 'device') {
-            filtered = filtered.filter(c => c.device_category === 'device');
+            filtered = filtered.filter(c => _isNetworkDevice(c));
         }
     }
     if (window.V2State.filterBrand && window.V2State.filterBrand !== 'all') {
@@ -397,9 +464,10 @@ function _streamScore(s) {
 function v2RenderCameraCard(cam) {
     const safeIp = cam.ip.replace(/\./g, '_');
     const isAudioDevice = _isSpRecord(cam);
-    const isRouter = cam.device_category === 'router' || (cam.protocols || []).includes('router') || (cam.protocols || []).includes('winbox');
-    const isWebDevice = cam.device_category === 'generic_web' || (cam.protocols || []).includes('http_generic') || (cam.protocols || []).includes('http');
-    const isNetworkDevice = cam.device_category === 'device' || (cam.protocols || []).includes('tcp');
+    const isRouter = _isRouterDevice(cam);
+    const isCamera = _isCameraDevice(cam);
+    const isWebDevice = !isCamera && _isWebDevice(cam);
+    const isNetworkDevice = !isCamera && !isRouter && !isWebDevice && _isNetworkDevice(cam);
     const isNonCamera = isRouter || isWebDevice || isNetworkDevice;
 
     const webPort = cam.http_port || (cam.open_ports && cam.open_ports.find(p => [80, 443, 8080, 8443, 8081, 8888, 8181, 9443, 10443, 8000, 8008, 7547].includes(p))) || 80;
@@ -758,9 +826,10 @@ async function v2CapturePreview(ip, event) {
     const safeIp = ip.replace(/\./g, '_');
     let box = document.getElementById(`v2-preview-box-${safeIp}`);
     const cam = (window.V2State.results || []).find(c => c.ip === ip);
-    const isRouter = cam && (cam.device_category === 'router' || (cam.protocols || []).includes('router') || (cam.protocols || []).includes('winbox'));
-    const isWebDevice = cam && (cam.device_category === 'generic_web' || (cam.protocols || []).includes('http_generic'));
-    const isNetworkDevice = cam && cam.device_category === 'device';
+    const isRouter = _isRouterDevice(cam);
+    const isCamera = _isCameraDevice(cam);
+    const isWebDevice = !isCamera && _isWebDevice(cam);
+    const isNetworkDevice = !isCamera && !isRouter && !isWebDevice && _isNetworkDevice(cam);
     const isNonCamera = isRouter || isWebDevice || isNetworkDevice;
 
     let streamUrl = window.V2State.selectedStreams[ip] || '';

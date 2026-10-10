@@ -42,7 +42,16 @@ _CAMERA_BRANDS = {
     "trassir": "Trassir",
     "activecam": "ActiveCam",
     "polyvision": "Polyvision",
-    "rvi": "RVi",
+    "rvi-": "RVi",
+    "rvi cctv": "RVi",
+    "rvi group": "RVi",
+    "dnvrs-webs": "Hikvision",
+    "dnvrs": "Hikvision",
+    "hikvision-webs": "Hikvision",
+    "dvrdvs-webs": "Hikvision",
+    "app-webs": "Hikvision",
+    "flussonic": "Flussonic",
+    "streamer": "Flussonic",
     "novicam": "Novicam",
     "ltv": "LTV",
     "milesight": "Milesight",
@@ -124,7 +133,8 @@ async def _probe_generic_http(
             except Exception:
                 pass
 
-            for user, password in credentials[:2]:
+            creds_to_try = credentials[:2] if credentials else [("", "")]
+            for user, password in creds_to_try:
                 auth = (user, password) if user else None
                 try:
                     resp = await client.get(f"http://{ip}:{port}/", auth=auth, timeout=3.0)
@@ -154,17 +164,35 @@ async def _probe_generic_http(
                         return result
 
                     brand = ""
-                    for keyword, brand_name in _CAMERA_BRANDS.items():
-                        # Strict regex word boundary match to avoid false positives (e.g. 'rvi' in 'service' or 'dvr' in words)
-                        if re.search(rf"\b{re.escape(keyword)}\b", combined, re.IGNORECASE):
-                            brand = brand_name
-                            break
+                    server_l = server.lower()
 
-                    # Require explicit camera / surveillance context if no specific brand matched
+                    # 1. Specialized surveillance server headers
+                    if any(s in server_l for s in ("dnvrs", "hikvision-webs", "app-webs", "dvrdvs-webs")):
+                        brand = "Hikvision"
+                    elif "streamer" in server_l or "flussonic" in server_l or "flussonic" in combined:
+                        brand = "Flussonic"
+                    elif "trassir" in server_l or "trassir" in combined:
+                        brand = "Trassir"
+                    elif "reolink" in server_l or "reolink" in combined or ("data-application=web" in text and "reolink" in text.lower()):
+                        brand = "Reolink"
+
+                    # 2. Keyword detection from _CAMERA_BRANDS
+                    if not brand:
+                        for keyword, brand_name in _CAMERA_BRANDS.items():
+                            if re.search(rf"\b{re.escape(keyword)}\b", combined, re.IGNORECASE):
+                                brand = brand_name
+                                break
+
+                    # Require explicit camera / surveillance context
                     has_cam_context = bool(
                         re.search(r"\b(rtsp|ipcam|ipcamera|webcam|cctv|dvr|nvr|onvif|netcam)\b", combined, re.IGNORECASE)
                         or (("camera" in combined or "surveillance" in combined) and any(w in combined for w in ("login", "channel", "live", "video-stream", "view")))
                     )
+
+                    # Strict RVi safety: prevent matching on ordinary websites that have "rvi" substring or word
+                    if not brand and re.search(r"\brvi\b", combined, re.IGNORECASE):
+                        if has_cam_context or "rvi-" in combined:
+                            brand = "RVi"
 
                     if brand or has_cam_context:
                         result.update({
