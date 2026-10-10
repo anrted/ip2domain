@@ -254,16 +254,16 @@ async def start_centra_discovery(req: CentraDiscoveryRequest, background_tasks: 
     if req.base_url:
         parsed = urlparse(req.base_url)
         hostname = (parsed.hostname or "").lower()
-        is_mycentra = (
-            hostname.endswith(".mycentra.ru")
-            and bool(hostname[:-12])
-            and all(c.isalnum() or c == "-" for c in hostname[:-12])
+        is_streamer = (
+            bool(hostname)
+            and "." in hostname
+            and all(c.isalnum() or c in ".-" for c in hostname)
         )
-        if (parsed.scheme != "https" or not is_mycentra
+        if (parsed.scheme != "https" or not is_streamer
                 or parsed.port is not None or parsed.username or parsed.password
                 or parsed.path not in {"", "/"} or parsed.query or parsed.fragment):
             raise HTTPException(status_code=400, detail=(
-                "Сервер должен быть полным HTTPS URL без пути, например https://flus6.mycentra.ru"
+                "Сервер должен быть полным HTTPS URL без пути, например https://flus6.mycentra.ru или https://streamer-yak2.svn-online.by"
             ))
     type_colors = {"I": "red", "G": "blue", "H": "green", "P": "green"}
     saved_cameras = storage.get_centra_cameras()

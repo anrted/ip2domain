@@ -78,8 +78,8 @@ async function startCentraDiscovery(event) {
     const serverInput = document.getElementById('centra-base-url');
     serverInput.setCustomValidity('');
     const serverValue = serverInput.value.trim();
-    if (serverValue && !/^https:\/\/[a-z0-9-]+\.mycentra\.ru\/?$/i.test(serverValue)) {
-        serverInput.setCustomValidity('Формат: https://flus6.mycentra.ru — без пути, параметров и порта');
+    if (serverValue && !/^https:\/\/[a-z0-9.-]+\.[a-z]{2,}\/?$/i.test(serverValue)) {
+        serverInput.setCustomValidity('Формат: https://flus6.mycentra.ru или https://streamer-yak2.svn-online.by — без пути, параметров и порта');
         serverInput.reportValidity();
         serverInput.focus();
         return;

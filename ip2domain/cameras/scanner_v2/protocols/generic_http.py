@@ -89,6 +89,45 @@ _CAMERA_BRANDS = {
 }
 
 
+def _extract_ssl_domain(ip: str, port: int, timeout: float = 2.0) -> Optional[str]:
+    """Extract domain from SSL certificate SubjectAltName or CommonName, or PTR record."""
+    try:
+        import ssl, socket
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        with socket.create_connection((ip, port), timeout=timeout) as sock:
+            with ctx.wrap_socket(sock) as ssock:
+                cert = ssock.getpeercert(binary_form=True)
+                if cert:
+                    from cryptography import x509
+                    from cryptography.hazmat.backends import default_backend
+                    c = x509.load_der_x509_certificate(cert, default_backend())
+                    # 1. SubjectAlternativeName
+                    for ext in c.extensions:
+                        if ext.oid.dotted_string == "2.5.29.17":
+                            for name in ext.value:
+                                val = getattr(name, "value", str(name)).strip().lower()
+                                if val and not val.startswith("*") and "." in val:
+                                    return val
+                    # 2. CommonName
+                    for attr in c.subject:
+                        if attr.oid.dotted_string == "2.5.4.3":
+                            val = str(attr.value).strip().lower()
+                            if val and not val.startswith("*") and "." in val:
+                                return val
+    except Exception:
+        pass
+    try:
+        import socket
+        name, _, _ = socket.gethostbyaddr(ip)
+        if name and "." in name and not name.endswith(".in-addr.arpa"):
+            return name
+    except Exception:
+        pass
+    return None
+
+
 
 async def _probe_generic_http(
     ip: str,
@@ -158,6 +197,14 @@ async def _probe_generic_http(
                     if resp.status_code == 400 and ("https" in resp.text.lower() or "ssl" in resp.text.lower()):
                         resp = await client.get(f"https://{ip}:{port}/", auth=auth, timeout=3.0)
                         scheme = "https"
+
+                    domain = ""
+                    if scheme == "https" or port in (443, 8443, 9443, 10443):
+                        domain = _extract_ssl_domain(ip, port) or ""
+                    if domain:
+                        result["domain"] = domain
+                    web_host = domain or ip
+                    default_web_url = f"https://{web_host}/" if (scheme == "https" and port == 443) else f"{scheme}://{web_host}:{port}/"
 
                     text = resp.text[:4096]
                     server = resp.headers.get("server", "")
@@ -294,8 +341,9 @@ async def _probe_generic_http(
                             "model": server.strip() or "Flussonic Streamer",
                             "title": title or "Flussonic Video Server",
                             "http_port": port,
+                            "domain": domain,
                             "device_category": "camera",
-                            "web_url": f"{scheme}://{ip}:{port}/",
+                            "web_url": default_web_url,
                             "snapshot_path": "/live/preview.jpg",
                             "rtsp_path": "/live",
                         })

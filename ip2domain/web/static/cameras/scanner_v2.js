@@ -1064,7 +1064,8 @@ function v2RenderCameraCard(cam) {
 
     const webPort = cam.http_port || (cam.open_ports && cam.open_ports.find(p => [80, 443, 8080, 8443, 8081, 8888, 8181, 9443, 10443, 8000, 8008, 7547].includes(p))) || 80;
     const isHttps = [443, 8443, 9443, 10443].includes(webPort) || String(webPort).includes('443');
-    const webUrl = cam.web_url || `${isHttps ? 'https' : 'http'}://${cam.ip}:${webPort}/`;
+    const targetHost = cam.domain || cam.ip;
+    const webUrl = cam.web_url || `${isHttps ? 'https' : 'http'}://${targetHost}:${webPort}/`;
 
     const rawStreams = cam.streams || [];
     const totalStreams = rawStreams.length;
@@ -1346,6 +1347,7 @@ function v2RenderCameraCard(cam) {
         <div class="v2-camera-body">
             <div class="v2-camera-brand">${_esc(displayBrand)}</div>
             <div class="v2-camera-ip">${_esc(cam.ip)}${endpoint?.port ? ':' + endpoint.port : (cam.rtsp_port ? ':' + cam.rtsp_port : '')}${credsBadge}</div>
+            ${cam.domain ? `<div style="font-size:0.75rem;color:#38bdf8;font-weight:600;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${_esc(cam.domain)}">🌐 ${_esc(cam.domain)}</div>` : ''}
             ${locationHtml}
             <div class="v2-camera-model">${_esc(displayModel)}</div>
             ${endpointPorts.length > 1 ? `<div class="v2-camera-model">Порты: ${endpointPorts.join(', ')}</div>` : ''}
@@ -1390,6 +1392,7 @@ function _protoLabel(p) {
         hls: 'HLS', mjpeg: 'MJPEG', http_snapshot: 'SNAP',
         http_generic: 'HTTP', rtsp_port_open: 'RTSP?',
         xiongmai_sofia: 'SOFIA:34567', dahua_dhip: 'DHIP:37777',
+        embed: 'EMBED',
     };
     return MAP[p] || p.toUpperCase().slice(0, 11);
 }

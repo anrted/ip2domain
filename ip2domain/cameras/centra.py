@@ -13,7 +13,7 @@ class CentraProvider(CameraProvider):
                     ProviderCapabilities.STREAM, ProviderCapabilities.EMBED,
                     ProviderCapabilities.GEOCODING}
     CAMERA_ID = re.compile(r"[A-Z]-\d+-\d+", re.IGNORECASE)
-    HOST = re.compile(r"(?:flus\d*|[a-z0-9-]+)\.mycentra\.ru", re.IGNORECASE)
+    HOST = re.compile(r"(?:flus\d*|[a-z0-9-]+)\.(?:mycentra\.ru|svn-online\.by|[a-z0-9.-]+\.[a-z]{2,})", re.IGNORECASE)
 
     def normalize(self, raw: Dict[str, Any]) -> Camera:
         external_id = str(raw.get("external_id") or raw.get("id") or "").upper()

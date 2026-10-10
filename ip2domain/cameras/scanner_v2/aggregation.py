@@ -56,7 +56,7 @@ def merge_host_cameras(cameras: List[CameraResult]) -> Optional[CameraResult]:
     for camera in cameras:
         if camera.ip != host.ip:
             raise ValueError("Cannot merge different hosts")
-        for key in ("brand", "model", "serial", "firmware", "city", "region", "country_code", "isp", "timestamp", "device_category", "web_title", "web_url", "web_screenshot"):
+        for key in ("brand", "model", "serial", "firmware", "city", "region", "country_code", "isp", "timestamp", "device_category", "web_title", "web_url", "web_screenshot", "domain"):
             if not getattr(host, key):
                 setattr(host, key, getattr(camera, key))
         for key in ("http_port", "rtsp_port", "rtmp_port", "onvif_port"):
@@ -342,6 +342,8 @@ def merge_camera_results(
                         from .models import StreamInfo as _SI
                         camera.streams.append(_SI(url=url, stream_type="rtsp"))
                     break
+            if generic_r.get("domain"):
+                camera.domain = generic_r["domain"]
             # Try HTTP snapshot candidates on the detected HTTP port ONLY for camera candidates
             if generic_r.get("http_port") and generic_r.get("device_category") == "camera":
                 hp = generic_r['http_port']
@@ -360,16 +362,25 @@ def merge_camera_results(
                         f"{base_g}/cgi-bin/viewer/video.jpg",
                     ])
                 elif "flussonic" in b_low:
-                    candidates.extend([
-                        f"{base_g}/live/preview.jpg",
-                        f"{base_g}/stream1/preview.jpg",
-                        f"{base_g}/stream/preview.jpg",
-                        f"{base_g}/ch1/preview.jpg",
-                    ])
-                    for hls_path in ("/live/index.m3u8", "/stream1/index.m3u8", "/stream/index.m3u8", "/ch1/index.m3u8"):
-                        h_url = f"{base_g}{hls_path}"
+                    flus_streams = [
+                        "live", "stream1", "stream", "cam1", "cam2", "cam3", "cam4",
+                        "1", "2", "3", "4", "p1", "p2", "dvor", "parking", "ch1",
+                    ]
+                    for sname in flus_streams:
+                        embed_u = f"{base_g}/{sname}/embed.html"
+                        if not any(s.url == embed_u for s in camera.streams):
+                            camera.streams.append(StreamInfo(url=embed_u, stream_type="embed"))
+                        h_url = f"{base_g}/{sname}/index.m3u8"
                         if not any(s.url == h_url for s in camera.streams):
                             camera.streams.append(StreamInfo(url=h_url, stream_type="hls"))
+                        candidates.append(f"{base_g}/{sname}/preview.jpg")
+                    if camera.domain:
+                        dom_base = f"https://{camera.domain}" if hp == 443 else f"{scheme}://{camera.domain}:{hp}"
+                        for sname in flus_streams[:6]:
+                            e_dom = f"{dom_base}/{sname}/embed.html"
+                            if not any(s.url == e_dom for s in camera.streams):
+                                camera.streams.append(StreamInfo(url=e_dom, stream_type="embed"))
+                            candidates.append(f"{dom_base}/{sname}/preview.jpg")
                 elif "unimo" in b_low:
                     candidates.extend([
                         f"{base_g}/cgi-bin/webapp.cgi?MODE=8&ID=admin&PW=&VER=3000&CH=1",

@@ -82,6 +82,7 @@ class CameraResult:
     web_title: str = ""
     web_url: str = ""
     web_screenshot: str = ""
+    domain: str = ""
 
     @classmethod
     def from_dict(cls, data):
@@ -129,6 +130,7 @@ class CameraResult:
             "web_title": self.web_title,
             "web_url": self.web_url,
             "web_screenshot": self.web_screenshot,
+            "domain": self.domain,
         }
 
 
