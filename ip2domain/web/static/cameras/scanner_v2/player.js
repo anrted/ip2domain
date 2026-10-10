@@ -122,7 +122,15 @@ function v2RefreshSingleSnapshot(ip, streamUrl) {
     const img = document.getElementById('v2-modal-live-img');
     const err = document.getElementById('v2-modal-live-err');
     if (img) {
-        const nextUrl = `/api/v2/preview?ip=${encodeURIComponent(ip)}&stream_url=${encodeURIComponent(streamUrl)}&_t=${Date.now()}`;
+        const userInput = document.getElementById('v2-player-user-input')?.value.trim();
+        const passInput = document.getElementById('v2-player-pass-input')?.value;
+        const cam = (window.V2State.results || []).find(c => c.ip === ip);
+        const u = (userInput !== undefined && userInput !== '') ? userInput : (cam?.credentials?.user || '');
+        const p = (passInput !== undefined && passInput !== '') ? passInput : (cam?.credentials?.password ?? '');
+        let nextUrl = `/api/v2/preview?ip=${encodeURIComponent(ip)}&stream_url=${encodeURIComponent(streamUrl)}&_t=${Date.now()}`;
+        if (u) {
+            nextUrl += `&user=${encodeURIComponent(u)}&password=${encodeURIComponent(p)}`;
+        }
         const testImg = new Image();
         testImg.onload = () => {
             img.src = nextUrl;
@@ -379,9 +387,16 @@ async function v2OpenStreamPlayer(srcUrl, camName, ip, currentIdx = 0) {
                 if (loader) loader.style.display = 'none';
                 if (iframe) iframe.style.display = 'none';
 
+                const u = cam?.credentials?.user || '';
+                const p = cam?.credentials?.password ?? '';
+                let initialSnapUrl = `/api/v2/preview?ip=${encodeURIComponent(ip)}&stream_url=${encodeURIComponent(srcUrl)}&_t=${Date.now()}`;
+                if (u) {
+                    initialSnapUrl += `&user=${encodeURIComponent(u)}&password=${encodeURIComponent(p)}`;
+                }
+
                 playerContainer.innerHTML = `
                     <div style="position: relative; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: #000;">
-                        <img id="v2-modal-live-img" src="/api/v2/preview?ip=${encodeURIComponent(ip)}&stream_url=${encodeURIComponent(srcUrl)}&_t=${Date.now()}" alt="Live Snapshot" style="max-width: 100%; max-height: 100%; object-fit: contain;" onerror="this.style.display='none'; const el=document.getElementById('v2-modal-live-err'); if(el) el.style.display='flex';">
+                        <img id="v2-modal-live-img" src="${initialSnapUrl}" alt="Live Snapshot" style="max-width: 100%; max-height: 100%; object-fit: contain;" onerror="this.style.display='none'; const el=document.getElementById('v2-modal-live-err'); if(el) el.style.display='flex';">
                         <div id="v2-modal-live-err" style="display: none; flex-direction: column; align-items: center; justify-content: center; gap: 0.5rem; color: #ef4444; font-size: 0.85rem;">
                             <span>⚠️ Поток недоступен (камера не отвечает по HTTP)</span>
                         </div>
@@ -476,6 +491,18 @@ function v2ApplyCredentialsAndReload(ip, srcUrl, camName, currentIdx) {
     const cam = (window.V2State.results || []).find(c => c.ip === ip);
     if (cam) {
         cam.credentials = { user: u, password: p };
+        (cam.streams || []).forEach(s => {
+            s.credentials = { user: u, password: p };
+        });
+    }
+    const isHttpSnapshot = srcUrl.startsWith('http://') || srcUrl.startsWith('https://');
+    if (isHttpSnapshot) {
+        const img = document.getElementById('v2-modal-live-img');
+        const err = document.getElementById('v2-modal-live-err');
+        if (err) err.style.display = 'none';
+        if (img) img.style.display = '';
+        v2RefreshSingleSnapshot(ip, srcUrl);
+        return;
     }
     v2OpenStreamPlayer(srcUrl, camName, ip, currentIdx);
 }

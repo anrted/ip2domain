@@ -247,10 +247,30 @@ async def _download_http_snapshot(
 
     try:
         async with httpx.AsyncClient(verify=False, timeout=4.0, follow_redirects=True) as client:
-            auth = httpx.DigestAuth(user, password) if user else None
-            resp = await client.get(safe_url, auth=auth)
-            if resp.status_code == 401 and user:
+            resp = None
+            if user:
                 resp = await client.get(safe_url, auth=(user, password))
+                if resp.status_code == 401:
+                    resp = await client.get(safe_url, auth=httpx.DigestAuth(user, password))
+            else:
+                resp = await client.get(safe_url)
+
+            if resp.status_code == 401:
+                for cand_u, cand_p in [("admin", "admin"), ("admin", "12345"), ("admin", "123456"), ("root", "root"), ("admin", "")]:
+                    if cand_u == user and cand_p == password:
+                        continue
+                    try:
+                        cand_resp = await client.get(safe_url, auth=(cand_u, cand_p))
+                        if cand_resp.status_code == 401:
+                            cand_resp = await client.get(safe_url, auth=httpx.DigestAuth(cand_u, cand_p))
+                        if cand_resp.status_code == 200 and len(cand_resp.content or b"") >= 2048:
+                            resp = cand_resp
+                            if credentials is not None:
+                                credentials["user"] = cand_u
+                                credentials["password"] = cand_p
+                            break
+                    except Exception:
+                        continue
             content = resp.content or b""
             # Must be a real image with at least 2 KB of data and resolution >= 160x120
             is_valid_image = (

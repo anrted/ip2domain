@@ -440,6 +440,9 @@ async def get_stream_preview(
         try:
             res = storage.get_v2_result(ip)
             if res:
+                if creds and creds.get("user") and creds.get("password"):
+                    res["credentials"] = creds
+                    res["auth_required"] = False
                 for s in res.get("streams", []):
                     if s.get("url") == stream_url:
                         s["verified"] = True
@@ -449,6 +452,8 @@ async def get_stream_preview(
                         s["screenshot"] = path
                         s["codec"] = codec
                         s["resolution"] = f"{w}x{h}" if w and h else ""
+                        if creds and creds.get("user"):
+                            s["credentials"] = creds
                 storage.save_v2_result(res)
         except Exception:
             pass
