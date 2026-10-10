@@ -27,9 +27,6 @@
             <p class="sidebar-caption">Network Intelligence</p>
 
             <nav class="sidebar-nav" aria-label="Основная навигация">
-                <a class="nav-item" href="/scanner-v2" title="Scanner v2 — инвентаризация сервисов">
-                    <span class="nav-icon">◎</span><span>Scanner v2 · Сервисы</span>
-                </a>
                 <button class="nav-item active" data-view="graph-view" onclick="switchView('graph-view', this)"
                     title="Сканирование">
                     <span class="nav-icon">⌘</span><span>Сканирование</span>
@@ -47,8 +44,8 @@
                     <span class="nav-icon">▣</span><span>RDP / VNC</span>
                 </button>
                 <button class="nav-item" data-view="cameras-view" onclick="switchView('cameras-view', this)"
-                    title="Камеры">
-                    <span class="nav-icon">◉</span><span>Камеры</span>
+                    title="Camera Scanner v2">
+                    <span class="nav-icon">◉</span><span>Camera Scanner v2</span>
                 </button>
                 <button class="nav-item" data-view="city-ip-view" onclick="switchView('city-ip-view', this)"
                     title="IP по городам (РФ / РБ)">
@@ -1478,7 +1475,7 @@
             'results-view': ['Результаты', 'Табличное представление текущей топологии'],
             'history-view': ['История сканирований', 'Управление сохранёнными заданиями'],
             'remote-desktop-view': ['RDP / VNC', 'Удалённые рабочие столы и снимки VNC'],
-            'cameras-view': ['Камеры', 'Поиск IP-камер и видеорегистраторов'],
+            'cameras-view': ['Camera Scanner v2', 'Максимальное покрытие: ONVIF · Hikvision · Dahua · Axis · RTSP · роутеры и веб-устройства'],
             'city-ip-view': ['IP по городам (РФ / РБ)', 'База подсетей, поиск и генерация IP по городам России и Беларуси'],
             'settings-view': ['Настройки', 'Профиль и безопасность аккаунта'],
         };
@@ -1494,12 +1491,14 @@
             if (viewId === 'history-view') loadScanHistory();
             if (viewId === 'remote-desktop-view' && window.refreshRemoteTargets) refreshRemoteTargets();
             if (viewId === 'cameras-view') {
-                const savedVer = localStorage.getItem('ip2domain_cam_version');
+                const savedVer = localStorage.getItem('ip2domain_cam_version') || 'v2';
                 if (savedVer === 'v2' && window.switchCameraVersion) {
                     switchCameraVersion('v2');
-                } else {
+                } else if (savedVer === 'v1') {
                     const activeTab = document.querySelector('.camera-tab.active')?.id?.replace('camera-', '')?.replace('-tab', '') || 'go2rtc';
                     if (window.switchCameraTab) switchCameraTab(activeTab);
+                } else if (window.switchCameraVersion) {
+                    switchCameraVersion('v2');
                 }
             }
             if (viewId === 'city-ip-view' && window.CityIpFinder) {
@@ -1626,6 +1625,24 @@
         loadCurrentUser();
         setSidebarCompact(localStorage.getItem('ip2domain_sidebar_compact') === '1');
         updateScanModeControls();
+
+        // Handle direct navigation to Camera Scanner v2
+        const checkDirectCamNav = () => {
+            const h = window.location.hash;
+            const q = window.location.search;
+            if (h === '#cameras' || h === '#scanner-v2' || q.includes('view=cameras-view') || q.includes('view=scanner-v2')) {
+                const camBtn = document.querySelector('.nav-item[data-view="cameras-view"]');
+                if (camBtn) {
+                    switchView('cameras-view', camBtn);
+                    if (window.switchCameraVersion) switchCameraVersion('v2');
+                }
+            }
+        };
+        if (document.readyState === 'loading') {
+            window.addEventListener('DOMContentLoaded', checkDirectCamNav);
+        } else {
+            checkDirectCamNav();
+        }
     </script>
     <script src="/static/graph.js"></script>
     <script src="/static/scan.js"></script>

@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, RedirectResponse
 
 from ip2domain.scanning.capabilities import capabilities
 from ip2domain.scanning.persistence import InventoryRepository
@@ -51,9 +51,9 @@ def _launch(repository, identifier, credentials=None):
     task.add_done_callback(done)
 
 
-@router.get("/scanner-v2", response_class=HTMLResponse, dependencies=[Depends(_admin)])
+@router.get("/scanner-v2", dependencies=[Depends(_admin)])
 def page():
-    return (Path(__file__).resolve().parent.parent / "templates" / "inventory_scanner.html").read_text(encoding="utf-8")
+    return RedirectResponse(url="/#cameras", status_code=302)
 
 
 @router.get("/api/scanner/v2/capabilities", dependencies=[Depends(_admin)])
