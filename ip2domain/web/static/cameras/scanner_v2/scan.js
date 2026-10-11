@@ -101,10 +101,12 @@ async function v2CancelScan() {
 }
 window.v2CancelScan = v2CancelScan;
 
-function v2StartPolling() {
+function v2StartPolling(immediate = true) {
     v2StopPolling();
-    window.V2State.pollTimer = setInterval(v2Poll, window.V2State.pollInterval);
-    v2Poll();
+    window.V2State.pollTimer = setInterval(v2Poll, window.V2State.pollInterval || 2500);
+    if (immediate) {
+        v2Poll();
+    }
 }
 window.v2StartPolling = v2StartPolling;
 
@@ -118,6 +120,8 @@ window.v2StopPolling = v2StopPolling;
 
 async function v2Poll() {
     if (!window.V2State.currentJobId) return;
+    if (window.V2State.isPolling) return;
+    window.V2State.isPolling = true;
     try {
         const resp = await fetch(`/api/v2/scan/${window.V2State.currentJobId}`);
         if (!resp.ok) {
@@ -139,13 +143,18 @@ async function v2Poll() {
             v2StopPolling();
             v2SetScanState('idle');
             if (job.status === 'completed') {
-                v2AddLog(`✓ Сканирование завершено. Найдено ${job.results_count} камер.`, 'ok');
+                v2AddLog(`✓ Сканирование завершено. Найдено ${job.results_count || 0} устройств.`, 'ok');
             } else if (job.status === 'error') {
                 v2AddLog(`✗ Ошибка: ${job.error}`, 'err');
+            } else if (job.status === 'cancelled') {
+                v2AddLog(job.error ? `✗ ${job.error}` : '✗ Сканирование отменено.', 'info');
             }
-            if (window.v2LoadStoredResults) v2LoadStoredResults();
+            if (window.v2LoadStoredResults) v2LoadStoredResults(true);
         }
-    } catch (e) {}
+    } catch (e) {
+    } finally {
+        window.V2State.isPolling = false;
+    }
 }
 window.v2Poll = v2Poll;
 

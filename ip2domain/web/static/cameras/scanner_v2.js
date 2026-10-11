@@ -182,13 +182,16 @@ function switchCameraVersion(version) {
     const btn2 = document.getElementById('cam-ver-btn-v2');
 
     if (version === 'v2') {
+        const wasActive = v2Panel && v2Panel.classList.contains('v2-active');
         v1Tabs.forEach(t => t.style.display = 'none');
         v1Panels.forEach(p => { p.style.display = 'none'; p.classList.remove('active'); });
         if (v2Panel) v2Panel.classList.add('v2-active');
         if (btn1) btn1.classList.remove('active');
         if (btn2) btn2.classList.add('active', 'active-v2');
         localStorage.setItem('ip2domain_cam_version', 'v2');
-        v2OnActivate();
+        if (!wasActive) {
+            v2OnActivate();
+        }
     } else {
         v1Tabs.forEach(t => t.style.display = '');
         if (v2Panel) v2Panel.classList.remove('v2-active');
@@ -216,24 +219,26 @@ function v2OnActivate() {
 window.v2OnActivate = v2OnActivate;
 
 async function v2CheckActiveScan() {
-    let savedJobId = localStorage.getItem('ip2domain_v2_active_job');
-    if (!savedJobId) {
-        try {
-            const resp = await fetch('/api/v2/active_job');
-            if (resp.ok) {
-                const data = await resp.json();
-                if (data.active && data.job) {
-                    savedJobId = data.job.job_id;
-                    localStorage.setItem('ip2domain_v2_active_job', savedJobId);
-                }
-            }
-        } catch (e) {}
-    }
-    if (!savedJobId) {
-        if (window.v2SetScanState) v2SetScanState('idle');
-        return;
-    }
+    if (window.V2State.isCheckingActiveScan) return;
+    window.V2State.isCheckingActiveScan = true;
     try {
+        let savedJobId = localStorage.getItem('ip2domain_v2_active_job');
+        if (!savedJobId) {
+            try {
+                const resp = await fetch('/api/v2/active_job');
+                if (resp.ok) {
+                    const data = await resp.json();
+                    if (data.active && data.job) {
+                        savedJobId = data.job.job_id;
+                        localStorage.setItem('ip2domain_v2_active_job', savedJobId);
+                    }
+                }
+            } catch (e) {}
+        }
+        if (!savedJobId) {
+            if (window.v2SetScanState) v2SetScanState('idle');
+            return;
+        }
         const resp = await fetch(`/api/v2/scan/${savedJobId}`);
         if (!resp.ok) {
             localStorage.removeItem('ip2domain_v2_active_job');
@@ -247,7 +252,7 @@ async function v2CheckActiveScan() {
             if (window.v2SetScanState) v2SetScanState('running');
             if (window.v2UpdateProgress) v2UpdateProgress(job);
             if (window.v2MergeResults) v2MergeResults(job.results || []);
-            if (window.v2StartPolling) v2StartPolling();
+            if (window.v2StartPolling) v2StartPolling(false);
         } else {
             localStorage.removeItem('ip2domain_v2_active_job');
             if (window.v2SetScanState) v2SetScanState('idle');
@@ -257,6 +262,8 @@ async function v2CheckActiveScan() {
         }
     } catch (e) {
         if (window.v2SetScanState) v2SetScanState('idle');
+    } finally {
+        window.V2State.isCheckingActiveScan = false;
     }
 }
 window.v2CheckActiveScan = v2CheckActiveScan;
@@ -440,10 +447,12 @@ async function v2CancelScan() {
 }
 window.v2CancelScan = v2CancelScan;
 
-function v2StartPolling() {
+function v2StartPolling(immediate = true) {
     v2StopPolling();
-    window.V2State.pollTimer = setInterval(v2Poll, window.V2State.pollInterval);
-    v2Poll();
+    window.V2State.pollTimer = setInterval(v2Poll, window.V2State.pollInterval || 2500);
+    if (immediate) {
+        v2Poll();
+    }
 }
 window.v2StartPolling = v2StartPolling;
 
@@ -457,6 +466,8 @@ window.v2StopPolling = v2StopPolling;
 
 async function v2Poll() {
     if (!window.V2State.currentJobId) return;
+    if (window.V2State.isPolling) return;
+    window.V2State.isPolling = true;
     try {
         const resp = await fetch(`/api/v2/scan/${window.V2State.currentJobId}`);
         if (!resp.ok) {
@@ -478,13 +489,18 @@ async function v2Poll() {
             v2StopPolling();
             v2SetScanState('idle');
             if (job.status === 'completed') {
-                v2AddLog(`✓ Сканирование завершено. Найдено ${job.results_count} камер.`, 'ok');
+                v2AddLog(`✓ Сканирование завершено. Найдено ${job.results_count || 0} устройств.`, 'ok');
             } else if (job.status === 'error') {
                 v2AddLog(`✗ Ошибка: ${job.error}`, 'err');
+            } else if (job.status === 'cancelled') {
+                v2AddLog(job.error ? `✗ ${job.error}` : '✗ Сканирование отменено.', 'info');
             }
-            if (window.v2LoadStoredResults) v2LoadStoredResults();
+            if (window.v2LoadStoredResults) v2LoadStoredResults(true);
         }
-    } catch (e) {}
+    } catch (e) {
+    } finally {
+        window.V2State.isPolling = false;
+    }
 }
 window.v2Poll = v2Poll;
 

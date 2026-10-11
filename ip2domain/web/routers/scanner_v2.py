@@ -135,19 +135,52 @@ async def start_scan(req: ScanRequest):
     return JSONResponse(content={"job_id": job_id, "status": "queued"}, status_code=202)
 
 
+@router.get("/active_job")
+async def get_active_job():
+    """Return the currently active scan job, cleaning up dead zombies."""
+    from ip2domain.cameras.scanner_v2.engine import get_job, _ACTIVE_JOBS
+    for jid, job in list(_ACTIVE_JOBS.items()):
+        if getattr(job, "status", "") in ("queued", "running"):
+            data = job.to_dict()
+            if len(data.get("results", [])) > 50:
+                data["results"] = data["results"][-50:]
+            return {"active": True, "job": data}
+
+    # Check DB for leftover zombie jobs
+    active_db = storage.get_active_v2_job()
+    if active_db:
+        # Not in memory _ACTIVE_JOBS -> server restarted or crashed, mark cancelled
+        active_db["status"] = "cancelled"
+        active_db["error"] = "Сканирование прервано (сервис был перезапущен)"
+        storage.save_v2_job(active_db)
+
+    return {"active": False, "job": None}
+
+
 @router.get("/scan/{job_id}")
 async def get_scan_status(job_id: str):
-    """Return current job state including results."""
+    """Return current job state with lightweight heartbeat (no payload bloat)."""
     from ip2domain.cameras.scanner_v2.engine import get_job
     job = get_job(job_id)
     if not job:
         # Try from DB
         db_job = storage.get_v2_job(job_id)
         if db_job:
-            db_job["results"] = storage.get_v2_results(limit=1000)
+            # If DB marked it running/queued, but not in memory, it's a dead zombie
+            if db_job.get("status") in ("running", "queued"):
+                db_job["status"] = "cancelled"
+                db_job["error"] = "Сканирование прервано (сервис был перезапущен)"
+                storage.save_v2_job(db_job)
+            # Never attach 1000 full device records to a heartbeat endpoint!
+            db_job["results"] = []
             return JSONResponse(content=db_job)
         raise HTTPException(status_code=404, detail="Job not found")
-    return JSONResponse(content=job.to_dict())
+
+    res = job.to_dict()
+    # Cap streaming results in progress heartbeat to last 50 to avoid megabyte-sized polling payloads
+    if len(res.get("results", [])) > 50:
+        res["results"] = res["results"][-50:]
+    return JSONResponse(content=res)
 
 
 @router.post("/scan/{job_id}/cancel")
