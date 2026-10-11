@@ -51,6 +51,8 @@ async def probe_axis(
                     resp = await client.get(base + _AXIS_BRAND, auth=auth, timeout=_TIMEOUT)
                     if resp.status_code == 401 and user:
                         resp = await client.get(base + _AXIS_BRAND, auth=(user, password), timeout=_TIMEOUT)
+                except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout):
+                    break
                 except Exception:
                     continue
 

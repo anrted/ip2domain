@@ -1,8 +1,9 @@
 """Legacy HTTP camera fingerprinting, isolated from probe orchestration."""
 from __future__ import annotations
 
+import asyncio
 import re
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import httpx
 
@@ -111,44 +112,44 @@ _CAMERA_BRANDS = {
 }
 
 
-def _extract_ssl_domain(ip: str, port: int, timeout: float = 2.0) -> Optional[str]:
-    """Extract domain from SSL certificate SubjectAltName or CommonName, or PTR record."""
-    ports_to_try = [port]
-    if port != 443:
-        ports_to_try.append(443)
-    for p in ports_to_try:
-        try:
-            import ssl, socket
-            ctx = ssl.create_default_context()
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
-            with socket.create_connection((ip, p), timeout=timeout) as sock:
-                with ctx.wrap_socket(sock) as ssock:
-                    cert = ssock.getpeercert(binary_form=True)
-                    if cert:
-                        from cryptography import x509
-                        from cryptography.hazmat.backends import default_backend
-                        c = x509.load_der_x509_certificate(cert, default_backend())
-                        # 1. SubjectAlternativeName
-                        for ext in c.extensions:
-                            if ext.oid.dotted_string == "2.5.29.17":
-                                for name in ext.value:
-                                    val = getattr(name, "value", str(name)).strip().lower()
-                                    if val and not val.startswith("*") and "." in val:
-                                        return val
-                        # 2. CommonName
-                        for attr in c.subject:
-                            if attr.oid.dotted_string == "2.5.4.3":
-                                val = str(attr.value).strip().lower()
-                                if val and not val.startswith("*") and "." in val:
-                                    return val
-        except Exception:
-            pass
+async def _extract_ssl_domain(ip: str, port: int, timeout: float = 1.5) -> Optional[str]:
+    """Extract domain from SSL certificate SubjectAltName or CommonName asynchronously."""
+    if port not in (443, 8443, 9443, 10443):
+        return None
     try:
-        import socket
-        name, _, _ = socket.gethostbyaddr(ip)
-        if name and "." in name and not name.endswith(".in-addr.arpa"):
-            return name
+        import ssl
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(ip, port, ssl=ctx), timeout=timeout
+        )
+        try:
+            ssock = writer.get_extra_info("ssl_object")
+            cert = ssock.getpeercert(binary_form=True) if ssock else None
+            if cert:
+                from cryptography import x509
+                from cryptography.hazmat.backends import default_backend
+                c = x509.load_der_x509_certificate(cert, default_backend())
+                # 1. SubjectAlternativeName
+                for ext in c.extensions:
+                    if ext.oid.dotted_string == "2.5.29.17":
+                        for name in ext.value:
+                            val = getattr(name, "value", str(name)).strip().lower()
+                            if val and not val.startswith("*") and "." in val:
+                                return val
+                # 2. CommonName
+                for attr in c.subject:
+                    if attr.oid.dotted_string == "2.5.4.3":
+                        val = str(attr.value).strip().lower()
+                        if val and not val.startswith("*") and "." in val:
+                            return val
+        finally:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
     except Exception:
         pass
     return None
@@ -285,9 +286,9 @@ async def _probe_generic_http(
                     domain = ""
                     ssl_port = port if (scheme == "https" or port in (443, 8443, 9443, 10443)) else (443 if 443 in ports else (8443 if 8443 in ports else 0))
                     if ssl_port:
-                        domain = _extract_ssl_domain(ip, ssl_port) or ""
-                    if not domain:
-                        domain = _extract_ssl_domain(ip, port) or ""
+                        domain = (await _extract_ssl_domain(ip, ssl_port)) or ""
+                    if not domain and port in (443, 8443, 9443, 10443):
+                        domain = (await _extract_ssl_domain(ip, port)) or ""
                     if domain:
                         result["domain"] = domain
                     web_host = domain or ip

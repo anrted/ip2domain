@@ -149,9 +149,21 @@ async def probe_hls_mjpeg(
                 continue
 
             # Step 2: Try JPEG snapshot paths with the working credential
-            for path in _SNAPSHOT_PATHS:
+            # Fast pass: check primary snapshot paths first
+            primary_paths = [
+                "/ISAPI/Streaming/channels/101/picture",
+                "/cgi-bin/snapshot.cgi",
+                "/snap.jpg",
+                "/jpg/image.jpg",
+                "/preview.html",
+                "/cgi-bin/images_cgi?channel=0",
+                "/axis-cgi/jpg/image.cgi",
+                "/api/camera/snapshot",
+            ]
+            # Try primary paths first
+            for path in primary_paths:
                 try:
-                    resp = await client.get(base + path, auth=working_auth, timeout=_PATH_TIMEOUT)
+                    resp = await client.get(base + path, auth=working_auth, timeout=1.5)
                     if resp.status_code == 200 and _is_jpeg(resp.content):
                         result.update({
                             "success": True, "snapshot_url": base + path,
@@ -176,6 +188,26 @@ async def probe_hls_mjpeg(
                             except Exception:
                                 pass
                         return result
+                except (httpx.ConnectError, httpx.ConnectTimeout):
+                    break
+                except Exception:
+                    continue
+
+            # Secondary pass: only test extended paths if host gave indications of camera / auth challenge
+            extended_paths = [p for p in _SNAPSHOT_PATHS if p not in primary_paths]
+            for path in extended_paths:
+                try:
+                    resp = await client.get(base + path, auth=working_auth, timeout=1.5)
+                    if resp.status_code == 200 and _is_jpeg(resp.content):
+                        result.update({
+                            "success": True, "snapshot_url": base + path,
+                            "http_port": port,
+                            "credentials": found_cred or {},
+                            "snapshot_bytes": resp.content,
+                        })
+                        return result
+                except (httpx.ConnectError, httpx.ConnectTimeout):
+                    break
                 except Exception:
                     continue
 

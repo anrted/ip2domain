@@ -68,6 +68,10 @@ async def _soap_post(client: httpx.AsyncClient, url: str, body: str,
         )
         if resp.status_code in (200, 400, 401, 500):   # cameras return 400/401/500 on auth challenge or faults
             return resp.text
+        if resp.status_code in (404, 405, 501, 502, 503):
+            return "__NOT_ONVIF__"
+    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout):
+        return "__CONN_ERR__"
     except Exception:
         pass
     return None
@@ -120,6 +124,8 @@ async def probe_onvif(
                     "<tds:GetDeviceInformation/>",
                     u_str, auth_val,
                 )
+                if xml in ("__CONN_ERR__", "__NOT_ONVIF__"):
+                    break  # Endpoint dead or not ONVIF service
                 if not xml or "Envelope" not in xml:
                     continue
 

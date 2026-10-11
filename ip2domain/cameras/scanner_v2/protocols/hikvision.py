@@ -55,6 +55,8 @@ async def probe_hikvision(
                             auth=(user, password),
                             timeout=_TIMEOUT,
                         )
+                except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout):
+                    break
                 except Exception:
                     continue
 

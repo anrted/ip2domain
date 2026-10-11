@@ -33,8 +33,8 @@ logger = logging.getLogger(__name__)
 # But materialize target list only after dedup for masscan/asyncio
 _MAX_IPS_V2 = int(os.environ.get("IP2DOMAIN_V2_MAX_IPS", "5000000"))
 
-# Stage 2 concurrency (each probe now capped at ≤50s; 50 workers ≈ fine with 2GB RAM)
-_DEFAULT_STAGE2_CONCURRENCY = int(os.environ.get("IP2DOMAIN_V2_STAGE2_CONCURRENCY", "50"))
+# Stage 2 concurrency (fast preflight + non-blocking asyncio: 200 workers fine on 2GB RAM)
+_DEFAULT_STAGE2_CONCURRENCY = int(os.environ.get("IP2DOMAIN_V2_STAGE2_CONCURRENCY", "200"))
 
 # Active jobs registry (in-memory, shared with router)
 _ACTIVE_JOBS: Dict[str, ScanJob] = {}

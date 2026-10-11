@@ -44,6 +44,8 @@ async def probe_dahua(
                     resp = await client.get(base + _CGI_DEVICE_TYPE, auth=auth, timeout=_TIMEOUT)
                     if resp.status_code == 401 and user:
                         resp = await client.get(base + _CGI_DEVICE_TYPE, auth=(user, password), timeout=_TIMEOUT)
+                except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout):
+                    break
                 except Exception:
                     continue
 
