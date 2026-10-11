@@ -208,6 +208,7 @@ function v2OnActivate() {
     if (window.v2LoadStoredResults) v2LoadStoredResults();
     v2CheckActiveScan();
     v2CalculateTargetsCount();
+    if (window.v2CheckBulkCaptureOnLoad) v2CheckBulkCaptureOnLoad();
 }
 window.v2OnActivate = v2OnActivate;
 

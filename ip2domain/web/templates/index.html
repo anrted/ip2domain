@@ -1501,7 +1501,10 @@
             document.getElementById('graph-search').style.display = viewId === 'graph-view' ? '' : 'none';
             document.getElementById('app-sidebar').classList.remove('open');
             if (viewId === 'history-view') loadScanHistory();
-            if (viewId === 'remote-desktop-view' && window.refreshRemoteTargets) refreshRemoteTargets();
+            if (viewId === 'remote-desktop-view') {
+                if (window.refreshRemoteTargets) refreshRemoteTargets();
+                if (window.restoreRemoteDesktopScan) restoreRemoteDesktopScan();
+            }
             if (viewId === 'cameras-view') {
                 const savedVer = localStorage.getItem('ip2domain_cam_version') || 'v2';
                 if (savedVer === 'v2' && window.switchCameraVersion) {
@@ -1655,15 +1658,15 @@
             checkDirectCamNav();
         }
     </script>
-    <script src="/static/graph.js"></script>
-    <script src="/static/scan.js"></script>
-    <script src="/static/remote_desktop.js"></script>
-    <script src="/static/cameras/centra.js?v=20260905-dynamic-cluster-mode"></script>
+    <script src="/static/graph.js?v=20261011-lazy-init"></script>
+    <script src="/static/scan.js?v=20261011-lazy-init"></script>
+    <script src="/static/remote_desktop.js?v=20261011-lazy-init"></script>
+    <script src="/static/cameras/centra.js?v=20261011-lazy-init"></script>
     <script src="/static/cameras/scanner.js?v=20260814-m7-skip-existing"></script>
     <script src="/static/cameras/go2rtc.js?v=20260814-m7-skip-existing"></script>
-    <script src="/static/cameras/strix.js?v=20260818-db-presets-v5"></script>
-    <script src="/static/cameras/scanner_v2.js?v=20261011-geo-global-dropdown"></script>
-    <script src="/static/city_ip.js?geo_bulk_v2=1&v=20260821-v1"></script>
+    <script src="/static/cameras/strix.js?v=20261011-lazy-init"></script>
+    <script src="/static/cameras/scanner_v2.js?v=20261011-lazy-init"></script>
+    <script src="/static/city_ip.js?v=20261011-lazy-init"></script>
 </body>
 
 </html>

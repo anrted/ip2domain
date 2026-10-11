@@ -140,4 +140,12 @@ function renderRemoteDesktopResults(result) {
     }).join('');
 }
 
-document.addEventListener('DOMContentLoaded', restoreRemoteDesktopScan);
+window.restoreRemoteDesktopScan = restoreRemoteDesktopScan;
+
+document.addEventListener('DOMContentLoaded', () => {
+    const rdpView = document.getElementById('remote-desktop-view');
+    const jobId = localStorage.getItem('ip2domain_remote_job');
+    if (jobId || (rdpView && rdpView.classList.contains('active'))) {
+        restoreRemoteDesktopScan();
+    }
+});

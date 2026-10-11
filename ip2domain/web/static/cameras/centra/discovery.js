@@ -32,7 +32,11 @@ function updateCentraTypeFields() {
 window.updateCentraTypeFields = updateCentraTypeFields;
 document.addEventListener('DOMContentLoaded', () => {
     updateCentraTypeFields();
-    if (window.restoreCentraScan) restoreCentraScan();
+    const camView = document.getElementById('cameras-view');
+    const centraPanel = document.getElementById('camera-centra-panel');
+    if (camView && camView.classList.contains('active') && centraPanel && centraPanel.classList.contains('active')) {
+        if (window.restoreCentraScan) restoreCentraScan();
+    }
 });
 
 function updateCentraColorOptions() {

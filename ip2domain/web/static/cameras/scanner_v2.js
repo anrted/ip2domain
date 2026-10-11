@@ -215,6 +215,7 @@ function v2OnActivate() {
     if (window.v2LoadStoredResults) v2LoadStoredResults();
     v2CheckActiveScan();
     v2CalculateTargetsCount();
+    if (window.v2CheckBulkCaptureOnLoad) v2CheckBulkCaptureOnLoad();
 }
 window.v2OnActivate = v2OnActivate;
 
@@ -1732,7 +1733,7 @@ window.v2CapturePreview = v2CapturePreview;
 // ── Camera Scanner v2: Stream Modal & Video Player Dialog ──────────────
 
 if (typeof window._esc !== 'function') {
-    window._esc = function(str) {
+    window._esc = function (str) {
         if (str == null) return '';
         return String(str)
             .replace(/&/g, '&amp;')
@@ -1743,7 +1744,7 @@ if (typeof window._esc !== 'function') {
     };
 }
 if (typeof window._protoBadgeClass !== 'function') {
-    window._protoBadgeClass = function(p) {
+    window._protoBadgeClass = function (p) {
         if (!p) return 'generic';
         p = p.toLowerCase();
         if (p.includes('onvif')) return 'onvif';
@@ -1758,7 +1759,7 @@ if (typeof window._protoBadgeClass !== 'function') {
     };
 }
 if (typeof window.v2CopyUrl !== 'function') {
-    window.v2CopyUrl = function(url) {
+    window.v2CopyUrl = function (url) {
         if (navigator.clipboard && navigator.clipboard.writeText) {
             navigator.clipboard.writeText(url).then(() => {
                 _showStreamToast('✓ URL потока скопирован');
@@ -1787,7 +1788,7 @@ if (typeof window.v2CopyUrl !== 'function') {
     };
 }
 if (typeof window.v2AddSpecificStreamToGo2rtc !== 'function') {
-    window.v2AddSpecificStreamToGo2rtc = async function(ip, streamUrl, channelIdx) {
+    window.v2AddSpecificStreamToGo2rtc = async function (ip, streamUrl, channelIdx) {
         const safeIp = ip.replace(/\./g, '_');
         const streamName = `v2_${safeIp}_ch${channelIdx}`;
         try {
@@ -2019,7 +2020,7 @@ async function v2OpenStreamPlayer(srcUrl, camName, ip, currentIdx = 0) {
             }
             const tempName = dialog.dataset.tempStreamName;
             if (tempName) {
-                fetch(`/api/go2rtc/streams/${encodeURIComponent(tempName)}`, { method: "DELETE" }).catch(() => {});
+                fetch(`/api/go2rtc/streams/${encodeURIComponent(tempName)}`, { method: "DELETE" }).catch(() => { });
                 delete dialog.dataset.tempStreamName;
             }
             const iframe = dialog.querySelector('iframe');
@@ -2033,7 +2034,7 @@ async function v2OpenStreamPlayer(srcUrl, camName, ip, currentIdx = 0) {
 
     const prevTempName = dialog.dataset.tempStreamName;
     if (prevTempName) {
-        fetch(`/api/go2rtc/streams/${encodeURIComponent(prevTempName)}`, { method: "DELETE" }).catch(() => {});
+        fetch(`/api/go2rtc/streams/${encodeURIComponent(prevTempName)}`, { method: "DELETE" }).catch(() => { });
     }
 
     const tempName = `temp_v2_${Date.now()}`;
@@ -2059,7 +2060,7 @@ async function v2OpenStreamPlayer(srcUrl, camName, ip, currentIdx = 0) {
                     <button type="button" class="btn btn-ghost btn-small" style="font-size: 0.75rem; padding: 0.3rem 0.6rem; border-radius:6px; background:rgba(255,255,255,0.06); color:#cbd5e1; border:1px solid rgba(255,255,255,0.1);" title="Предыдущий поток" onclick="v2OpenStreamPlayer('${_esc(prevStream.url)}', '${_esc(camName)}', '${_esc(ip)}', ${prevIdx})">◀ Назад</button>
                     <button type="button" class="btn btn-ghost btn-small" style="font-size: 0.75rem; padding: 0.3rem 0.6rem; border-radius:6px; background:rgba(255,255,255,0.06); color:#cbd5e1; border:1px solid rgba(255,255,255,0.1);" title="Следующий поток" onclick="v2OpenStreamPlayer('${_esc(nextStream.url)}', '${_esc(camName)}', '${_esc(ip)}', ${nextIdx})">Вперед ▶</button>
                 ` : ''}
-                <button type="button" class="btn btn-small" style="background: #10b981; color:#fff; font-size: 0.75rem; font-weight:600; padding:0.3rem 0.65rem; border-radius:6px; border:none; cursor:pointer;" onclick="v2AddSpecificStreamToGo2rtc('${_esc(ip)}', '${_esc(srcUrl)}', ${currentIdx+1}); this.disabled=true; this.textContent='✓ Добавлено';">+ В go2rtc</button>
+                <button type="button" class="btn btn-small" style="background: #10b981; color:#fff; font-size: 0.75rem; font-weight:600; padding:0.3rem 0.65rem; border-radius:6px; border:none; cursor:pointer;" onclick="v2AddSpecificStreamToGo2rtc('${_esc(ip)}', '${_esc(srcUrl)}', ${currentIdx + 1}); this.disabled=true; this.textContent='✓ Добавлено';">+ В go2rtc</button>
                 <button type="button" style="background:none; border:none; color:#94a3b8; font-size:1.4rem; cursor:pointer; padding:0 4px; line-height:1;" onclick="document.getElementById('v2-player-dialog').close()" aria-label="Закрыть">×</button>
             </div>
         </div>
@@ -2080,24 +2081,24 @@ async function v2OpenStreamPlayer(srcUrl, camName, ip, currentIdx = 0) {
             <iframe id="v2-modal-iframe" style="display: none; width: 100%; height: 100%; border: none;" allow="autoplay; fullscreen"></iframe>
             
             ${totalStreams > 1 ? `
-                <button type="button" style="position: absolute; left: 12px; top: 50%; transform: translateY(-50%); width: 40px; height: 40px; border-radius: 50%; background: rgba(15,23,42,0.8); border: 1px solid rgba(255,255,255,0.25); color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; backdrop-filter: blur(6px); transition: all 0.2s; z-index: 10; font-size:1.1rem;" onmouseover="this.style.background='rgba(99,102,241,0.9)'" onmouseout="this.style.background='rgba(15,23,42,0.8)'" onclick="v2OpenStreamPlayer('${_esc(prevStream.url)}', '${_esc(camName)}', '${_esc(ip)}', ${prevIdx})" title="Предыдущий поток (#${prevIdx+1})">◀</button>
-                <button type="button" style="position: absolute; right: 12px; top: 50%; transform: translateY(-50%); width: 40px; height: 40px; border-radius: 50%; background: rgba(15,23,42,0.8); border: 1px solid rgba(255,255,255,0.25); color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; backdrop-filter: blur(6px); transition: all 0.2s; z-index: 10; font-size:1.1rem;" onmouseover="this.style.background='rgba(99,102,241,0.9)'" onmouseout="this.style.background='rgba(15,23,42,0.8)'" onclick="v2OpenStreamPlayer('${_esc(nextStream.url)}', '${_esc(camName)}', '${_esc(ip)}', ${nextIdx})" title="Следующий поток (#${nextIdx+1})">▶</button>
+                <button type="button" style="position: absolute; left: 12px; top: 50%; transform: translateY(-50%); width: 40px; height: 40px; border-radius: 50%; background: rgba(15,23,42,0.8); border: 1px solid rgba(255,255,255,0.25); color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; backdrop-filter: blur(6px); transition: all 0.2s; z-index: 10; font-size:1.1rem;" onmouseover="this.style.background='rgba(99,102,241,0.9)'" onmouseout="this.style.background='rgba(15,23,42,0.8)'" onclick="v2OpenStreamPlayer('${_esc(prevStream.url)}', '${_esc(camName)}', '${_esc(ip)}', ${prevIdx})" title="Предыдущий поток (#${prevIdx + 1})">◀</button>
+                <button type="button" style="position: absolute; right: 12px; top: 50%; transform: translateY(-50%); width: 40px; height: 40px; border-radius: 50%; background: rgba(15,23,42,0.8); border: 1px solid rgba(255,255,255,0.25); color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; backdrop-filter: blur(6px); transition: all 0.2s; z-index: 10; font-size:1.1rem;" onmouseover="this.style.background='rgba(99,102,241,0.9)'" onmouseout="this.style.background='rgba(15,23,42,0.8)'" onclick="v2OpenStreamPlayer('${_esc(nextStream.url)}', '${_esc(camName)}', '${_esc(ip)}', ${nextIdx})" title="Следующий поток (#${nextIdx + 1})">▶</button>
             ` : ''}
         </div>
         ${totalStreams > 1 ? `
             <div style="display: flex; gap: 0.4rem; padding: 0.5rem 0.8rem; background: rgba(10, 14, 26, 0.98); overflow-x: auto; border-top: 1px solid rgba(255,255,255,0.08); align-items: center;" class="v2-modal-playlist">
                 <span style="font-size: 0.72rem; color: #94a3b8; white-space: nowrap; margin-right: 0.3rem; font-weight: 600;">Каналы (${totalStreams}):</span>
                 ${streams.map((st, i) => {
-                    const isCur = i === currentIdx;
-                    const stUrl = st.url || "";
-                    const stType = (st.type || st.stream_type || 'RTSP').toUpperCase();
-                    const live = st.verified ? '✓' : '';
-                    return `
+        const isCur = i === currentIdx;
+        const stUrl = st.url || "";
+        const stType = (st.type || st.stream_type || 'RTSP').toUpperCase();
+        const live = st.verified ? '✓' : '';
+        return `
                         <button type="button" id="v2-stream-pill-${i}" class="v2-btn-small" style="font-size: 0.7rem; padding: 0.25rem 0.55rem; white-space: nowrap; border-radius: 6px; ${isCur ? 'background: rgba(99,102,241,0.9); color: #fff; border: 1px solid #a5b4fc; font-weight: 700; box-shadow: 0 0 10px rgba(99,102,241,0.6);' : 'background: rgba(255,255,255,0.06); color: #cbd5e1; border: 1px solid rgba(255,255,255,0.1);'}" onclick="v2OpenStreamPlayer('${_esc(stUrl)}', '${_esc(camName)}', '${_esc(ip)}', ${i})">
-                            ${isCur ? '▶ ' : ''}#${i+1} · ${_esc(stType)} ${live}
+                            ${isCur ? '▶ ' : ''}#${i + 1} · ${_esc(stType)} ${live}
                         </button>
                     `;
-                }).join('')}
+    }).join('')}
             </div>
         ` : ''}
     `;
@@ -2448,7 +2449,7 @@ function v2SetSpRecordTrack(ip, rec, autoplay = true) {
     if (audio) {
         audio.src = rec.audio_url;
         if (autoplay) {
-            audio.play().catch(() => {});
+            audio.play().catch(() => { });
         }
     }
 
@@ -3156,7 +3157,7 @@ function _startBulkCapturePolling() {
     poll();
 }
 
-// Check on page load if bulk capture was already running in background
+// Check on tab activation if bulk capture was already running in background
 function v2CheckBulkCaptureOnLoad() {
     fetch('/api/v2/bulk_capture/status')
         .then(r => r.json())
@@ -3167,10 +3168,20 @@ function v2CheckBulkCaptureOnLoad() {
         })
         .catch(() => {});
 }
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', v2CheckBulkCaptureOnLoad);
-} else {
-    v2CheckBulkCaptureOnLoad();
+window.v2CheckBulkCaptureOnLoad = v2CheckBulkCaptureOnLoad;
+
+if (typeof document !== 'undefined') {
+    const checkBulk = () => {
+        const camView = document.getElementById('cameras-view');
+        if (camView && camView.classList.contains('active')) {
+            v2CheckBulkCaptureOnLoad();
+        }
+    };
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', checkBulk);
+    } else {
+        checkBulk();
+    }
 }
 
 
@@ -3315,17 +3326,20 @@ window._esc = _esc;
 
 if (typeof document !== 'undefined') {
     document.addEventListener('DOMContentLoaded', () => {
-        if (window.v2LoadTools) v2LoadTools();
-        if (window.v2RenderCredentials) v2RenderCredentials();
+        const camView = document.getElementById('cameras-view');
+        if (camView && camView.classList.contains('active')) {
+            if (window.v2LoadTools) v2LoadTools();
+            if (window.v2RenderCredentials) v2RenderCredentials();
 
-        const savedVersion = localStorage.getItem('ip2domain_cam_version');
-        if (savedVersion === 'v2') {
-            setTimeout(() => {
-                const v2Btn = document.getElementById('cam-ver-btn-v2');
-                if (v2Btn && window.switchCameraVersion) {
-                    switchCameraVersion('v2');
-                }
-            }, 50);
+            const savedVersion = localStorage.getItem('ip2domain_cam_version');
+            if (savedVersion === 'v2') {
+                setTimeout(() => {
+                    const v2Btn = document.getElementById('cam-ver-btn-v2');
+                    if (v2Btn && window.switchCameraVersion) {
+                        switchCameraVersion('v2');
+                    }
+                }, 50);
+            }
         }
     });
 }

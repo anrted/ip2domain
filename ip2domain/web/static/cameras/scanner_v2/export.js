@@ -686,7 +686,7 @@ function _startBulkCapturePolling() {
     poll();
 }
 
-// Check on page load if bulk capture was already running in background
+// Check on tab activation if bulk capture was already running in background
 function v2CheckBulkCaptureOnLoad() {
     fetch('/api/v2/bulk_capture/status')
         .then(r => r.json())
@@ -697,10 +697,20 @@ function v2CheckBulkCaptureOnLoad() {
         })
         .catch(() => {});
 }
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', v2CheckBulkCaptureOnLoad);
-} else {
-    v2CheckBulkCaptureOnLoad();
+window.v2CheckBulkCaptureOnLoad = v2CheckBulkCaptureOnLoad;
+
+if (typeof document !== 'undefined') {
+    const checkBulk = () => {
+        const camView = document.getElementById('cameras-view');
+        if (camView && camView.classList.contains('active')) {
+            v2CheckBulkCaptureOnLoad();
+        }
+    };
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', checkBulk);
+    } else {
+        checkBulk();
+    }
 }
 
 
@@ -845,17 +855,20 @@ window._esc = _esc;
 
 if (typeof document !== 'undefined') {
     document.addEventListener('DOMContentLoaded', () => {
-        if (window.v2LoadTools) v2LoadTools();
-        if (window.v2RenderCredentials) v2RenderCredentials();
+        const camView = document.getElementById('cameras-view');
+        if (camView && camView.classList.contains('active')) {
+            if (window.v2LoadTools) v2LoadTools();
+            if (window.v2RenderCredentials) v2RenderCredentials();
 
-        const savedVersion = localStorage.getItem('ip2domain_cam_version');
-        if (savedVersion === 'v2') {
-            setTimeout(() => {
-                const v2Btn = document.getElementById('cam-ver-btn-v2');
-                if (v2Btn && window.switchCameraVersion) {
-                    switchCameraVersion('v2');
-                }
-            }, 50);
+            const savedVersion = localStorage.getItem('ip2domain_cam_version');
+            if (savedVersion === 'v2') {
+                setTimeout(() => {
+                    const v2Btn = document.getElementById('cam-ver-btn-v2');
+                    if (v2Btn && window.switchCameraVersion) {
+                        switchCameraVersion('v2');
+                    }
+                }, 50);
+            }
         }
     });
 }

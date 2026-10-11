@@ -754,6 +754,8 @@
 
     window.CityIpFinder = {
         init: function () {
+            if (state.initialized) return;
+            state.initialized = true;
             initDomElements();
             attachEventListeners();
             loadCountriesSummary();
@@ -791,10 +793,18 @@
         },
     };
 
-    // Auto-init on DOMContentLoaded
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', () => window.CityIpFinder.init());
-    } else {
-        window.CityIpFinder.init();
+    // Only auto-init on DOMContentLoaded if city-ip-view is active
+    if (typeof document !== 'undefined') {
+        const checkCityInit = () => {
+            const cityView = document.getElementById('city-ip-view');
+            if (cityView && cityView.classList.contains('active')) {
+                window.CityIpFinder.init();
+            }
+        };
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', checkCityInit);
+        } else {
+            checkCityInit();
+        }
     }
 })();

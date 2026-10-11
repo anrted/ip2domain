@@ -374,7 +374,6 @@ async function loadGlobalGraph() {
         if (!res.ok) return;
         const data = await res.json();
         renderResults(data);
-        loadScanHistory();     // refresh history table too
     } catch (e) {
         console.error('Failed to load global graph:', e);
     }
@@ -734,6 +733,5 @@ function _vulnRunningHtml(msg) {
    ---------------------------------------------------------- */
 document.addEventListener('DOMContentLoaded', () => {
     loadGlobalGraph();
-    loadScanHistory();
     restoreActiveScan();
 });

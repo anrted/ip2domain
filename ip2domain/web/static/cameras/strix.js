@@ -1129,13 +1129,18 @@ async function sendPTZ(ip, command, preset = '1') {
 }
 window.sendPTZ = sendPTZ;
 
-// Initialize presets and database target counts on load
+// Initialize database target counts when strix tab is active
 if (typeof document !== 'undefined') {
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', () => {
+    const checkStrix = () => {
+        const camView = document.getElementById('cameras-view');
+        const strixTab = document.getElementById('camera-strix-tab');
+        if (camView && camView.classList.contains('active') && strixTab && strixTab.classList.contains('active')) {
             if (window.updateStrixDbCounts) updateStrixDbCounts();
-        });
+        }
+    };
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', checkStrix);
     } else {
-        if (window.updateStrixDbCounts) updateStrixDbCounts();
+        checkStrix();
     }
 }

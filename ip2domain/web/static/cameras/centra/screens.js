@@ -31,6 +31,7 @@ function switchCameraTab(tab) {
             restoreStrixScan();
         }
         if (window.refreshStrixGraphTargets) refreshStrixGraphTargets();
+        if (window.updateStrixDbCounts) updateStrixDbCounts();
     }
     if (tab === 'scanner') {
         if (window.restoreCameraScan) restoreCameraScan();
