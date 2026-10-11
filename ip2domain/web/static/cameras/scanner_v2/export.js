@@ -768,7 +768,11 @@ function v2SetFilter(type, value) {
                   (!window.V2State.filterAuth || window.V2State.filterAuth === 'all');
     document.getElementById('v2-filter-brand-all')?.classList.toggle('active', isAll);
 
-    if (window.v2RenderResults) v2RenderResults();
+    if (window.v2LoadStoredResults) {
+        v2LoadStoredResults(true, false);
+    } else if (window.v2RenderResults) {
+        v2RenderResults();
+    }
 }
 window.v2SetFilter = v2SetFilter;
 
@@ -780,15 +784,27 @@ function v2SetGeoFilter(val) {
         select.value = val;
     }
     _updateGeoClearBtn();
-    if (window.v2RenderResults) v2RenderResults();
+    if (window.v2LoadStoredResults) {
+        v2LoadStoredResults(true, false);
+    } else if (window.v2RenderResults) {
+        v2RenderResults();
+    }
 }
 window.v2SetGeoFilter = v2SetGeoFilter;
 
+let _v2GeoSearchTimer = null;
 function v2SetGeoSearch(val) {
     window.V2State.visibleCount = window.V2State.pageSize || 48;
     window.V2State.geoSearch = val;
     _updateGeoClearBtn();
-    if (window.v2RenderResults) v2RenderResults();
+    clearTimeout(_v2GeoSearchTimer);
+    _v2GeoSearchTimer = setTimeout(() => {
+        if (window.v2LoadStoredResults) {
+            v2LoadStoredResults(true, false);
+        } else if (window.v2RenderResults) {
+            v2RenderResults();
+        }
+    }, 250);
 }
 window.v2SetGeoSearch = v2SetGeoSearch;
 
@@ -801,7 +817,11 @@ function v2ClearGeoFilter() {
     const searchInput = document.getElementById('v2-geo-search-input');
     if (searchInput) searchInput.value = '';
     _updateGeoClearBtn();
-    if (window.v2RenderResults) v2RenderResults();
+    if (window.v2LoadStoredResults) {
+        v2LoadStoredResults(true, false);
+    } else if (window.v2RenderResults) {
+        v2RenderResults();
+    }
 }
 window.v2ClearGeoFilter = v2ClearGeoFilter;
 

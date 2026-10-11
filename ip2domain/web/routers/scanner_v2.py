@@ -192,30 +192,50 @@ def _sanitize_v2_result(r: dict) -> dict:
 
 @router.get("/results")
 async def get_results(
-    limit: int = Query(default=100000, le=500000),
+    limit: int = Query(default=48, le=500000),
+    offset: int = Query(default=0, ge=0),
     brand: str = Query(default=""),
     protocol: str = Query(default=""),
     has_preview: bool = Query(default=False),
     verified_only: bool = Query(default=False),
     auth_status: str = Query(default="all"),
     category: str = Query(default=""),
+    geo: str = Query(default=""),
+    search: str = Query(default=""),
 ):
-    """Return stored v2 results from DB."""
+    """Return stored v2 results from DB with server-side pagination and filters."""
     results = storage.get_v2_results(
         limit=limit,
+        offset=offset,
         brand=brand,
         protocol=protocol,
         has_preview=has_preview,
         verified_only=verified_only,
         auth_status=auth_status,
         category=category,
+        geo=geo,
+        search=search,
     )
     results = [_sanitize_v2_result(r) for r in results]
+    total_matching = storage.get_v2_results_count(
+        brand=brand,
+        protocol=protocol,
+        has_preview=has_preview,
+        verified_only=verified_only,
+        auth_status=auth_status,
+        category=category,
+        geo=geo,
+        search=search,
+    )
     stats = storage.get_v2_stats()
     return JSONResponse(content={
         "results": results,
         "total": len(results),
-        "total_db": stats.get("total", len(results)),
+        "total_matching": total_matching,
+        "total_db": stats.get("total", total_matching),
+        "stats": stats,
+        "limit": limit,
+        "offset": offset,
     })
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -25,12 +26,26 @@ class ScannerV2StorageMixin:
                     result_json TEXT NOT NULL,
                     is_garbage  INTEGER DEFAULT 0,
                     in_go2rtc   INTEGER DEFAULT 0,
+                    device_category TEXT DEFAULT '',
+                    has_preview INTEGER DEFAULT 0,
                     updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_v2_results_brand
                 ON v2_results(brand, updated_at DESC)
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_v2_results_active
+                ON v2_results(is_garbage, updated_at DESC)
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_v2_results_cat
+                ON v2_results(device_category, is_garbage)
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_v2_results_preview
+                ON v2_results(is_garbage, has_preview DESC, updated_at DESC)
             """)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS v2_jobs (
@@ -49,7 +64,39 @@ class ScannerV2StorageMixin:
                     updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
-            # Auto-migrate table if created with earlier schema
+            # Auto-migrate tables if created with earlier schema
+            res_cols = [r[1] for r in conn.execute("PRAGMA table_info(v2_results)").fetchall()]
+            if "device_category" not in res_cols:
+                try:
+                    conn.execute("ALTER TABLE v2_results ADD COLUMN device_category TEXT DEFAULT ''")
+                    conn.execute("""
+                        UPDATE v2_results SET device_category = 
+                        CASE 
+                            WHEN result_json LIKE '%"device_category": "router"%' OR result_json LIKE '%"categories":%"router"%' THEN 'router'
+                            WHEN result_json LIKE '%"device_category": "intercom"%' THEN 'intercom'
+                            WHEN result_json LIKE '%"device_category": "generic_web"%' THEN 'generic_web'
+                            WHEN result_json LIKE '%"device_category": "sprecord"%' OR result_json LIKE '%"sprecord"%' THEN 'sprecord'
+                            WHEN result_json LIKE '%"device_category": "device"%' THEN 'device'
+                            ELSE 'camera'
+                        END
+                    """)
+                    conn.execute("CREATE INDEX IF NOT EXISTS idx_v2_results_cat ON v2_results(device_category, is_garbage)")
+                except Exception:
+                    pass
+            if "has_preview" not in res_cols:
+                try:
+                    conn.execute("ALTER TABLE v2_results ADD COLUMN has_preview INTEGER DEFAULT 0")
+                    conn.execute("""
+                        UPDATE v2_results SET has_preview = 
+                        CASE 
+                            WHEN streams_json LIKE '%/v2_captures/%' OR streams_json LIKE '%"screenshot": "/%' OR result_json LIKE '%"web_screenshot": "/%' THEN 1
+                            ELSE 0
+                        END
+                    """)
+                    conn.execute("CREATE INDEX IF NOT EXISTS idx_v2_results_preview ON v2_results(is_garbage, has_preview DESC, updated_at DESC)")
+                except Exception:
+                    pass
+
             cols = [r[1] for r in conn.execute("PRAGMA table_info(v2_jobs)").fetchall()]
             if "current_index" not in cols:
                 try:
@@ -94,10 +141,31 @@ class ScannerV2StorageMixin:
                 if not result.get("credentials") and old.get("credentials"):
                     result["credentials"] = old["credentials"]
 
+            cat = str(result.get("device_category", "")).strip().lower()
+            if not cat:
+                if any("sprecord" in str(x).lower() for x in (result.get("brand", ""), result.get("model", ""), result.get("protocols", []))):
+                    cat = "sprecord"
+                elif "router" in str(result.get("protocols", [])) or "winbox" in str(result.get("protocols", [])):
+                    cat = "router"
+                elif any("intercom" in str(x).lower() for x in (result.get("categories", []), result.get("brand", ""))):
+                    cat = "intercom"
+                elif any("generic_web" in str(x).lower() for x in (result.get("categories", []), result.get("brand", ""))):
+                    cat = "generic_web"
+                elif result.get("device_category"):
+                    cat = str(result["device_category"])
+                else:
+                    cat = "camera"
+            result["device_category"] = cat
+
+            has_prev = 1 if (
+                any(bool(s.get("screenshot")) for s in result.get("streams", []))
+                or bool(result.get("web_screenshot"))
+            ) else 0
+
             conn.execute(
                 """
-                INSERT INTO v2_results (ip, brand, model, serial, protocols, streams_json, result_json, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                INSERT INTO v2_results (ip, brand, model, serial, protocols, streams_json, result_json, device_category, has_preview, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(ip) DO UPDATE SET
                     brand = excluded.brand,
                     model = excluded.model,
@@ -105,6 +173,8 @@ class ScannerV2StorageMixin:
                     protocols = excluded.protocols,
                     streams_json = excluded.streams_json,
                     result_json = excluded.result_json,
+                    device_category = excluded.device_category,
+                    has_preview = excluded.has_preview,
                     updated_at = CURRENT_TIMESTAMP
                 """,
                 (
@@ -115,6 +185,8 @@ class ScannerV2StorageMixin:
                     json.dumps(result.get("protocols", []), ensure_ascii=False),
                     json.dumps(result.get("streams", []), ensure_ascii=False),
                     json.dumps(result, ensure_ascii=False),
+                    cat,
+                    has_prev,
                 ),
             )
 
@@ -132,8 +204,12 @@ class ScannerV2StorageMixin:
                     break
             else:
                 return
-            conn.execute("UPDATE v2_results SET result_json = ?, streams_json = ? WHERE ip = ?",
-                         (json.dumps(result, ensure_ascii=False), json.dumps(result.get("streams", []), ensure_ascii=False), ip))
+            has_prev = 1 if (
+                any(bool(s.get("screenshot")) for s in result.get("streams", []))
+                or bool(result.get("web_screenshot"))
+            ) else 0
+            conn.execute("UPDATE v2_results SET result_json = ?, streams_json = ?, has_preview = ? WHERE ip = ?",
+                         (json.dumps(result, ensure_ascii=False), json.dumps(result.get("streams", []), ensure_ascii=False), has_prev, ip))
 
     def update_v2_geo(self, ip: str, geo: Dict) -> bool:
         """Update only geolocation, preserving concurrently captured frames."""
@@ -152,43 +228,91 @@ class ScannerV2StorageMixin:
                              (json.dumps(result, ensure_ascii=False), ip))
             return changed
 
-    def get_v2_results(
+    def _build_v2_where_clause(
         self,
-        limit: int = 100000,
         brand: str = "",
         protocol: str = "",
         has_preview: bool = False,
         verified_only: bool = False,
         auth_status: str = "all",
         category: str = "",
-    ) -> List[Dict]:
-        """Retrieve v2 scanner results, prioritizing cameras with preview/verified streams."""
-        with self._get_connection() as conn:
-            query = "SELECT result_json, in_go2rtc FROM v2_results WHERE is_garbage = 0"
-            params = []
-            if brand:
-                query += " AND brand LIKE ?"
-                params.append(f"%{brand}%")
-            if protocol:
-                query += " AND protocols LIKE ?"
-                params.append(f"%{protocol}%")
-            if category:
-                query += " AND (result_json LIKE ? OR result_json LIKE ?)"
-                params.append(f'%"device_category": "{category}"%')
-                params.append(f'%"categories":%"{category}"%')
-            if has_preview:
-                query += " AND (streams_json LIKE '%/v2_captures/%' OR streams_json LIKE '%\"screenshot\": \"/%' OR result_json LIKE '%\"web_screenshot\": \"/%')"
-            elif verified_only:
-                query += " AND (streams_json LIKE '%\"verified\": true%' OR streams_json LIKE '%/v2_captures/%' OR result_json LIKE '%\"web_screenshot\": \"/%')"
+        geo: str = "",
+        search: str = "",
+    ) -> Tuple[str, List]:
+        where = " WHERE is_garbage = 0"
+        params = []
+        if brand and brand != "all":
+            where += " AND brand LIKE ?"
+            params.append(f"%{brand}%")
+        if protocol and protocol != "all":
+            where += " AND protocols LIKE ?"
+            params.append(f"%{protocol}%")
+        if category and category != "all":
+            where += " AND (device_category = ? OR result_json LIKE ?)"
+            params.append(category)
+            params.append(f'%"device_category": "{category}"%')
+        if has_preview:
+            where += " AND has_preview = 1"
+        elif verified_only:
+            where += " AND (has_preview = 1 OR streams_json LIKE '%\"verified\": true%')"
+        if auth_status in ("401", "locked", "auth_required"):
+            where += " AND result_json LIKE '%\"auth_required\": true%'"
+        elif auth_status in ("open", "unauthenticated", "no_auth"):
+            where += " AND (streams_json LIKE '%\"verified\": true%' OR (result_json LIKE '%\"auth_required\": false%' AND streams_json LIKE '%\"url\"%'))"
+        if geo and geo != "all":
+            if geo == "__no_geo__":
+                where += " AND (result_json NOT LIKE '%\"city\"%' OR result_json LIKE '%\"city\": \"\"%')"
+            elif geo.startswith("country:"):
+                code = geo.replace("country:", "").upper()
+                where += " AND result_json LIKE ?"
+                params.append(f'%"country_code": "{code}"%')
+            elif geo.startswith("region:"):
+                reg = geo.replace("region:", "")
+                where += " AND result_json LIKE ?"
+                params.append(f'%"region": "{reg}"%')
+            elif geo.startswith("city:"):
+                cit = geo.replace("city:", "")
+                where += " AND result_json LIKE ?"
+                params.append(f'%"city": "{cit}"%')
+        if search:
+            s = search.strip()
+            where += " AND (ip LIKE ? OR brand LIKE ? OR model LIKE ? OR result_json LIKE ?)"
+            params.extend([f"%{s}%", f"%{s}%", f"%{s}%", f"%{s}%"])
+        return where, params
 
-            # SQL sorting: cameras with captured screenshots or verified live streams FIRST, then recent
-            query += """ ORDER BY 
-                (streams_json LIKE '%/v2_captures/%' OR streams_json LIKE '%"screenshot": "/%') DESC,
-                (streams_json LIKE '%"verified": true%') DESC,
-                updated_at DESC"""
+    def get_v2_results(
+        self,
+        limit: int = 48,
+        offset: int = 0,
+        brand: str = "",
+        protocol: str = "",
+        has_preview: bool = False,
+        verified_only: bool = False,
+        auth_status: str = "all",
+        category: str = "",
+        geo: str = "",
+        search: str = "",
+    ) -> List[Dict]:
+        """Retrieve v2 scanner results with server-side pagination and SQL filtering."""
+        where_clause, params = self._build_v2_where_clause(
+            brand=brand,
+            protocol=protocol,
+            has_preview=has_preview,
+            verified_only=verified_only,
+            auth_status=auth_status,
+            category=category,
+            geo=geo,
+            search=search,
+        )
+        with self._get_connection() as conn:
+            query = f"SELECT result_json, in_go2rtc FROM v2_results{where_clause}"
+            query += " ORDER BY has_preview DESC, updated_at DESC"
             if limit and limit > 0:
                 query += " LIMIT ?"
                 params.append(limit)
+                if offset and offset > 0:
+                    query += " OFFSET ?"
+                    params.append(offset)
 
             rows = conn.execute(query, params).fetchall()
             results = []
@@ -201,39 +325,41 @@ class ScannerV2StorageMixin:
                     r.setdefault("geo_precision", clean_geo["precision"])
                     r["in_go2rtc"] = bool(row["in_go2rtc"])
 
-                    # Missing evidence stays unknown, never fabricate a 401.
                     if "auth_required" not in r:
                         r["auth_required"] = None
-                    has_live = any(s.get("verified") for s in r.get("streams", []))
-                    is_locked = bool(r.get("auth_required"))
-
-                    if auth_status in ("401", "locked", "auth_required") and not is_locked:
-                        continue
-                    elif auth_status in ("open", "unauthenticated", "no_auth") and not has_live:
-                        continue
 
                     results.append(r)
                 except Exception:
                     pass
 
-            def _res_sort_key(res):
-                streams = res.get("streams", [])
-                score = 0
-                if any(bool(s.get("screenshot") or s.get("screenshot_path")) for s in streams):
-                    score += 10000
-                if any(bool(s.get("verified")) for s in streams):
-                    score += 5000
-                if any(s.get("type") == "http_snapshot" or (str(s.get("url", "")).startswith("http")) for s in streams):
-                    score += 2000
-                if any(s.get("type") == "rtsp" or (str(s.get("url", "")).startswith("rtsp://")) for s in streams):
-                    score += 500
-                return score
-
-            results.sort(key=_res_sort_key, reverse=True)
             return results
 
-
-
+    def get_v2_results_count(
+        self,
+        brand: str = "",
+        protocol: str = "",
+        has_preview: bool = False,
+        verified_only: bool = False,
+        auth_status: str = "all",
+        category: str = "",
+        geo: str = "",
+        search: str = "",
+    ) -> int:
+        """Count total results matching the query filters."""
+        where_clause, params = self._build_v2_where_clause(
+            brand=brand,
+            protocol=protocol,
+            has_preview=has_preview,
+            verified_only=verified_only,
+            auth_status=auth_status,
+            category=category,
+            geo=geo,
+            search=search,
+        )
+        with self._get_connection() as conn:
+            query = f"SELECT COUNT(*) FROM v2_results{where_clause}"
+            row = conn.execute(query, params).fetchone()
+            return row[0] if row else 0
 
     def get_v2_result(self, ip: str) -> Optional[Dict]:
         """Get a single v2 result by IP."""
@@ -275,15 +401,30 @@ class ScannerV2StorageMixin:
             )
 
     def get_v2_stats(self) -> Dict:
-        """Return protocol and brand statistics for v2 results."""
+        """Return protocol, brand, and category statistics for v2 results with short TTL cache."""
+        now = time.time()
+        cached = getattr(self, "_v2_stats_cache", None)
+        if cached and (now - cached.get("ts", 0) < 30):
+            return cached["data"]
+
         with self._get_connection() as conn:
             total = conn.execute("SELECT COUNT(*) FROM v2_results WHERE is_garbage=0").fetchone()[0]
             by_brand = {}
             for row in conn.execute(
-                "SELECT brand, COUNT(*) as cnt FROM v2_results WHERE is_garbage=0 GROUP BY brand ORDER BY cnt DESC"
+                "SELECT brand, COUNT(*) as cnt FROM v2_results WHERE is_garbage=0 GROUP BY brand ORDER BY cnt DESC LIMIT 50"
             ).fetchall():
                 by_brand[row["brand"] or "Unknown"] = row["cnt"]
-            return {"total": total, "by_brand": by_brand}
+
+            by_category = {}
+            for row in conn.execute(
+                "SELECT device_category, COUNT(*) as cnt FROM v2_results WHERE is_garbage=0 GROUP BY device_category"
+            ).fetchall():
+                cat = row["device_category"] or "camera"
+                by_category[cat] = row["cnt"]
+
+            data = {"total": total, "by_brand": by_brand, "by_category": by_category}
+            self._v2_stats_cache = {"ts": now, "data": data}
+            return data
 
     # ── Job Persistence & Auto-Resume ─────────────────────────────────────────
 

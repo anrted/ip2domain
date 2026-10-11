@@ -30,32 +30,32 @@ function v2UpdateResultsCount(filteredCount) {
     const el = document.getElementById('v2-results-count');
     if (!el) return;
     const results = window.V2State.results || [];
-    const totalLoaded = results.length;
-    const totalDb = window.V2State.totalInDb || totalLoaded;
-    const total = Math.max(totalLoaded, totalDb);
+    const totalMatching = (window.V2State.totalMatching !== undefined)
+        ? window.V2State.totalMatching
+        : (filteredCount !== undefined ? filteredCount : results.length);
+    const totalDb = window.V2State.totalInDb || totalMatching;
 
     let camCount = 0;
     let routerCount = 0;
     let webCount = 0;
     let sprecordCount = 0;
-    let screenCount = 0;
-    let verifiedCount = 0;
+    let deviceCount = 0;
 
-    for (const c of results) {
-        if (_isSpRecord(c)) {
-            sprecordCount++;
-        } else if (_isRouterDevice(c)) {
-            routerCount++;
-        } else if (_isCameraDevice(c)) {
-            camCount++;
-        } else if (_isWebDevice(c)) {
-            webCount++;
+    if (window.V2State.stats && window.V2State.stats.by_category) {
+        const catStats = window.V2State.stats.by_category;
+        camCount = catStats.camera || 0;
+        routerCount = catStats.router || 0;
+        webCount = catStats.generic_web || 0;
+        sprecordCount = catStats.sprecord || 0;
+        deviceCount = catStats.device || 0;
+    } else {
+        for (const c of results) {
+            if (_isSpRecord(c)) sprecordCount++;
+            else if (_isRouterDevice(c)) routerCount++;
+            else if (_isCameraDevice(c)) camCount++;
+            else if (_isWebDevice(c)) webCount++;
+            else deviceCount++;
         }
-
-        const hasScreen = (c.streams || []).some(s => s.screenshot && String(s.screenshot).trim().length > 0);
-        if (hasScreen) screenCount++;
-        const isVerified = (c.streams || []).some(s => s.verified || (s.screenshot && String(s.screenshot).trim().length > 0));
-        if (isVerified) verifiedCount++;
     }
 
     const fmt = n => Number(n).toLocaleString('ru-RU');
@@ -65,37 +65,85 @@ function v2UpdateResultsCount(filteredCount) {
     if (routerCount > 0) details.push(`🌐 ${fmt(routerCount)} роутеров`);
     if (webCount > 0) details.push(`💻 ${fmt(webCount)} веб`);
     if (sprecordCount > 0) details.push(`🎙️ ${fmt(sprecordCount)} SpRecord`);
-    if (screenCount > 0) details.push(`🖼️ ${fmt(screenCount)} превью`);
-    else if (verifiedCount > 0) details.push(`✓ ${fmt(verifiedCount)} подтверждено`);
+    if (deviceCount > 0) details.push(`🖥️ ${fmt(deviceCount)} узлов`);
 
     const subText = details.length ? ` <span class="v2-count-sub">(${details.join(' · ')})</span>` : '';
 
-    if (filteredCount !== undefined && filteredCount !== total) {
-        el.innerHTML = `<strong>${fmt(filteredCount)}</strong> из ${fmt(total)} устройств${subText}`;
+    if (totalMatching < totalDb) {
+        el.innerHTML = `<strong>${fmt(totalMatching)}</strong> из ${fmt(totalDb)} устройств${subText}`;
     } else {
-        el.innerHTML = `<strong>${fmt(total)}</strong> устройств${subText}`;
+        el.innerHTML = `<strong>${fmt(totalDb)}</strong> устройств${subText}`;
     }
 }
 window.v2UpdateResultsCount = v2UpdateResultsCount;
 
-async function v2LoadStoredResults(force = false) {
+async function v2LoadStoredResults(force = false, append = false) {
     if (window.V2State.isLoadingResults) {
         if (force) window.V2State.reloadResultsAfterLoad = true;
         return;
     }
-    if (!force && window.V2State.resultsLoaded && (window.V2State.results || []).length > 0) {
+    if (!force && !append && window.V2State.resultsLoaded && (window.V2State.results || []).length > 0) {
         v2RenderResults();
         return;
     }
     window.V2State.isLoadingResults = true;
     try {
-        const resp = await fetch('/api/v2/results?limit=100000');
+        const pageSize = window.V2State.pageSize || 48;
+        const offset = append ? (window.V2State.results || []).length : 0;
+        const params = new URLSearchParams({
+            limit: String(pageSize),
+            offset: String(offset),
+        });
+
+        if (window.V2State.filterCategory && window.V2State.filterCategory !== 'all') {
+            params.set('category', window.V2State.filterCategory);
+        }
+        if (window.V2State.filterBrand && window.V2State.filterBrand !== 'all') {
+            params.set('brand', window.V2State.filterBrand);
+        }
+        if (window.V2State.filterProtocol && window.V2State.filterProtocol !== 'all') {
+            params.set('protocol', window.V2State.filterProtocol);
+        }
+        if (window.V2State.filterStatus === 'preview') {
+            params.set('has_preview', 'true');
+        } else if (window.V2State.filterStatus === 'live') {
+            params.set('verified_only', 'true');
+        }
+        if (window.V2State.filterAuth && window.V2State.filterAuth !== 'all') {
+            params.set('auth_status', window.V2State.filterAuth);
+        }
+        if (window.V2State.filterGeo && window.V2State.filterGeo !== 'all') {
+            params.set('geo', window.V2State.filterGeo);
+        }
+        if (window.V2State.geoSearch && window.V2State.geoSearch.trim()) {
+            params.set('search', window.V2State.geoSearch.trim());
+        }
+
+        const resp = await fetch(`/api/v2/results?${params.toString()}`);
         if (!resp.ok) return;
         const data = await resp.json();
-        const results = data.results || [];
-        window.V2State.results = results;
-        window.V2State.totalInDb = data.total_db || results.length;
+        const incoming = data.results || [];
+
+        if (append) {
+            const existingMap = new Map((window.V2State.results || []).map((r, i) => [r.ip, i]));
+            for (const item of incoming) {
+                if (!existingMap.has(item.ip)) {
+                    window.V2State.results.push(item);
+                    existingMap.set(item.ip, window.V2State.results.length - 1);
+                }
+            }
+        } else {
+            window.V2State.results = incoming;
+        }
+
+        window.V2State.visibleCount = (window.V2State.results || []).length;
+        window.V2State.totalMatching = (data.total_matching !== undefined) ? data.total_matching : (window.V2State.results || []).length;
+        window.V2State.totalInDb = (data.total_db !== undefined) ? data.total_db : window.V2State.totalMatching;
+        if (data.stats) {
+            window.V2State.stats = data.stats;
+        }
         window.V2State.resultsLoaded = true;
+
         v2UpdateResultsCount();
         v2RenderResults();
         const card = document.getElementById('v2-results-card');
@@ -108,7 +156,7 @@ async function v2LoadStoredResults(force = false) {
         window.V2State.isLoadingResults = false;
         if (window.V2State.reloadResultsAfterLoad) {
             window.V2State.reloadResultsAfterLoad = false;
-            v2LoadStoredResults(true);
+            v2LoadStoredResults(true, false);
         }
     }
 }
@@ -391,13 +439,13 @@ function v2RenderResults() {
     const grid = document.getElementById('v2-camera-grid');
     if (!grid) return;
 
-    let filtered = v2GetFilteredResults();
-    v2UpdateResultsCount(filtered.length);
+    let items = window.V2State.results || [];
+    v2UpdateResultsCount();
     v2UpdateGeoDropdown();
 
     const paginationContainer = document.getElementById('v2-pagination-container');
 
-    if (!filtered.length) {
+    if (!items.length) {
         grid.innerHTML = `<div class="v2-empty-state" style="grid-column:1/-1">
             <div class="v2-empty-icon">🌐</div>
             <p>Устройства не найдены по выбранным фильтрам.</p>
@@ -408,15 +456,12 @@ function v2RenderResults() {
     }
 
     // Default sorting: cameras with preview / screenshot first!
-    filtered = [...filtered].sort((a, b) => _cameraScore(b) - _cameraScore(a));
+    items = [...items].sort((a, b) => _cameraScore(b) - _cameraScore(a));
 
-    const pageSize = window.V2State.pageSize || 48;
-    const visibleCount = Math.min(window.V2State.visibleCount || pageSize, filtered.length);
-    const visibleCams = filtered.slice(0, visibleCount);
-
-    grid.innerHTML = visibleCams.map(cam => v2RenderCameraCard(cam)).join('');
+    grid.innerHTML = items.map(cam => v2RenderCameraCard(cam)).join('');
     initV2LazyLoading();
-    v2RenderPagination(visibleCount, filtered.length);
+    const totalMatching = (window.V2State.totalMatching !== undefined) ? window.V2State.totalMatching : items.length;
+    v2RenderPagination(items.length, totalMatching);
 }
 window.v2RenderResults = v2RenderResults;
 
@@ -434,25 +479,28 @@ function v2RenderPagination(visibleCount, totalCount) {
     if (!container) return;
 
     const pageSize = window.V2State.pageSize || 48;
-    if (visibleCount >= totalCount) {
-        container.innerHTML = totalCount > pageSize ? `
-            <div class="v2-pagination-info">✓ Показаны все ${totalCount} камер</div>
+    const effectiveTotal = (window.V2State.totalMatching !== undefined) ? window.V2State.totalMatching : totalCount;
+    const effectiveVisible = Math.min(visibleCount, effectiveTotal);
+
+    if (effectiveVisible >= effectiveTotal) {
+        container.innerHTML = effectiveTotal > pageSize ? `
+            <div class="v2-pagination-info">✓ Показаны все ${effectiveTotal} устройств</div>
         ` : '';
-        container.style.display = totalCount > pageSize ? 'flex' : 'none';
+        container.style.display = effectiveTotal > pageSize ? 'flex' : 'none';
         return;
     }
 
-    const remaining = totalCount - visibleCount;
+    const remaining = effectiveTotal - effectiveVisible;
     const nextBatch = Math.min(pageSize, remaining);
     container.style.display = 'flex';
     container.innerHTML = `
-        <div class="v2-pagination-info">Показано <strong>${visibleCount}</strong> из <strong>${totalCount}</strong> камер</div>
+        <div class="v2-pagination-info">Показано <strong>${effectiveVisible}</strong> из <strong>${effectiveTotal}</strong> устройств</div>
         <div class="v2-pagination-actions">
             <button type="button" class="v2-btn-load-more" onclick="v2LoadMoreResults()">
                 ⬇ Загрузить ещё ${nextBatch}
             </button>
             <button type="button" class="v2-btn-show-all" onclick="v2ShowAllResults()">
-                Показать все (${totalCount})
+                Показать больше (${Math.min(effectiveTotal, 500)})
             </button>
         </div>
     `;
@@ -460,15 +508,16 @@ function v2RenderPagination(visibleCount, totalCount) {
 window.v2RenderPagination = v2RenderPagination;
 
 function v2LoadMoreResults() {
-    const step = window.V2State.pageSize || 48;
-    window.V2State.visibleCount = (window.V2State.visibleCount || step) + step;
-    v2RenderResults();
+    v2LoadStoredResults(true, true);
 }
 window.v2LoadMoreResults = v2LoadMoreResults;
 
-function v2ShowAllResults() {
-    window.V2State.visibleCount = (window.V2State.results || []).length;
-    v2RenderResults();
+async function v2ShowAllResults() {
+    const totalMatching = window.V2State.totalMatching || 100;
+    const targetSize = Math.min(totalMatching, 500);
+    window.V2State.pageSize = targetSize;
+    await v2LoadStoredResults(true, false);
+    window.V2State.pageSize = 48;
 }
 window.v2ShowAllResults = v2ShowAllResults;
 
