@@ -39,10 +39,10 @@ _V2_CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
 # Lazy import engine (avoids importing at startup if not needed)
 def _get_engine():
     from ip2domain.cameras.scanner_v2.engine import (
-        create_job, cancel_job, get_job, run_v2_scan_pipeline,
+        create_job, cancel_job, get_job, run_v2_scan_pipeline, register_job_task,
     )
     from ip2domain.cameras.scanner_v2.stage1_sweep import check_tools
-    return create_job, cancel_job, get_job, run_v2_scan_pipeline, check_tools
+    return create_job, cancel_job, get_job, run_v2_scan_pipeline, check_tools, register_job_task
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -88,7 +88,7 @@ async def get_tools():
 @router.post("/scan")
 async def start_scan(req: ScanRequest):
     """Start a new Camera Scanner v2 job."""
-    create_job, _, get_job, run_v2_scan_pipeline, _ = _get_engine()
+    create_job, _, get_job, run_v2_scan_pipeline, _, register_job_task = _get_engine()
 
     active_job = storage.get_active_v2_job()
     if active_job:
@@ -130,14 +130,15 @@ async def start_scan(req: ScanRequest):
             storage=storage,
         )
 
-    asyncio.create_task(_run())
+    task = asyncio.create_task(_run())
+    register_job_task(job_id, task)
     return JSONResponse(content={"job_id": job_id, "status": "queued"}, status_code=202)
 
 
 @router.get("/scan/{job_id}")
 async def get_scan_status(job_id: str):
     """Return current job state including results."""
-    _, _, get_job, _, _ = _get_engine()
+    from ip2domain.cameras.scanner_v2.engine import get_job
     job = get_job(job_id)
     if not job:
         # Try from DB
@@ -151,7 +152,7 @@ async def get_scan_status(job_id: str):
 
 @router.post("/scan/{job_id}/cancel")
 async def cancel_scan(job_id: str):
-    _, cancel_job, _, _, _ = _get_engine()
+    from ip2domain.cameras.scanner_v2.engine import cancel_job
     ok = cancel_job(job_id)
     db_job = storage.get_v2_job(job_id)
     if db_job:

@@ -304,6 +304,55 @@ async def _download_http_snapshot(
 
 
 
+async def verify_single_stream(
+    stream: StreamInfo,
+    capture_dir: Path,
+    credentials: Optional[dict] = None,
+) -> bool:
+    """Verify and capture a single stream (HTTP snapshot or ffmpeg frame)."""
+    stream.verified = False
+    stream.screenshot_path = ""
+    stream.codec, stream.width, stream.height, stream.resolution = "", 0, 0, ""
+    stream.verification_status = "failed"
+    try:
+        if stream.stream_type == "http_snapshot":
+            path = await _download_http_snapshot(stream.url, capture_dir, credentials)
+            if path:
+                stream.screenshot_path = path
+                stream.verified = True
+                try:
+                    from PIL import Image
+                    with Image.open(path) as frame:
+                        stream.width, stream.height = frame.size
+                        stream.codec = frame.format or ""
+                        stream.resolution = f"{stream.width}x{stream.height}"
+                except OSError:
+                    pass
+        elif stream.stream_type in {"rtsp", "rtsps", "rtmp", "hls", "mjpeg", "udp_rtp"}:
+            ok, path, codec, w, h = await capture_stream_frame(
+                stream.url, "rtsp" if stream.stream_type == "rtsps" else stream.stream_type,
+                capture_dir, credentials,
+            )
+            if ok:
+                stream.verified = True
+                stream.screenshot_path = path
+                stream.codec, stream.width, stream.height = codec, w, h
+                stream.resolution = f"{w}x{h}" if w and h else ""
+        else:
+            stream.verification_status = "unsupported"
+
+        if stream.verified:
+            stream.verification_status = "verified"
+            stream.auth_required = False
+            return True
+    except asyncio.CancelledError:
+        stream.verification_status = "pending"
+        raise
+    except Exception as exc:
+        logger.debug("[v2 Stage3] Stream verification failed for %s: %s", stream.url, exc)
+    return False
+
+
 async def verify_camera_streams(
     camera: CameraResult,
     capture_dir: Path,
@@ -328,44 +377,7 @@ async def verify_camera_streams(
             continue
         seen.add(stream.url)
         credentials = stream.credentials if stream.credentials is not None else camera.credentials
-        stream.verified = False
-        stream.screenshot_path = ""
-        stream.codec, stream.width, stream.height, stream.resolution = "", 0, 0, ""
-        stream.verification_status = "failed"
-        try:
-            if stream.stream_type == "http_snapshot":
-                path = await _download_http_snapshot(stream.url, capture_dir, credentials)
-                if path:
-                    stream.screenshot_path = path
-                    stream.verified = True
-                    try:
-                        from PIL import Image
-                        with Image.open(path) as frame:
-                            stream.width, stream.height = frame.size
-                            stream.codec = frame.format or ""
-                            stream.resolution = f"{stream.width}x{stream.height}"
-                    except OSError:
-                        pass
-            elif stream.stream_type in {"rtsp", "rtsps", "rtmp", "hls", "mjpeg", "udp_rtp"}:
-                ok, path, codec, w, h = await capture_stream_frame(
-                    stream.url, "rtsp" if stream.stream_type == "rtsps" else stream.stream_type,
-                    capture_dir, credentials,
-                )
-                if ok:
-                    stream.verified = True
-                    stream.screenshot_path = path
-                    stream.codec, stream.width, stream.height = codec, w, h
-                    stream.resolution = f"{w}x{h}" if w and h else ""
-            else:
-                stream.verification_status = "unsupported"
-            if stream.verified:
-                stream.verification_status = "verified"
-                stream.auth_required = False
-        except asyncio.CancelledError:
-            stream.verification_status = "pending"
-            raise
-        except Exception as exc:
-            logger.debug("[v2 Stage3] Stream verification failed: %s", type(exc).__name__)
+        await verify_single_stream(stream, capture_dir, credentials)
         if on_stream:
             on_stream(stream)
 

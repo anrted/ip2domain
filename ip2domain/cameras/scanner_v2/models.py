@@ -78,7 +78,8 @@ class CameraResult:
     auth_required: Optional[bool] = None
     endpoints: List[Dict[str, Any]] = field(default_factory=list)
     timestamp: str = ""
-    device_category: str = "camera"  # "camera" | "router" | "generic_web" | "nas" | "server"
+    device_category: str = "camera"  # "camera" | "router" | "generic_web" | "nas" | "server" | "intercom" | "iot"
+    categories: List[str] = field(default_factory=list)  # all detected categories for multi-service hosts
     web_title: str = ""
     web_url: str = ""
     web_screenshot: str = ""
@@ -89,6 +90,8 @@ class CameraResult:
         allowed = {f.name for f in fields(cls)}
         values = {k: v for k, v in data.items() if k in allowed}
         values["streams"] = [StreamInfo.from_dict(s) for s in data.get("streams", [])]
+        if not values.get("categories") and values.get("device_category"):
+            values["categories"] = [values["device_category"]]
         return cls(**values)
 
     @property
@@ -127,6 +130,7 @@ class CameraResult:
             "auth_required": self.auth_required,
             "timestamp": self.timestamp,
             "device_category": self.device_category,
+            "categories": self.categories or ([self.device_category] if self.device_category else []),
             "web_title": self.web_title,
             "web_url": self.web_url,
             "web_screenshot": self.web_screenshot,

@@ -163,44 +163,46 @@ async def masscan_sweep(
         if is_cancelled and is_cancelled():
             return []
 
-        # Parse JSON output with fallback
+        # Parse JSON output with streaming memory-safe fallback
         result_map: Dict[str, List[int]] = {}
         if os.path.exists(tmp_out):
             try:
-                with open(tmp_out, "r", encoding="utf-8", errors="ignore") as f:
-                    content = f.read().strip()
-                if content:
-                    # Clean trailing commas often produced before ']' in masscan
-                    cleaned = re.sub(r",\s*\]", "]", content)
-                    if cleaned.endswith(","):
-                        cleaned = cleaned[:-1]
-                    if not cleaned.startswith("["):
-                        cleaned = "[" + cleaned + "]"
-                    entries = []
-                    try:
-                        entries = json.loads(cleaned)
-                    except Exception:
-                        # Regex fallback to extract every {"ip": "...", "ports": [{"port": N}]}
-                        for m in re.finditer(r'\{[^{}]*"ip"\s*:\s*"([0-9\.]+)"[^{}]*"port"\s*:\s*(\d+)', content):
-                            f_ip = m.group(1)
-                            f_port = int(m.group(2))
-                            if f_ip and f_port:
-                                result_map.setdefault(f_ip, [])
-                                if f_port not in result_map[f_ip]:
-                                    result_map[f_ip].append(f_port)
-                    for entry in entries:
-                        if isinstance(entry, dict):
-                            ip = entry.get("ip", "")
-                            ports_list = entry.get("ports", [])
-                            for p_obj in ports_list:
-                                if isinstance(p_obj, dict):
-                                    port = p_obj.get("port", 0)
-                                    if ip and port:
-                                        result_map.setdefault(ip, [])
-                                        if port not in result_map[ip]:
-                                            result_map[ip].append(port)
+                file_size = os.path.getsize(tmp_out)
+                if file_size < 15_000_000:
+                    with open(tmp_out, "r", encoding="utf-8", errors="ignore") as f:
+                        content = f.read().strip()
+                    if content:
+                        cleaned = re.sub(r",\s*\]", "]", content)
+                        if cleaned.endswith(","):
+                            cleaned = cleaned[:-1]
+                        if not cleaned.startswith("["):
+                            cleaned = "[" + cleaned + "]"
+                        try:
+                            entries = json.loads(cleaned)
+                            for entry in entries:
+                                if isinstance(entry, dict):
+                                    ip = entry.get("ip", "")
+                                    for p_obj in entry.get("ports", []):
+                                        if isinstance(p_obj, dict):
+                                            port = p_obj.get("port", 0)
+                                            if ip and port:
+                                                result_map.setdefault(ip, []).append(port)
+                        except Exception:
+                            with open(tmp_out, "r", encoding="utf-8", errors="ignore") as f:
+                                for line in f:
+                                    for m in re.finditer(r'\{[^{}]*"ip"\s*:\s*"([0-9\.]+)"[^{}]*"port"\s*:\s*(\d+)', line):
+                                        result_map.setdefault(m.group(1), []).append(int(m.group(2)))
+                else:
+                    # Streaming line-by-line parsing for large files (OOM protection)
+                    with open(tmp_out, "r", encoding="utf-8", errors="ignore") as f:
+                        for line in f:
+                            for m in re.finditer(r'\{[^{}]*"ip"\s*:\s*"([0-9\.]+)"[^{}]*"port"\s*:\s*(\d+)', line):
+                                result_map.setdefault(m.group(1), []).append(int(m.group(2)))
             except Exception as exc:
                 logger.warning("[v2 Stage1/masscan] JSON parse error: %s", exc)
+
+        for ip in list(result_map.keys()):
+            result_map[ip] = sorted(dict.fromkeys(result_map[ip]))
 
         if on_progress:
             on_progress(total, total, "", len(result_map))

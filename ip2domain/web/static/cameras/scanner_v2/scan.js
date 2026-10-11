@@ -161,7 +161,7 @@ function v2ShowProgress() {
 window.v2ShowProgress = v2ShowProgress;
 
 function v2ResetStages() {
-    ['discovery', 'port_sweep', 'fingerprint', 'capture'].forEach(s => {
+    ['discovery', 'port_sweep', 'fingerprint', 'capture', 'geolocation'].forEach(s => {
         v2SetStageStatus(s, 'pending');
     });
     const fill = document.getElementById('v2-progress-fill');
@@ -176,6 +176,7 @@ const _STAGE_IDS = {
     port_sweep: 'v2-stage-sweep',
     fingerprint: 'v2-stage-finger',
     capture: 'v2-stage-capture',
+    geolocation: 'v2-stage-geo',
 };
 
 const _STATUS_ICONS = {
@@ -204,6 +205,8 @@ function v2UpdateProgress(job) {
         `${stages.fingerprint?.completed || 0} / ${stages.fingerprint?.total || 0}`);
     v2SetStageStatus('capture', stages.capture?.status || 'pending',
         stages.capture?.completed > 0 ? `${stages.capture.completed} кадров` : '—');
+    v2SetStageStatus('geolocation', stages.geolocation?.status || 'pending',
+        stages.geolocation?.completed > 0 ? `${stages.geolocation.completed} гео` : '—');
 
     const pct = job.progress_pct || 0;
     const fill = document.getElementById('v2-progress-fill');

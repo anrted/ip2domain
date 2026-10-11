@@ -140,20 +140,44 @@ function _isSpRecord(cam) {
 }
 window._isSpRecord = _isSpRecord;
 
+function _hasCategory(c, cat) {
+    if (!c) return false;
+    if (c.device_category === cat) return true;
+    if (Array.isArray(c.categories) && c.categories.includes(cat)) return true;
+    return false;
+}
+window._hasCategory = _hasCategory;
+
 function _isRouterDevice(c) {
     if (!c) return false;
-    if (c.device_category === 'router') return true;
+    if (_hasCategory(c, 'router')) return true;
     const protos = c.protocols || [];
     return protos.includes('router') || protos.includes('winbox');
 }
 window._isRouterDevice = _isRouterDevice;
 
+function _isIntercomDevice(c) {
+    if (!c) return false;
+    return _hasCategory(c, 'intercom');
+}
+window._isIntercomDevice = _isIntercomDevice;
+
+function _isIotDevice(c) {
+    if (!c) return false;
+    return _hasCategory(c, 'iot') || _hasCategory(c, 'industrial');
+}
+window._isIotDevice = _isIotDevice;
+
+function _isServerDevice(c) {
+    if (!c) return false;
+    return _hasCategory(c, 'server');
+}
+window._isServerDevice = _isServerDevice;
+
 function _isCameraDevice(c) {
     if (!c || _isSpRecord(c)) return false;
-    if (_isRouterDevice(c)) return false;
-
-    // Explicit camera category
-    if (c.device_category === 'camera') return true;
+    if (_hasCategory(c, 'camera')) return true;
+    if (_hasCategory(c, 'intercom')) return true;
 
     // Brand matches known camera brand
     const brand = (c.brand || '').toLowerCase();
@@ -166,8 +190,11 @@ function _isCameraDevice(c) {
     // Verified stream or real screenshot
     if ((c.streams || []).some(s => s.verified || (s.screenshot && String(s.screenshot).trim().length > 0))) return true;
 
-    // If explicitly marked as generic_web or device, not a camera
-    if (c.device_category === 'generic_web' || c.device_category === 'device') return false;
+    // Has RTSP or video stream
+    if ((c.streams || []).some(s => s.type === 'rtsp' || s.type === 'rtsps' || s.type === 'mjpeg')) return true;
+
+    // If pure non-camera without video
+    if (c.device_category === 'router' || c.device_category === 'generic_web' || c.device_category === 'device' || c.device_category === 'iot' || c.device_category === 'server') return false;
 
     // Has video streams and is not generic web
     if ((c.streams || []).length > 0 && !brand.includes('generic web device')) return true;
@@ -177,17 +204,17 @@ function _isCameraDevice(c) {
 window._isCameraDevice = _isCameraDevice;
 
 function _isNetworkDevice(c) {
-    if (!c || _isSpRecord(c) || _isRouterDevice(c) || _isCameraDevice(c)) return false;
+    if (!c || _isSpRecord(c)) return false;
     return c.device_category === 'device' || (c.protocols || []).includes('tcp');
 }
 window._isNetworkDevice = _isNetworkDevice;
 
 function _isWebDevice(c) {
-    if (!c || _isSpRecord(c) || _isRouterDevice(c) || _isCameraDevice(c)) return false;
-    if (c.device_category === 'generic_web') return true;
+    if (!c || _isSpRecord(c)) return false;
+    if (_hasCategory(c, 'generic_web')) return true;
     const brand = (c.brand || '').toLowerCase();
     if (brand.includes('generic web device') || brand.includes('web service')) return true;
-    return true;
+    return false;
 }
 window._isWebDevice = _isWebDevice;
 
@@ -297,6 +324,12 @@ function v2GetFilteredResults() {
             filtered = filtered.filter(c => _isCameraDevice(c));
         } else if (cat === 'router') {
             filtered = filtered.filter(c => _isRouterDevice(c));
+        } else if (cat === 'intercom') {
+            filtered = filtered.filter(c => _isIntercomDevice(c));
+        } else if (cat === 'iot') {
+            filtered = filtered.filter(c => _isIotDevice(c));
+        } else if (cat === 'server') {
+            filtered = filtered.filter(c => _isServerDevice(c));
         } else if (cat === 'generic_web') {
             filtered = filtered.filter(c => _isWebDevice(c));
         } else if (cat === 'device') {
@@ -584,33 +617,46 @@ function v2RenderCameraCard(cam) {
     }
 
     const verified = streams.some(s => s.verified) || Boolean(cam.web_screenshot);
-    let verifiedBadge = '';
-    let authBadge = '';
+    const catBadges = [];
+    const allCats = Array.isArray(cam.categories) && cam.categories.length > 0
+        ? cam.categories
+        : [cam.device_category || 'camera'];
 
+    for (const c of allCats) {
+        if (c === 'router') {
+            catBadges.push('<span class="v2-verified-badge" style="background:#0284c7">🌐 Роутер</span>');
+        } else if (c === 'intercom') {
+            catBadges.push('<span class="v2-verified-badge" style="background:#8b5cf6">🚪 Домофон</span>');
+        } else if (c === 'camera') {
+            catBadges.push(verified ? '<span class="v2-verified-badge" style="background:#10b981">📹 Камера</span>' : '<span class="v2-verified-badge" style="background:#6366f1">📹 Камера</span>');
+        } else if (c === 'iot' || c === 'industrial') {
+            catBadges.push('<span class="v2-verified-badge" style="background:#d97706">⚡ IoT</span>');
+        } else if (c === 'server') {
+            catBadges.push('<span class="v2-verified-badge" style="background:#ec4899">🖥️ Сервер</span>');
+        } else if (c === 'sprecord') {
+            catBadges.push('<span class="v2-verified-badge" style="background:#059669">🎙️ Аудиосервер</span>');
+        } else if (c === 'generic_web') {
+            catBadges.push('<span class="v2-verified-badge" style="background:#475569">💻 Веб-сервис</span>');
+        } else if (c === 'device') {
+            catBadges.push('<span class="v2-verified-badge" style="background:#334155">🖥️ Сетевой хост</span>');
+        }
+    }
+    const verifiedBadge = catBadges.join(' ') || (verified ? '<span class="v2-verified-badge">✓ Live</span>' : '');
+
+    let authBadge = '';
+    const is401 = _isCam401(cam);
     if (isAudioDevice) {
-        verifiedBadge = '<span class="v2-verified-badge" style="background:#059669">🎙️ Аудиосервер</span>';
         authBadge = '<span class="v2-auth-badge auth-open">🔓 admin: без пароля</span>';
-    } else if (isRouter) {
-        verifiedBadge = '<span class="v2-verified-badge" style="background:#0284c7">🌐 Роутер</span>';
-        authBadge = cam.auth_required
-            ? '<span class="v2-auth-badge auth-locked" title="Требуется авторизация">🔒 Доступ по паролю</span>'
-            : '<span class="v2-auth-badge auth-open">✓ Веб-панель активна</span>';
-    } else if (isWebDevice) {
-        verifiedBadge = '<span class="v2-verified-badge" style="background:#475569">💻 Веб-сервис</span>';
-        authBadge = cam.auth_required
-            ? '<span class="v2-auth-badge auth-locked" title="Требуется авторизация">🔒 Доступ по паролю</span>'
-            : '<span class="v2-auth-badge auth-open">✓ Сервис онлайн</span>';
-    } else if (isNetworkDevice) {
-        verifiedBadge = '<span class="v2-verified-badge" style="background:#334155">🖥️ Сетевой хост</span>';
-        authBadge = '<span class="v2-auth-badge auth-open">✓ Порты открыты</span>';
-    } else {
-        verifiedBadge = verified ? '<span class="v2-verified-badge">✓ Live</span>' : '';
-        const is401 = _isCam401(cam);
+    } else if (allCats.includes('camera') || allCats.includes('intercom')) {
         authBadge = is401
-            ? '<span class="v2-auth-badge auth-locked" title="Один или несколько сервисов требуют авторизацию">🔒 Требуется авторизация</span>'
+            ? '<span class="v2-auth-badge auth-locked" title="Один или несколько сервисов требуют авторизацию">🔒 Требуется пароль</span>'
             : (verified
                 ? '<span class="v2-auth-badge auth-open">✓ Видео подтверждено</span>'
                 : '<span class="v2-auth-badge">○ Видео не подтверждено</span>');
+    } else {
+        authBadge = cam.auth_required
+            ? '<span class="v2-auth-badge auth-locked" title="Требуется авторизация">🔒 Доступ по паролю</span>'
+            : '<span class="v2-auth-badge auth-open">✓ Сервис онлайн</span>';
     }
 
     let credsBadge = '';

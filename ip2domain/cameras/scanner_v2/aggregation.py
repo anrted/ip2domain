@@ -29,12 +29,12 @@ _KNOWN_CAMERA_BRAND_SUBSTRINGS = (
     "hikvision", "hiwatch", "dahua", "axis", "reolink", "trassir", "xiongmai", "flussonic",
     "streamer", "dnvrs", "rvi", "uniview", "unv", "tiandy", "mobotix", "generic nvr", "generic dvr",
     "generic ipcam", "generic webcam", "generic surveillance", "generic video server", "generic rtsp",
-    "unknown camera", "tp-link", "ezviz", "hilook", "imou", "lorex", "foscam", "amcrest", "hanwha",
-    "wisenet", "samsung", "topsvision", "topsee", "jovision", "h264", "netip", "netsurveillance",
-    "cp plus", "bosch", "pelco", "vivotek", "grandstream", "beward", "activecam", "polyvision",
-    "novicam", "ltv", "milesight", "tvt", "sunell", "avigilon", "flir", "ubiquiti unifi", "tapo",
-    "tl-sc", "vstarcam", "sricam", "srihome", "herospeed", "onvif", "unimo", "udrocx", "ants",
-    "vvtk", "nd8322p", "pcviewx", "webcamx",
+    "unknown camera", "tp-link camera", "tapo", "kasa", "tl-sc", "ezviz", "hilook", "imou", "lorex",
+    "foscam", "amcrest", "hanwha", "wisenet", "samsung", "topsvision", "topsee", "jovision", "h264",
+    "netip", "netsurveillance", "cp plus", "bosch", "pelco", "vivotek", "grandstream", "beward",
+    "activecam", "polyvision", "novicam", "ltv", "milesight", "tvt", "sunell", "avigilon", "flir",
+    "ubiquiti unifi", "vstarcam", "sricam", "srihome", "herospeed", "onvif", "unimo", "udrocx",
+    "ants", "vvtk", "nd8322p", "pcviewx", "webcamx",
 )
 
 def _is_camera_brand(brand: str) -> bool:
@@ -50,13 +50,13 @@ def merge_host_cameras(cameras: List[CameraResult]) -> Optional[CameraResult]:
         return None
     from dataclasses import replace
     from urllib.parse import urlsplit
-    host = CameraResult(ip=cameras[0].ip)
+    host = CameraResult(ip=cameras[0].ip, device_category="")
     streams = {}
     endpoints = {}
     for camera in cameras:
         if camera.ip != host.ip:
             raise ValueError("Cannot merge different hosts")
-        for key in ("brand", "model", "serial", "firmware", "city", "region", "country_code", "isp", "timestamp", "device_category", "web_title", "web_url", "web_screenshot", "domain"):
+        for key in ("brand", "model", "serial", "firmware", "city", "region", "country_code", "isp", "timestamp", "web_title", "web_url", "web_screenshot", "domain"):
             if not getattr(host, key):
                 setattr(host, key, getattr(camera, key))
         for key in ("http_port", "rtsp_port", "rtmp_port", "onvif_port"):
@@ -68,9 +68,15 @@ def merge_host_cameras(cameras: List[CameraResult]) -> Optional[CameraResult]:
         descriptions = camera.endpoints or [{
             "port": p or source_port, "brand": camera.brand, "model": camera.model,
             "serial": camera.serial, "protocols": camera.protocols,
+            "category": camera.device_category,
             "auth_required": camera.auth_required,
+            "credentials": camera.credentials,
         } for p in (camera.open_ports or [source_port])]
         for endpoint in descriptions:
+            if not endpoint.get("category") and camera.device_category:
+                endpoint["category"] = camera.device_category
+            if not endpoint.get("credentials") and camera.credentials:
+                endpoint["credentials"] = camera.credentials
             key = (endpoint.get("port"), endpoint.get("serial"), tuple(endpoint.get("protocols", [])))
             endpoints[key] = endpoint
         for stream in camera.streams:
@@ -84,8 +90,44 @@ def merge_host_cameras(cameras: List[CameraResult]) -> Optional[CameraResult]:
                 streams[item.url] = item
     host.streams = list(streams.values())
     host.endpoints = list(endpoints.values())
-    # Credentials belong to their endpoint, never to all cameras behind an IP.
-    host.credentials = dict(cameras[0].credentials) if len(cameras) == 1 else {}
+
+    # Collect all unique categories across all endpoints and streams
+    all_cats = []
+    for c in cameras:
+        for cat in (getattr(c, "categories", []) or ([c.device_category] if getattr(c, "device_category", None) else [])):
+            if cat and cat not in all_cats:
+                all_cats.append(cat)
+    if any(s.stream_type in ("rtsp", "rtsps") or (s.verified and s.stream_type != "web_panel") for s in host.streams):
+        if "camera" not in all_cats:
+            all_cats.append("camera")
+
+    # Primary/canonical category for backward compatibility
+    if any(c.device_category == "camera" and c.streams for c in cameras):
+        host.device_category = "camera"
+    elif any(c.device_category == "intercom" for c in cameras):
+        host.device_category = "intercom"
+    elif any(c.device_category == "router" for c in cameras):
+        host.device_category = "router"
+    elif any(c.device_category in ("iot", "industrial") for c in cameras):
+        host.device_category = "iot"
+    elif any(c.device_category == "server" for c in cameras):
+        host.device_category = "server"
+    elif all_cats:
+        host.device_category = all_cats[0]
+    else:
+        host.device_category = "generic_web"
+
+    host.categories = all_cats or [host.device_category]
+
+    # Preserve credentials: find best discovered credentials across all endpoints
+    best_creds = {}
+    for c in cameras:
+        if c.credentials and (c.credentials.get("user") or c.credentials.get("password")):
+            best_creds = dict(c.credentials)
+            break
+    if not best_creds and cameras and cameras[0].credentials:
+        best_creds = dict(cameras[0].credentials)
+    host.credentials = best_creds
     host.auth_required = True if any(c.auth_required is True for c in cameras) else None
     if host.domain and (443 in host.open_ports or host.http_port == 443 or "443" in str(host.web_url)):
         host.web_url = f"https://{host.domain}/"
@@ -320,6 +362,8 @@ def merge_camera_results(
         camera.web_url = camera.web_url or router_r.get("web_url", "")
         if router_r.get("auth_required") is not None:
             camera.auth_required = router_r.get("auth_required")
+        if router_r.get("credentials"):
+            camera.credentials = camera.credentials or router_r["credentials"]
         for p in router_r.get("protocols", []):
             if p not in camera.protocols:
                 camera.protocols.append(p)
@@ -348,8 +392,8 @@ def merge_camera_results(
                 camera.domain = generic_r["domain"]
             if camera.domain and (443 in open_ports or generic_r.get("http_port") == 443 or "443" in str(camera.web_url)):
                 camera.web_url = f"https://{camera.domain}/"
-            # Try HTTP snapshot candidates on the detected HTTP port ONLY for camera candidates
-            if generic_r.get("http_port") and generic_r.get("device_category") == "camera":
+            # Try HTTP snapshot candidates on the detected HTTP port for camera & intercom candidates
+            if generic_r.get("http_port") and generic_r.get("device_category") in ("camera", "intercom"):
                 hp = generic_r['http_port']
                 from .models import HTTPS_PORTS
                 scheme = "https" if hp in HTTPS_PORTS or "443" in str(hp) else "http"
@@ -413,17 +457,17 @@ def merge_camera_results(
                 rtsp_u = f"rtsp://{ip}:{hp}{generic_r['rtsp_path']}"
                 if not any(s.url == rtsp_u for s in camera.streams):
                     from .models import StreamInfo as _SI
-            if generic_r.get("device_category") and camera.device_category == "camera" and not camera.streams and not _is_camera_brand(camera.brand):
+            if generic_r.get("device_category") and camera.device_category in ("camera", "") and not camera.streams:
                 camera.device_category = generic_r.get("device_category")
 
-    if _is_camera_brand(camera.brand):
+    if _is_camera_brand(camera.brand) and camera.device_category not in ("router", "intercom", "iot", "server"):
         camera.device_category = "camera"
 
-    if camera.device_category in ("router", "generic_web", "device") and not _is_camera_brand(camera.brand):
+    if camera.device_category in ("router", "generic_web", "device", "iot", "server") and not _is_camera_brand(camera.brand):
         # For non-camera devices, filter out any generic video/snapshot assumptions
         camera.streams = [
             s for s in camera.streams
-            if s.stream_type != "http_snapshot" and "snapshot.cgi" not in s.url and "snapshot.jpg" not in s.url
+            if s.stream_type not in ("http_snapshot", "mjpeg") and "snapshot.cgi" not in s.url and "snapshot.jpg" not in s.url
         ]
         if not camera.streams and (camera.web_url or camera.http_port or open_ports):
             web_port = camera.http_port or (open_ports[0] if open_ports else 80)
@@ -802,6 +846,12 @@ def project_observation_to_cameras(obs, storage=None) -> Optional[CameraResult]:
     if camera is None:
         return None
 
+    cats = [camera.device_category] if camera.device_category else []
+    if any(s.stream_type in ("rtsp", "rtsps") or (s.verified and s.stream_type != "web_panel") for s in camera.streams):
+        if "camera" not in cats:
+            cats.append("camera")
+    camera.categories = cats or [camera.device_category or "generic_web"]
+
     if storage is None:
         try:
             from ip2domain.web.routers.common import storage as default_storage
@@ -859,7 +909,13 @@ def prune_unverified_streams(camera: CameraResult) -> None:
 
     b_low = (camera.brand or "").lower()
     cat = getattr(camera, "device_category", "camera")
-    if "flussonic" in b_low or cat in ("server", "router", "generic_web", "device"):
+    if cat == "intercom":
+        intercom_streams = [s for s in camera.streams if s.stream_type in ("web_panel", "http_snapshot", "mjpeg", "rtsp")]
+        if intercom_streams:
+            camera.streams = intercom_streams[:2]
+            return
+
+    if "flussonic" in b_low or cat in ("server", "router", "generic_web", "device", "iot", "industrial"):
         camera.streams = [s for s in camera.streams if s.stream_type == "web_panel"]
         return
 

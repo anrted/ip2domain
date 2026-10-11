@@ -10,7 +10,7 @@ from typing import Callable, Dict, List, Mapping, Optional, Tuple
 
 from ip2domain.scanning import Endpoint, ProbeContext, ProbeData, ProbeRegistry, ProbeSpec
 
-from .models import HTTP_PORTS, HTTPS_PORTS, DVR_PORTS, RTSP_PORTS, RTMP_PORTS, ONVIF_PORTS
+from .models import HTTP_PORTS, HTTPS_PORTS, DVR_PORTS, RTSP_PORTS, RTMP_PORTS, ONVIF_PORTS, ROUTER_PORTS
 
 DEFAULT_PROTOCOLS = frozenset({
     "onvif", "hikvision", "dahua", "axis", "rtsp", "hls", "rtmp", "webrtc", "vms", "router",
@@ -35,7 +35,7 @@ def candidate_ports(context: ProbeContext) -> Dict[str, List[int]]:
     # Keep caller ordering for the legacy HTTP fallback (it probes only 4 ports).
     ports = [e.port for e in context.endpoints if e.transport == "tcp"]
     opened = set(ports)
-    http = sorted(opened & (HTTP_PORTS | HTTPS_PORTS | DVR_PORTS))
+    http = sorted(opened & (HTTP_PORTS | HTTPS_PORTS | DVR_PORTS | ROUTER_PORTS))
     if not http:
         http = [p for p in ports if p not in _PRIMARY_RTSP and p not in RTMP_PORTS]
     rtsp = sorted(opened & _PRIMARY_RTSP) or sorted(opened & RTSP_PORTS)

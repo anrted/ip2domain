@@ -315,17 +315,33 @@ async def _on_startup():
                 v2_curr_idx = active_v2.get("current_index", 0)
                 v2_params = active_v2.get("params", {})
                 if v2_targets_str:
-                    logger.info("Auto-resuming interrupted Camera Scanner v2 scan %s from IP #%d", v2_jid, v2_curr_idx + 1)
-                    from ip2domain.cameras.scanner_v2.engine import create_job, run_v2_scan_pipeline
+                    # Check if Stage 1 hosts were saved (can skip masscan)
+                    saved_stage1 = storage.get_v2_stage1_hosts(v2_jid)
+                    if saved_stage1:
+                        logger.info(
+                            "Auto-resuming Scanner v2 job %s from Stage 2 with %d saved hosts",
+                            v2_jid, len(saved_stage1),
+                        )
+                    else:
+                        logger.info(
+                            "Auto-resuming Scanner v2 job %s from IP #%d (re-scanning ports)",
+                            v2_jid, v2_curr_idx + 1,
+                        )
+
+                    from ip2domain.cameras.scanner_v2.engine import create_job, run_v2_scan_pipeline, register_job_task
                     v2_job = create_job(v2_jid)
                     v2_job.status = "running"
                     v2_job.progress_pct = active_v2.get("progress_pct", 0)
-                    v2_job.stage = f"Возобновлено после перезапуска (с #{v2_curr_idx + 1})"
                     v2_job.logs = active_v2.get("logs", [])
-                    v2_job.add_log(f"[Возобновление] Сканирование продолжено после перезапуска сервера с IP #{v2_curr_idx + 1}")
+                    if saved_stage1:
+                        v2_job.stage = f"Возобновлено: Stage 2 для {len(saved_stage1)} хостов"
+                        v2_job.add_log(f"[Возобновление] Stage 1 уже завершён, продолжение Stage 2 для {len(saved_stage1)} хостов")
+                    else:
+                        v2_job.stage = f"Возобновлено после перезапуска (с #{v2_curr_idx + 1})"
+                        v2_job.add_log(f"[Возобновление] Сканирование продолжено после перезапуска сервера с IP #{v2_curr_idx + 1}")
 
                     from ip2domain.web.routers.scanner_v2 import _V2_CAPTURE_DIR
-                    asyncio.create_task(run_v2_scan_pipeline(
+                    t = asyncio.create_task(run_v2_scan_pipeline(
                         job_id=v2_jid,
                         targets_str=v2_targets_str,
                         engine=v2_params.get("engine", "auto"),
@@ -340,7 +356,9 @@ async def _on_startup():
                         capture_dir=_V2_CAPTURE_DIR,
                         storage=storage,
                         resume_from_index=v2_curr_idx,
+                        saved_stage1_hosts=saved_stage1 or None,
                     ))
+                    register_job_task(v2_jid, t)
         except Exception as exc:
             logger.error("Failed to auto-resume active Scanner v2 job on startup: %s", exc)
 

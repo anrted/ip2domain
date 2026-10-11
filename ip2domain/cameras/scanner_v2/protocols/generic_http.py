@@ -76,7 +76,6 @@ _CAMERA_BRANDS = {
     "mag_52": "TP-Link",
     "vstarcam": "VStarcam",
     "sricam": "Sricam",
-    "srihome": "SriHome",
     "nvr": "Generic NVR",
     "dvr": "Generic DVR",
     "ipcam": "Generic IPCam",
@@ -86,6 +85,29 @@ _CAMERA_BRANDS = {
     "network camera": "Generic IPCam",
     "surveillance": "Generic Surveillance",
     "video server": "Generic Video Server",
+    "beward": "Beward",
+    "true ip": "True IP",
+    "trueip": "True IP",
+    "bas-ip": "BAS-IP",
+    "basip": "BAS-IP",
+    "akuvox": "Akuvox",
+    "fanvil": "Fanvil",
+    "comelit": "Comelit",
+    "fermax": "Fermax",
+    "sputnik": "Sputnik (Домофон)",
+    "cyfral": "Cyfral",
+    "metakom": "Metakom",
+    "vizit": "VIZIT",
+    "rubetek": "Rubetek",
+    "intercom": "Generic Intercom",
+    "видеодомофон": "Видеодомофон",
+    "домофон": "IP Домофон",
+    "door station": "Door Station",
+    "door phone": "Door Phone",
+    "vto": "Dahua VTO (Домофон)",
+    "com hem": "Com Hem",
+    "comhem": "Com Hem",
+    "wi-fi hub": "Com Hem Wi-Fi Hub",
 }
 
 
@@ -184,6 +206,64 @@ async def _probe_generic_http(
             except Exception:
                 pass
 
+            # 2. Specialized Video Intercom / preview.html probe
+            try:
+                for preview_path in ["/preview.html", "/view.html", "/intercom.html", "/door.html"]:
+                    p_scheme = "https" if port in (443, 8443, 9443, 10443) or "443" in str(port) else "http"
+                    p_resp = await client.get(f"{p_scheme}://{ip}:{port}{preview_path}", timeout=2.5)
+                    p_text = p_resp.text.lower()
+                    is_router_body = any(k in p_text for k in ("ismaintwan", "sslhostip", "wireless router", "broadband router", "login.jsp", "tplinkwifi"))
+                    has_intercom_kw = any(k in p_text for k in (
+                        "canvas", "video", "player", "intercom", "домофон", "vwebclient", "tantos",
+                        "qualvision", "beward", "trueip", "bas-ip", "akuvox", "vto", "door station", "door phone"
+                    ))
+                    if p_resp.status_code in (200, 401) and not is_router_body and has_intercom_kw:
+                        p_title_m = re.search(r"<title[^>]*>([^<]{1,128})</title>", p_resp.text, re.IGNORECASE)
+                        p_title = p_title_m.group(1).strip() if p_title_m else "Видеодомофон"
+                        int_brand = "Видеодомофон"
+                        if "qualvision" in p_text or "qualvision" in p_title.lower() or "tantos" in p_text or "vwebclient" in p_text:
+                            int_brand = "Qualvision / Tantos"
+                        elif "beward" in p_text or "beward" in p_title.lower():
+                            int_brand = "Beward"
+                        elif "trueip" in p_text or "true ip" in p_text:
+                            int_brand = "True IP"
+                        elif "bas-ip" in p_text or "basip" in p_text:
+                            int_brand = "BAS-IP"
+                        elif "akuvox" in p_text:
+                            int_brand = "Akuvox"
+                        elif "dahua" in p_text or "vto" in p_text:
+                            int_brand = "Dahua VTO"
+                        elif "hikvision" in p_text:
+                            int_brand = "Hikvision Intercom"
+
+                        intercom_res = {
+                            "success": True,
+                            "brand": int_brand,
+                            "model": p_title or "IP Intercom (Видеодомофон)",
+                            "title": p_title or "Видеодомофон Web Preview",
+                            "http_port": port,
+                            "device_category": "intercom",
+                            "web_url": f"{p_scheme}://{ip}:{port}{preview_path}",
+                            "snapshot_path": preview_path,
+                            "rtsp_path": "/live/ch0",
+                            "auth_required": p_resp.status_code == 401,
+                        }
+
+                        # Test credentials (admin / empty string and common defaults)
+                        test_creds = credentials if credentials else [("admin", ""), ("admin", "admin"), ("admin", "123456")]
+                        for u, p in test_creds:
+                            try:
+                                r_test = await client.get(f"{p_scheme}://{ip}:{port}{preview_path}", auth=(u, p), timeout=2.0)
+                                if r_test.status_code == 200:
+                                    intercom_res["credentials"] = {"user": u, "password": p}
+                                    intercom_res["auth_required"] = False
+                                    break
+                            except Exception:
+                                pass
+                        return intercom_res
+            except Exception:
+                pass
+
             creds_to_try = credentials[:2] if credentials else [("", "")]
             scheme = "https" if port in (443, 8443, 9443, 10443) or "443" in str(port) else "http"
             for user, password in creds_to_try:
@@ -223,6 +303,53 @@ async def _probe_generic_http(
                     title = title_m.group(1).strip() if title_m else ""
                     combined = (title + " " + server + " " + www_auth + " " + text).lower()
                     server_l = server.lower()
+
+                    if resp.status_code == 401:
+                        result["auth_required"] = True
+                        default_http_creds = [("admin", "admin"), ("admin", "12345"), ("admin", "123456"), ("root", "root"), ("admin", "")]
+                        try_creds = list(credentials or []) + [c for c in default_http_creds if c not in (credentials or [])]
+                        for cand_u, cand_p in try_creds[:6]:
+                            try:
+                                cand_auth = httpx.DigestAuth(cand_u, cand_p) if "digest" in www_auth.lower() else (cand_u, cand_p)
+                                cand_r = await client.get(f"{scheme}://{ip}:{port}/", auth=cand_auth, timeout=2.0)
+                                if cand_r.status_code == 401 and "digest" not in www_auth.lower() and cand_u:
+                                    cand_r = await client.get(f"{scheme}://{ip}:{port}/", auth=httpx.DigestAuth(cand_u, cand_p), timeout=2.0)
+                                if cand_r.status_code == 200:
+                                    result["credentials"] = {"user": cand_u, "password": cand_p}
+                                    result["auth_required"] = False
+                                    resp = cand_r
+                                    text = resp.text[:4096]
+                                    break
+                            except Exception:
+                                pass
+
+                    if not result.get("credentials") and ("<form" in text.lower() or "login" in text.lower() or result.get("auth_required")):
+                        try:
+                            from .web_login import probe_web_form_login
+                            f_match = await probe_web_form_login(
+                                ip=ip, port=port, base_url=default_web_url,
+                                brand=result.get("brand", ""), credentials=credentials,
+                                html_text=text,
+                            )
+                            if f_match:
+                                result["credentials"] = {"user": f_match[0], "password": f_match[1]}
+                                result["auth_required"] = False
+                        except Exception:
+                            pass
+
+                    # Com Hem / Sagemcom Wi-Fi Hub detection
+                    if "com hem" in combined or "comhem" in combined or "wi-fi hub" in combined or "wifi hub" in combined:
+                        result.update({
+                            "success": True,
+                            "brand": "Com Hem",
+                            "model": title or "Wi-Fi Hub",
+                            "title": title or "Com Hem Wi-Fi Hub",
+                            "http_port": port,
+                            "device_category": "router",
+                            "web_url": f"{scheme}://{ip}:{port}/login.html" if "login" in combined else f"{scheme}://{ip}:{port}/",
+                            "auth_required": True,
+                        })
+                        return result
 
                     # Check TP-Link realm signature (mag_52, mag_*)
                     if re.search(r'realm=["\']mag_\d+["\']', www_auth, re.IGNORECASE):
@@ -277,6 +404,140 @@ async def _probe_generic_http(
                             "http_port": port,
                             "device_category": "generic_web",
                             "web_url": f"{scheme}://{ip}:{port}/",
+                        })
+                        return result
+
+                    # Schneider Electric PowerLogic ION 7650 / RomPager
+                    if "powerlogic" in combined or "ion 7650" in combined or "ion7650" in combined or "powermeasurement" in combined:
+                        result.update({
+                            "success": True,
+                            "brand": "Schneider Electric",
+                            "model": "PowerLogic ION 7650",
+                            "title": title or "PowerLogic ION 7650 Power Quality Analyzer",
+                            "http_port": port,
+                            "device_category": "iot",
+                            "web_url": f"{scheme}://{ip}:{port}/",
+                        })
+                        return result
+
+                    # Coolify self-hosting / PaaS platform
+                    if "coolify" in combined or "coollabs" in combined:
+                        result.update({
+                            "success": True,
+                            "brand": "Coolify",
+                            "model": "Coolify Cloud Platform",
+                            "title": title or "Coolify Self-Hosting Platform",
+                            "http_port": port,
+                            "device_category": "server",
+                            "web_url": f"{scheme}://{ip}:{port}/",
+                        })
+                        return result
+
+                    # Bluesis Telematics & Tracking Platform
+                    if "bluesis" in combined:
+                        result.update({
+                            "success": True,
+                            "brand": "Bluesis",
+                            "model": "Bluesis Telematics Web",
+                            "title": title or "Bluesis Telematics Platform",
+                            "http_port": port,
+                            "device_category": "iot",
+                            "web_url": f"{scheme}://{ip}:{port}/",
+                        })
+                        return result
+
+                    # Miltera Electronics and Software Technologies
+                    if "miltera" in combined:
+                        result.update({
+                            "success": True,
+                            "brand": "Miltera",
+                            "model": "Miltera IoT / Telemetry Platform",
+                            "title": title or "Miltera Electronics and Software Technologies",
+                            "http_port": port,
+                            "device_category": "iot",
+                            "web_url": f"{scheme}://{ip}:{port}/",
+                        })
+                        return result
+
+                    # Robustel IoT Cellular Gateway / Router
+                    if "robustel" in combined or "robustos" in combined or "cs_auth_username" in combined:
+                        result.update({
+                            "success": True,
+                            "brand": "Robustel",
+                            "model": "Robustel Gateway / Router",
+                            "title": title or "Robustel Router Web",
+                            "http_port": port,
+                            "device_category": "router",
+                            "web_url": f"{scheme}://{ip}:{port}/auth/" if "/auth" in combined or "/auth" in str(resp.url) else f"{scheme}://{ip}:{port}/",
+                        })
+                        return result
+
+                    # InHand Networks InRouter
+                    if "inhand" in combined or "inrouter" in combined or "check_auth.jsp?_ajax=1" in combined:
+                        result.update({
+                            "success": True,
+                            "brand": "InHand Networks",
+                            "model": "InRouter Industrial Router",
+                            "title": title or "InHand InRouter Login",
+                            "http_port": port,
+                            "device_category": "router",
+                            "web_url": f"{scheme}://{ip}:{port}/login.jsp",
+                        })
+                        return result
+
+                    # Teltonika RutOS Router
+                    if "teltonika" in combined or "rutos" in combined or "/brand/tokens.css" in combined or "/brand/colors.css" in combined:
+                        result.update({
+                            "success": True,
+                            "brand": "Teltonika",
+                            "model": "RutOS Gateway / Router",
+                            "title": title or "Teltonika RutOS Web",
+                            "http_port": port,
+                            "device_category": "router",
+                            "web_url": f"{scheme}://{ip}:{port}/",
+                        })
+                        return result
+
+                    # TR-069 CWMP Management
+                    if port == 7547 or "tr069" in combined or "cwmp" in combined:
+                        result.update({
+                            "success": True,
+                            "brand": "TR-069 CWMP",
+                            "model": "TR-069 CPE Agent",
+                            "title": title or "TR-069 CPE Management Service",
+                            "http_port": port,
+                            "device_category": "router",
+                            "web_url": f"{scheme}://{ip}:{port}/",
+                        })
+                        return result
+
+                    # Hikvision / HiWatch / OEM IP camera web redirect
+                    if "doc/page/login.asp" in combined or "doc/page/login.asp" in text:
+                        result.update({
+                            "success": True,
+                            "brand": "Hikvision",
+                            "model": "IP Camera Web Client",
+                            "title": title or "Hikvision IP Camera Web",
+                            "http_port": port,
+                            "device_category": "camera",
+                            "web_url": f"{scheme}://{ip}:{port}/doc/page/login.asp",
+                            "snapshot_path": "/ISAPI/Streaming/channels/101/picture",
+                            "rtsp_path": "/Streaming/Channels/101",
+                        })
+                        return result
+
+                    # Qualvision / Tantos Intercom
+                    if "qualvision" in combined or "tantos" in combined or "vwebclient.exe" in combined or "vms.tantos.pro" in combined:
+                        result.update({
+                            "success": True,
+                            "brand": "Qualvision / Tantos",
+                            "model": "IP Intercom (Видеодомофон)",
+                            "title": title or "Qualvision / Tantos Video Intercom",
+                            "http_port": port,
+                            "device_category": "intercom",
+                            "web_url": f"{scheme}://{ip}:{port}/",
+                            "snapshot_path": "/preview.html",
+                            "rtsp_path": "/live/ch0",
                         })
                         return result
 

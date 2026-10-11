@@ -61,6 +61,11 @@ class ScannerV2StorageMixin:
                     conn.execute("ALTER TABLE v2_jobs ADD COLUMN targets_str TEXT DEFAULT ''")
                 except Exception:
                     pass
+            if "stage1_hosts_json" not in cols:
+                try:
+                    conn.execute("ALTER TABLE v2_jobs ADD COLUMN stage1_hosts_json TEXT DEFAULT ''")
+                except Exception:
+                    pass
             conn.commit()
 
     def save_v2_result(self, result: Dict) -> None:
@@ -86,6 +91,8 @@ class ScannerV2StorageMixin:
                 endpoints = {endpoint_key(e): e for e in old.get("endpoints", [])}
                 endpoints.update({endpoint_key(e): e for e in result.get("endpoints", [])})
                 result["endpoints"] = list(endpoints.values())
+                if not result.get("credentials") and old.get("credentials"):
+                    result["credentials"] = old["credentials"]
 
             conn.execute(
                 """
@@ -166,8 +173,9 @@ class ScannerV2StorageMixin:
                 query += " AND protocols LIKE ?"
                 params.append(f"%{protocol}%")
             if category:
-                query += " AND result_json LIKE ?"
+                query += " AND (result_json LIKE ? OR result_json LIKE ?)"
                 params.append(f'%"device_category": "{category}"%')
+                params.append(f'%"categories":%"{category}"%')
             if has_preview:
                 query += " AND (streams_json LIKE '%/v2_captures/%' OR streams_json LIKE '%\"screenshot\": \"/%' OR result_json LIKE '%\"web_screenshot\": \"/%')"
             elif verified_only:
@@ -423,3 +431,26 @@ class ScannerV2StorageMixin:
                 "UPDATE v2_jobs SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE job_id = ?",
                 (status, job_id),
             )
+
+    def save_v2_stage1_hosts(self, job_id: str, responsive_hosts: list) -> None:
+        """Persist Stage 1 responsive hosts [(ip, [ports]), ...] to DB for restart survival."""
+        data = json.dumps(responsive_hosts, ensure_ascii=False)
+        with self._get_connection() as conn:
+            conn.execute(
+                "UPDATE v2_jobs SET stage1_hosts_json = ?, updated_at = CURRENT_TIMESTAMP WHERE job_id = ?",
+                (data, job_id),
+            )
+
+    def get_v2_stage1_hosts(self, job_id: str) -> list:
+        """Load saved Stage 1 responsive hosts for auto-resume into Stage 2."""
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT stage1_hosts_json FROM v2_jobs WHERE job_id = ?",
+                (job_id,),
+            ).fetchone()
+            if not row or not row[0]:
+                return []
+            try:
+                return json.loads(row[0])
+            except Exception:
+                return []

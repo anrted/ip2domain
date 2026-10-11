@@ -500,7 +500,7 @@ function v2ShowProgress() {
 window.v2ShowProgress = v2ShowProgress;
 
 function v2ResetStages() {
-    ['discovery', 'port_sweep', 'fingerprint', 'capture'].forEach(s => {
+    ['discovery', 'port_sweep', 'fingerprint', 'capture', 'geolocation'].forEach(s => {
         v2SetStageStatus(s, 'pending');
     });
     const fill = document.getElementById('v2-progress-fill');
@@ -515,6 +515,7 @@ const _STAGE_IDS = {
     port_sweep: 'v2-stage-sweep',
     fingerprint: 'v2-stage-finger',
     capture: 'v2-stage-capture',
+    geolocation: 'v2-stage-geo',
 };
 
 const _STATUS_ICONS = {
@@ -543,6 +544,8 @@ function v2UpdateProgress(job) {
         `${stages.fingerprint?.completed || 0} / ${stages.fingerprint?.total || 0}`);
     v2SetStageStatus('capture', stages.capture?.status || 'pending',
         stages.capture?.completed > 0 ? `${stages.capture.completed} кадров` : '—');
+    v2SetStageStatus('geolocation', stages.geolocation?.status || 'pending',
+        stages.geolocation?.completed > 0 ? `${stages.geolocation.completed} гео` : '—');
 
     const pct = job.progress_pct || 0;
     const fill = document.getElementById('v2-progress-fill');
@@ -731,20 +734,44 @@ function _isSpRecord(cam) {
 }
 window._isSpRecord = _isSpRecord;
 
+function _hasCategory(c, cat) {
+    if (!c || !cat) return false;
+    if (c.device_category === cat) return true;
+    if (Array.isArray(c.categories) && c.categories.includes(cat)) return true;
+    return false;
+}
+window._hasCategory = _hasCategory;
+
 function _isRouterDevice(c) {
     if (!c) return false;
-    if (c.device_category === 'router') return true;
+    if (_hasCategory(c, 'router')) return true;
     const protos = c.protocols || [];
     return protos.includes('router') || protos.includes('winbox');
 }
 window._isRouterDevice = _isRouterDevice;
 
+function _isIntercomDevice(c) {
+    if (!c) return false;
+    return _hasCategory(c, 'intercom');
+}
+window._isIntercomDevice = _isIntercomDevice;
+
+function _isIotDevice(c) {
+    if (!c) return false;
+    return _hasCategory(c, 'iot') || _hasCategory(c, 'industrial');
+}
+window._isIotDevice = _isIotDevice;
+
+function _isServerDevice(c) {
+    if (!c) return false;
+    return _hasCategory(c, 'server');
+}
+window._isServerDevice = _isServerDevice;
+
 function _isCameraDevice(c) {
     if (!c || _isSpRecord(c)) return false;
-    if (_isRouterDevice(c)) return false;
-
-    // Explicit camera category
-    if (c.device_category === 'camera') return true;
+    if (_hasCategory(c, 'camera')) return true;
+    if (_hasCategory(c, 'intercom')) return true;
 
     // Brand matches known camera brand
     const brand = (c.brand || '').toLowerCase();
@@ -757,8 +784,11 @@ function _isCameraDevice(c) {
     // Verified stream or real screenshot
     if ((c.streams || []).some(s => s.verified || (s.screenshot && String(s.screenshot).trim().length > 0))) return true;
 
-    // If explicitly marked as generic_web or device, not a camera
-    if (c.device_category === 'generic_web' || c.device_category === 'device') return false;
+    // Has RTSP or video stream
+    if ((c.streams || []).some(s => s.type === 'rtsp' || s.type === 'rtsps' || s.type === 'mjpeg')) return true;
+
+    // If pure non-camera without video
+    if (c.device_category === 'router' || c.device_category === 'generic_web' || c.device_category === 'device' || c.device_category === 'iot' || c.device_category === 'server') return false;
 
     // Has video streams and is not generic web
     if ((c.streams || []).length > 0 && !brand.includes('generic web device')) return true;
@@ -768,17 +798,17 @@ function _isCameraDevice(c) {
 window._isCameraDevice = _isCameraDevice;
 
 function _isNetworkDevice(c) {
-    if (!c || _isSpRecord(c) || _isRouterDevice(c) || _isCameraDevice(c)) return false;
+    if (!c || _isSpRecord(c)) return false;
     return c.device_category === 'device' || (c.protocols || []).includes('tcp');
 }
 window._isNetworkDevice = _isNetworkDevice;
 
 function _isWebDevice(c) {
-    if (!c || _isSpRecord(c) || _isRouterDevice(c) || _isCameraDevice(c)) return false;
-    if (c.device_category === 'generic_web') return true;
+    if (!c || _isSpRecord(c)) return false;
+    if (_hasCategory(c, 'generic_web')) return true;
     const brand = (c.brand || '').toLowerCase();
     if (brand.includes('generic web device') || brand.includes('web service')) return true;
-    return true;
+    return false;
 }
 window._isWebDevice = _isWebDevice;
 
@@ -888,6 +918,12 @@ function v2GetFilteredResults() {
             filtered = filtered.filter(c => _isCameraDevice(c));
         } else if (cat === 'router') {
             filtered = filtered.filter(c => _isRouterDevice(c));
+        } else if (cat === 'intercom') {
+            filtered = filtered.filter(c => _isIntercomDevice(c));
+        } else if (cat === 'iot') {
+            filtered = filtered.filter(c => _isIotDevice(c));
+        } else if (cat === 'server') {
+            filtered = filtered.filter(c => _isServerDevice(c));
         } else if (cat === 'generic_web') {
             filtered = filtered.filter(c => _isWebDevice(c));
         } else if (cat === 'device') {

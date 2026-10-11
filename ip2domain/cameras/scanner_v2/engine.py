@@ -38,10 +38,19 @@ _DEFAULT_STAGE2_CONCURRENCY = int(os.environ.get("IP2DOMAIN_V2_STAGE2_CONCURRENC
 
 # Active jobs registry (in-memory, shared with router)
 _ACTIVE_JOBS: Dict[str, ScanJob] = {}
+_ACTIVE_TASKS: Dict[str, asyncio.Task] = {}
 
 
 def get_job(job_id: str) -> Optional[ScanJob]:
     return _ACTIVE_JOBS.get(job_id)
+
+
+def register_job_task(job_id: str, task: asyncio.Task) -> None:
+    """Keep a strong reference to the background task to prevent garbage collection."""
+    _ACTIVE_TASKS[job_id] = task
+    def _on_done(t):
+        _ACTIVE_TASKS.pop(job_id, None)
+    task.add_done_callback(_on_done)
 
 
 def list_jobs() -> List[ScanJob]:
@@ -141,81 +150,146 @@ def _format_eta(seconds: float) -> str:
 
 
 async def _capture_job_streams(job, capture_dir, storage):
-    """Shared capture stage: bounded workers, capturing RTSP frames and Web screenshots."""
+    """Shared capture stage: dual-queue capture with fast HTTP snapshot queue and bounded ffmpeg queue."""
+    from .stage3_stream import verify_single_stream
+    from .aggregation import prune_unverified_streams
+    from .models import HTTP_PORTS, HTTPS_PORTS, StreamInfo as _SI
+    from .web_capture import capture_web_screenshot
+
     job.stage3_status = "running"
     job.stage = "Stage 3: Захват кадров видео и веб-скриншотов"
-    total = sum(len(c.streams) for c in job.results) + len(job.results)
-    completed = 0
 
-    async def capture(camera):
-        nonlocal completed
-        def save_stream(stream):
-            nonlocal completed
-            completed += 1
-            job.stage = f"Stage 3: Захвачено превью {completed}/{total}"
-            job.progress_pct = 85 + int(completed / max(1, total) * 14)
-            if stream.verified and storage:
-                storage.save_v2_result(camera.to_dict())
-        try:
-            if camera.streams:
-                await verify_camera_streams(camera, capture_dir,
-                                            is_cancelled=job.is_cancelled, on_stream=save_stream)
-        except Exception:
-            job.stage3_status = "error"
-            raise
-        finally:
-            from .aggregation import prune_unverified_streams
-            prune_unverified_streams(camera)
-            completed += 1
-            job.stage3_completed += 1
-            if storage:
-                storage.save_v2_result(camera.to_dict())
+    total_ops = sum(len(c.streams) for c in job.results) + len(job.results)
+    completed_ops = 0
 
-        # 2. Web screenshot capture for routers, web devices, media servers, and cameras
-        from .models import HTTP_PORTS, HTTPS_PORTS
-        from .web_capture import capture_web_screenshot
-        from .models import StreamInfo as _SI
+    def update_progress(msg: str):
+        nonlocal completed_ops
+        completed_ops += 1
+        pct = 85 + int((completed_ops / max(1, total_ops)) * 14)
+        job.progress_pct = min(99, pct)
+        job.stage = msg
 
-        web_port = camera.http_port or next((p for p in camera.open_ports if p in HTTP_PORTS or p in HTTPS_PORTS), 0)
+    # ── Pass 1: Fast HTTP Snapshot Queue (15-20 workers) ───────────────
+    http_concurrency = int(os.environ.get("IP2DOMAIN_V2_HTTP_SNAPSHOT_CONCURRENCY", "16"))
+    http_tasks = []
+    for cam in job.results:
+        for s in cam.streams:
+            if s.stream_type == "http_snapshot" and s.url:
+                http_tasks.append((cam, s))
+
+    if http_tasks and not job.is_cancelled():
+        job.stage = f"Stage 3: Быстрое скачивание HTTP-снимков ({len(http_tasks)})..."
+        done_http = 0
+        total_http = len(http_tasks)
+
+        async def _do_http_snap(item):
+            nonlocal done_http
+            if job.is_cancelled():
+                return
+            cam, stream = item
+            creds = stream.credentials if stream.credentials is not None else cam.credentials
+            ok = await verify_single_stream(stream, Path(capture_dir), creds)
+            done_http += 1
+            update_progress(f"Stage 3: HTTP-снимки [{done_http}/{total_http}]")
+            if ok and storage:
+                storage.save_v2_result(cam.to_dict())
+
+        await run_bounded(http_tasks, _do_http_snap, max(4, min(http_concurrency, 24)), job.is_cancelled)
+
+    # ── Pass 2: Bounded ffmpeg Video Stream Queue (3-4 workers) ────────
+    ffmpeg_concurrency = int(os.environ.get("IP2DOMAIN_V2_FFMPEG_CONCURRENCY", "4"))
+    video_tasks = []
+    for cam in job.results:
+        for s in cam.streams:
+            if s.stream_type in {"rtsp", "rtsps", "rtmp", "hls", "mjpeg", "udp_rtp"} and s.url:
+                video_tasks.append((cam, s))
+
+    if video_tasks and not job.is_cancelled():
+        job.stage = f"Stage 3: Захват видео-потоков ffmpeg ({len(video_tasks)})..."
+        done_video = 0
+        total_video = len(video_tasks)
+
+        async def _do_video_frame(item):
+            nonlocal done_video
+            if job.is_cancelled():
+                return
+            cam, stream = item
+            creds = stream.credentials if stream.credentials is not None else cam.credentials
+            ok = await verify_single_stream(stream, Path(capture_dir), creds)
+            done_video += 1
+            update_progress(f"Stage 3: RTSP/видео кадры [{done_video}/{total_video}]")
+            if ok and storage:
+                storage.save_v2_result(cam.to_dict())
+
+        await run_bounded(video_tasks, _do_video_frame, max(2, min(ffmpeg_concurrency, 6)), job.is_cancelled)
+
+    # ── Pass 3: Web Panels and Dashboards (Routers, Gateways, Web Servers) ──
+    web_candidates = []
+    for cam in job.results:
+        web_port = cam.http_port or next((p for p in cam.open_ports if p in HTTP_PORTS or p in HTTPS_PORTS), 0)
         should_capture_web = (
             web_port > 0 and (
-                camera.device_category in ("router", "generic_web", "nas", "server")
-                or "flussonic" in (camera.brand or "").lower()
-                or not any(s.verified for s in camera.streams)
+                cam.device_category in ("router", "generic_web", "nas", "server")
+                or "flussonic" in (cam.brand or "").lower()
+                or not any(s.verified for s in cam.streams)
             )
         )
-
         if should_capture_web:
+            web_candidates.append((cam, web_port))
+
+    if web_candidates and not job.is_cancelled():
+        done_web = 0
+        total_web = len(web_candidates)
+
+        async def _do_web_sc(item):
+            nonlocal done_web
+            if job.is_cancelled():
+                return
+            cam, web_port = item
             scheme = "https" if web_port in HTTPS_PORTS or "443" in str(web_port) else "http"
-            web_url = camera.web_url or f"{scheme}://{camera.ip}:{web_port}/"
-            camera.web_url = web_url
-            camera.http_port = camera.http_port or web_port
+            web_url = cam.web_url or f"{scheme}://{cam.ip}:{web_port}/"
+            cam.web_url = web_url
+            cam.http_port = cam.http_port or web_port
             try:
                 sc_url = await capture_web_screenshot(
-                    ip=camera.ip,
+                    ip=cam.ip,
                     port=web_port,
                     web_url=web_url,
                     capture_dir=Path(capture_dir),
-                    brand=camera.brand,
-                    model=camera.model,
-                    title=camera.web_title,
-                    category=camera.device_category,
+                    brand=cam.brand,
+                    model=cam.model,
+                    title=cam.web_title,
+                    category=cam.device_category,
                 )
                 if sc_url:
-                    camera.web_screenshot = sc_url
-                    if not camera.streams or camera.device_category in ("router", "generic_web", "server") or "flussonic" in (camera.brand or "").lower():
-                        camera.streams.insert(0, _SI(
+                    cam.web_screenshot = sc_url
+                    if not cam.streams or cam.device_category in ("router", "generic_web", "server") or "flussonic" in (cam.brand or "").lower():
+                        cam.streams.insert(0, _SI(
                             url=web_url,
                             stream_type="web_panel",
                             verified=True,
                             screenshot_path=str(Path(capture_dir) / Path(sc_url).name),
                         ))
                     if storage:
-                        storage.save_v2_result(camera.to_dict())
+                        storage.save_v2_result(cam.to_dict())
             except Exception as exc:
-                logger.debug("[Stage 3] Web screenshot error on %s: %s", camera.ip, exc)
+                logger.debug("[Stage 3] Web screenshot error on %s: %s", cam.ip, exc)
+            done_web += 1
+            update_progress(f"Stage 3: Веб-скриншоты [{done_web}/{total_web}]")
 
-    await run_bounded(job.results, capture, 3, job.is_cancelled)
+        await run_bounded(web_candidates, _do_web_sc, 6, job.is_cancelled)
+
+    # ── Final stream sorting, pruning, and persistence ────────────────
+    for cam in job.results:
+        cam.streams.sort(key=lambda s: (s.verified, bool(s.screenshot_path), s.width * s.height), reverse=True)
+        prune_unverified_streams(cam)
+        job.stage3_completed += 1
+        if storage:
+            try:
+                storage.save_v2_result(cam.to_dict())
+            except Exception:
+                pass
+
     job.stage3_status = "cancelled" if job.is_cancelled() else "done"
 
 
@@ -249,6 +323,7 @@ async def run_v2_scan_pipeline(
     capture_dir: Optional[Path] = None,
     storage=None,
     resume_from_index: int = 0,
+    saved_stage1_hosts: Optional[List] = None,
 ) -> None:
     """Main v2 scan pipeline with auto-resume support. Runs in background asyncio task."""
     job = _ACTIVE_JOBS.get(job_id)
@@ -263,7 +338,8 @@ async def run_v2_scan_pipeline(
     if credentials is None:
         credentials = DEFAULT_CREDENTIALS
 
-    ts = lambda: datetime.now().strftime("%H:%M:%S")
+    pipeline_start = asyncio.get_event_loop().time()
+    stage1_start = pipeline_start
 
     try:
         if stage2_concurrency < 1:
@@ -466,91 +542,114 @@ async def run_v2_scan_pipeline(
             return
 
         # ── Stage 1: Port Sweep ────────────────────────────────────────
-        job.stage1_status = "running"
-        tools = check_tools()
-        chosen_engine = engine
-        if chosen_engine == "auto":
-            chosen_engine = (
-                "masscan"
-                if (len(targets) >= 4096 and tools["masscan"] and tools["is_root"])
-                else ("nmap_syn" if (len(targets) >= 4096 and tools["nmap"] and tools["is_root"]) else "asyncio")
-            )
-        job.engine_used = chosen_engine
-        if chosen_engine == "masscan":
-            engine_desc = f"masscan ({masscan_rate:,} pps, 48 портов)"
-        elif chosen_engine == "nmap_syn":
-            engine_desc = "nmap -sS SYN"
+        if saved_stage1_hosts:
+            # Resume path: Stage 1 already completed, use saved hosts
+            responsive_hosts = [
+                (h[0], h[1]) if isinstance(h, (list, tuple)) else h
+                for h in saved_stage1_hosts
+            ]
+            engine_used = job.engine_used or "masscan"
+            job.stage1_status = "done"
+            job.stage1_responsive = len(responsive_hosts)
+            job.stage1_scanned = job.total_targets or len(targets)
+            job.add_log(f"[Stage 1] Пропущено: загружено {len(responsive_hosts)} хостов из БД")
+            logger.info("[v2 Engine] Skipping Stage 1, loaded %d saved hosts for job %s", len(responsive_hosts), job_id)
         else:
-            engine_desc = f"asyncio TCP (параллельность: {concurrency})"
-
-        job.stage = f"Stage 1: Сканирование портов ({chosen_engine})..."
-        job.add_log(f"[Stage 1] Запуск {engine_desc} для {len(targets):,} IP (всего в задаче {full_target_count:,})...")
-
-        stage1_start = asyncio.get_event_loop().time()
-        completed_s1 = 0
-        total_s1 = len(targets)
-        last_log_time = 0.0
-
-        def stage1_progress(completed: int, total: int, cur_ip: str, found: int):
-            nonlocal completed_s1, last_log_time
-            completed_s1 = completed
-            job.stage1_scanned = completed
-            elapsed = max(0.1, asyncio.get_event_loop().time() - stage1_start)
-
-            if "rate:" in cur_ip and "%" in cur_ip:
-                # Direct masscan status line (e.g. "rate: 49.90-kpps, 1.23% done, 0:45:12 remaining, found=15")
-                job.current_ip = ""
-                job.stage = f"Stage 1: masscan [{resume_from_index + completed:,}/{full_target_count:,}] · {cur_ip}"
-                pct_num = min(100.0, (completed / max(1, total)) * 100)
-                job.progress_pct = 5 + int(pct_num * 0.35)
-                # Log progress periodically (every 30s)
-                now = asyncio.get_event_loop().time()
-                if now - last_log_time >= 30.0:
-                    last_log_time = now
-                    job.add_log(f"[Stage 1/masscan] {cur_ip}")
-            else:
-                job.current_ip = cur_ip
-                speed = completed / elapsed if completed > 0 else 0
-                eta = (total - completed) / speed if speed > 0 else 0
-                job.progress_pct = 5 + int((completed / max(1, total)) * 35)
-                job.stage = (
-                    f"Stage 1: Sweep [{resume_from_index + completed:,}/{full_target_count:,}] "
-                    f"· {speed:.0f} IP/сек · ост. {_format_eta(eta)}"
+            # Normal Stage 1 execution
+            job.stage1_status = "running"
+            tools = check_tools()
+            chosen_engine = engine
+            if chosen_engine == "auto":
+                chosen_engine = (
+                    "masscan"
+                    if (len(targets) >= 4096 and tools["masscan"] and tools["is_root"])
+                    else ("nmap_syn" if (len(targets) >= 4096 and tools["nmap"] and tools["is_root"]) else "asyncio")
                 )
+            job.engine_used = chosen_engine
+            if chosen_engine == "masscan":
+                engine_desc = f"masscan ({masscan_rate:,} pps, 48 портов)"
+            elif chosen_engine == "nmap_syn":
+                engine_desc = "nmap -sS SYN"
+            else:
+                engine_desc = f"asyncio TCP (параллельность: {concurrency})"
 
-            # Periodically persist index to DB for restart recovery
-            if storage and (completed % 100 == 0 or completed == total):
-                try:
-                    storage.update_v2_job_progress(
-                        job_id=job_id,
-                        current_index=resume_from_index + completed,
-                        progress_pct=job.progress_pct,
-                        stage=job.stage,
-                        found_cameras=len(job.results),
-                        logs=job.logs,
+            job.stage = f"Stage 1: Сканирование портов ({chosen_engine})..."
+            job.add_log(f"[Stage 1] Запуск {engine_desc} для {len(targets):,} IP (всего в задаче {full_target_count:,})...")
+
+            stage1_start = asyncio.get_event_loop().time()
+            completed_s1 = 0
+            total_s1 = len(targets)
+            last_log_time = 0.0
+
+            def stage1_progress(completed: int, total: int, cur_ip: str, found: int):
+                nonlocal completed_s1, last_log_time
+                completed_s1 = completed
+                job.stage1_scanned = completed
+                elapsed = max(0.1, asyncio.get_event_loop().time() - stage1_start)
+
+                if "rate:" in cur_ip and "%" in cur_ip:
+                    # Direct masscan status line (e.g. "rate: 49.90-kpps, 1.23% done, 0:45:12 remaining, found=15")
+                    job.current_ip = ""
+                    job.stage = f"Stage 1: masscan [{resume_from_index + completed:,}/{full_target_count:,}] · {cur_ip}"
+                    pct_num = min(100.0, (completed / max(1, total)) * 100)
+                    job.progress_pct = 5 + int(pct_num * 0.35)
+                    # Log progress periodically (every 30s)
+                    now = asyncio.get_event_loop().time()
+                    if now - last_log_time >= 30.0:
+                        last_log_time = now
+                        job.add_log(f"[Stage 1/masscan] {cur_ip}")
+                else:
+                    job.current_ip = cur_ip
+                    speed = completed / elapsed if completed > 0 else 0
+                    eta = (total - completed) / speed if speed > 0 else 0
+                    job.progress_pct = 5 + int((completed / max(1, total)) * 35)
+                    job.stage = (
+                        f"Stage 1: Sweep [{resume_from_index + completed:,}/{full_target_count:,}] "
+                        f"· {speed:.0f} IP/сек · ост. {_format_eta(eta)}"
                     )
-                except Exception:
-                    pass
 
-        responsive_hosts, engine_used = await adaptive_port_sweep(
-            targets=targets,
-            ports=CAMERA_PORTS_V2,
-            engine=engine,
-            masscan_rate=masscan_rate,
-            concurrency=concurrency,
-            port_timeout=port_timeout,
-            on_progress=stage1_progress,
-            is_cancelled=job.is_cancelled,
-        )
+                # Periodically persist index to DB for restart recovery
+                if storage and (completed % 100 == 0 or completed == total):
+                    try:
+                        storage.update_v2_job_progress(
+                            job_id=job_id,
+                            current_index=resume_from_index + completed,
+                            progress_pct=job.progress_pct,
+                            stage=job.stage,
+                            found_cameras=len(job.results),
+                            logs=job.logs,
+                        )
+                    except Exception:
+                        pass
 
+            responsive_hosts, engine_used = await adaptive_port_sweep(
+                targets=targets,
+                ports=CAMERA_PORTS_V2,
+                engine=engine,
+                masscan_rate=masscan_rate,
+                concurrency=concurrency,
+                port_timeout=port_timeout,
+                on_progress=stage1_progress,
+                is_cancelled=job.is_cancelled,
+            )
 
-        job.engine_used = engine_used
-        job.stage1_responsive = len(responsive_hosts)
-        job.stage1_status = "done"
-        job.add_log(
-            f"[Stage 1] Завершено ({engine_used}): {len(targets):,} IP просканировано, "
-            f"{len(responsive_hosts)} активных хостов с открытыми портами"
-        )
+            job.engine_used = engine_used
+            job.stage1_responsive = len(responsive_hosts)
+            job.stage1_status = "done"
+            job.add_log(
+                f"[Stage 1] Завершено ({engine_used}): {len(targets):,} IP просканировано, "
+                f"{len(responsive_hosts)} активных хостов с открытыми портами"
+            )
+
+            # ── Persist Stage 1 results to DB before Stage 2 ──────────────
+            # Critical: save responsive hosts so they survive process restart.
+            if storage:
+                try:
+                    storage.save_v2_stage1_hosts(job_id, responsive_hosts)
+                    storage.save_v2_job(job.to_dict())
+                    logger.info("[v2 Engine] Saved %d Stage 1 hosts to DB for job %s", len(responsive_hosts), job_id)
+                except Exception as e:
+                    logger.warning("[v2 Engine] Failed to save Stage 1 hosts: %s", e)
 
         if job.is_cancelled():
             job.status = "cancelled"
@@ -601,6 +700,11 @@ async def run_v2_scan_pipeline(
                             camera.streams.append(_SI2(url=f"rtsp://{ip}:{p}/Streaming/Channels/101", stream_type="rtsp", auth_required=None))
                 except Exception as exc:
                     logger.warning("[v2 Stage2] Error probing %s: %s", ip, exc)
+                    camera = None
+                except BaseException as be:
+                    if isinstance(be, asyncio.CancelledError) and job.is_cancelled():
+                        raise
+                    logger.debug("[v2 Stage2] Uncaught probe error on %s: %s", ip, be)
                     camera = None
 
                 if not camera and open_ports:
@@ -655,7 +759,15 @@ async def run_v2_scan_pipeline(
                                 pass
 
         async def fingerprint_target(target):
-            await fingerprint_host(*target)
+            if not target:
+                return
+            try:
+                if isinstance(target, (list, tuple)) and len(target) >= 2:
+                    await fingerprint_host(target[0], target[1])
+                elif isinstance(target, str):
+                    await fingerprint_host(target, [])
+            except Exception as exc:
+                logger.warning("[v2 Stage2] Target error %s: %s", target, exc)
 
         await run_bounded(
             responsive_hosts, fingerprint_target, stage2_concurrency, job.is_cancelled,
@@ -717,7 +829,7 @@ async def run_v2_scan_pipeline(
 
         job.add_log(
             f"[✓] Готово! Просканировано {len(targets):,} IP, "
-            f"обнаружено {len(job.results)} устройств за {_format_eta(asyncio.get_event_loop().time() - stage1_start)}"
+            f"обнаружено {len(job.results)} устройств за {_format_eta(asyncio.get_event_loop().time() - pipeline_start)}"
         )
         if storage:
             try:
@@ -726,6 +838,7 @@ async def run_v2_scan_pipeline(
                 pass
 
     except asyncio.CancelledError:
+        logger.info("[v2 Engine] Scan job %s received CancelledError (cancelling=%s)", job_id, job.cancelling)
         job.status = "cancelled"
         job.stage = "Сканирование отменено"
         if storage:
@@ -744,7 +857,7 @@ async def run_v2_scan_pipeline(
             except Exception:
                 pass
     finally:
-        pass
+        _ACTIVE_TASKS.pop(job_id, None)
 
 
 def create_job(job_id: str) -> ScanJob:
@@ -759,5 +872,7 @@ def cancel_job(job_id: str) -> bool:
     job = _ACTIVE_JOBS.get(job_id)
     if job:
         job.cancelling = True
-        return True
-    return False
+    task = _ACTIVE_TASKS.get(job_id)
+    if task and not task.done():
+        task.cancel()
+    return bool(job or task)

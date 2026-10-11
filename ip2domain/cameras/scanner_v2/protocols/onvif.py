@@ -13,7 +13,7 @@ import os
 import uuid
 import xml.etree.ElementTree as ET
 from xml.sax.saxutils import escape
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 import httpx
