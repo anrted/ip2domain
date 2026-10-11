@@ -361,6 +361,42 @@ class ScannerV2StorageMixin:
             row = conn.execute(query, params).fetchone()
             return row[0] if row else 0
 
+    def get_v2_filtered_ips(
+        self,
+        brand: str = "",
+        protocol: str = "",
+        has_preview: bool = False,
+        verified_only: bool = False,
+        auth_status: str = "all",
+        category: str = "",
+        geo: str = "",
+        search: str = "",
+    ) -> List[str]:
+        """Return list of distinct clean IP addresses matching the query filters."""
+        where_clause, params = self._build_v2_where_clause(
+            brand=brand,
+            protocol=protocol,
+            has_preview=has_preview,
+            verified_only=verified_only,
+            auth_status=auth_status,
+            category=category,
+            geo=geo,
+            search=search,
+        )
+        with self._get_connection() as conn:
+            query = f"SELECT DISTINCT ip FROM v2_results{where_clause} ORDER BY ip"
+            rows = conn.execute(query, params).fetchall()
+            ips = []
+            for (raw_ip,) in rows:
+                ip = (raw_ip or "").strip()
+                if ip.startswith("http://") or ip.startswith("https://"):
+                    ip = ip.split("//")[-1].split("/")[0]
+                if ":" in ip and not ip.startswith("["):
+                    ip = ip.split(":")[0]
+                if ip:
+                    ips.append(ip)
+            return ips
+
     def get_v2_result(self, ip: str) -> Optional[Dict]:
         """Get a single v2 result by IP."""
         with self._get_connection() as conn:

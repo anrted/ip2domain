@@ -335,35 +335,30 @@ async def export_filtered_ips(
     protocol: str = Query(default="all"),
     status: str = Query(default="all"),
     auth_status: str = Query(default="all"),
+    geo: str = Query(default="all"),
+    search: str = Query(default=""),
+    format: str = Query(default="txt"),
 ):
-    """Export clean plain-text list of IP addresses (without ports) matching active filters."""
+    """Export clean plain-text or JSON list of IP addresses (without ports) matching active filters."""
     has_preview = status == "preview"
     verified_only = status == "live"
     cat_param = "" if category == "all" else category
     brand_param = "" if brand == "all" else brand
     proto_param = "" if protocol == "all" else protocol
 
-    results = storage.get_v2_results(
-        limit=100000,
+    ips = storage.get_v2_filtered_ips(
         brand=brand_param,
         protocol=proto_param,
         has_preview=has_preview,
         verified_only=verified_only,
         auth_status=auth_status,
         category=cat_param,
+        geo=geo,
+        search=search,
     )
 
-    seen = set()
-    ips = []
-    for c in results:
-        ip = (c.get("ip") or "").strip()
-        if ip.startswith("http://") or ip.startswith("https://"):
-            ip = ip.split("//")[-1].split("/")[0]
-        if ":" in ip and not ip.startswith("["):
-            ip = ip.split(":")[0]
-        if ip and ip not in seen:
-            seen.add(ip)
-            ips.append(ip)
+    if format == "json":
+        return JSONResponse({"ips": ips, "total": len(ips)})
 
     parts = ["ips"]
     if category != "all":
@@ -372,6 +367,8 @@ async def export_filtered_ips(
         parts.append(brand.lower().replace(" ", "_"))
     if status != "all":
         parts.append(status)
+    if geo != "all":
+        parts.append(geo.replace(":", "_").lower())
     filename = f"{'_'.join(parts)}_{len(ips)}.txt"
 
     content = "\n".join(ips) + ("\n" if ips else "")

@@ -2646,12 +2646,12 @@ function v2GetFilteredIpsList() {
 }
 window.v2GetFilteredIpsList = v2GetFilteredIpsList;
 
-function v2OpenExportIpsModal() {
+let _v2CurrentExportIps = [];
+
+async function v2OpenExportIpsModal() {
     document.getElementById('v2-export-ips-modal-overlay')?.remove();
 
-    const ips = v2GetFilteredIpsList();
     const filterDesc = v2GetActiveFilterSummary();
-    const ipText = ips.join('\n');
 
     const overlay = document.createElement('div');
     overlay.className = 'v2-modal-overlay';
@@ -2671,7 +2671,7 @@ function v2OpenExportIpsModal() {
                 <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:0.75rem 1rem;font-size:0.8rem;">
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
                         <span style="color:#94a3b8;">Активные фильтры выборки:</span>
-                        <strong style="color:#60a5fa;font-size:0.88rem;">${ips.length} уникальных IP</strong>
+                        <strong id="v2-export-ips-count" style="color:#60a5fa;font-size:0.88rem;">⏳ Загрузка всех IP...</strong>
                     </div>
                     <div style="color:#cbd5e1;font-size:0.75rem;line-height:1.4;">${_esc(filterDesc)}</div>
                 </div>
@@ -2679,16 +2679,16 @@ function v2OpenExportIpsModal() {
                 <div style="display:flex;flex-direction:column;gap:0.35rem;">
                     <div style="display:flex;justify-content:space-between;align-items:center;">
                         <label style="font-size:0.75rem;color:#94a3b8;font-weight:600;">Список IP (без портов, готов к сканированию):</label>
-                        <span style="font-size:0.7rem;color:#64748b;">${ips.length ? `${ips.length} строк` : 'Пусто'}</span>
+                        <span id="v2-export-ips-lines-count" style="font-size:0.7rem;color:#64748b;">Загрузка базы данных...</span>
                     </div>
                     <textarea id="v2-export-ips-textarea" readonly rows="12"
                         style="width:100%;font-family:monospace;font-size:0.8rem;background:rgba(0,0,0,0.5);border:1px solid rgba(255,255,255,0.12);color:#e2e8f0;border-radius:6px;padding:0.6rem;resize:vertical;line-height:1.45;"
-                        placeholder="Нет IP для выгрузки">${_esc(ipText)}</textarea>
+                        placeholder="Загрузка полного списка IP из базы..."></textarea>
                 </div>
 
                 <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-top:0.25rem;">
                     <div style="display:flex;gap:6px;">
-                        <button type="button" class="v2-btn-small" style="background:#2563eb;color:#fff;border:none;padding:0.45rem 0.9rem;font-weight:600;" onclick="v2DownloadFilteredIps()">
+                        <button type="button" id="v2-btn-download-ips" class="v2-btn-small" style="background:#2563eb;color:#fff;border:none;padding:0.45rem 0.9rem;font-weight:600;" onclick="v2DownloadFilteredIps()">
                             ⬇ Скачать .txt
                         </button>
                         <button type="button" id="v2-btn-copy-ips" class="v2-btn-small" style="background:rgba(255,255,255,0.1);color:#fff;border:1px solid rgba(255,255,255,0.2);padding:0.45rem 0.9rem;font-weight:600;" onclick="v2CopyIpsToClipboard()">
@@ -2696,7 +2696,7 @@ function v2OpenExportIpsModal() {
                         </button>
                     </div>
                     <div style="display:flex;gap:6px;">
-                        <button type="button" class="v2-btn-small" style="background:rgba(16,185,129,0.2);border:1px solid rgba(16,185,129,0.5);color:#34d399;padding:0.45rem 0.9rem;font-weight:600;" onclick="v2InsertIpsIntoScannerTargets()">
+                        <button type="button" id="v2-btn-insert-ips" class="v2-btn-small" style="background:rgba(16,185,129,0.2);border:1px solid rgba(16,185,129,0.5);color:#34d399;padding:0.45rem 0.9rem;font-weight:600;" onclick="v2InsertIpsIntoScannerTargets()">
                             📥 Вставить в цели сканера
                         </button>
                         <button type="button" class="v2-btn-small" style="background:transparent;border:1px solid rgba(255,255,255,0.1);color:#94a3b8;padding:0.45rem 0.75rem;" onclick="v2CloseExportIpsModal()">
@@ -2709,6 +2709,48 @@ function v2OpenExportIpsModal() {
     `;
 
     document.body.appendChild(overlay);
+
+    _v2CurrentExportIps = [];
+
+    try {
+        const queryParams = new URLSearchParams({
+            category: window.V2State?.filterCategory || 'all',
+            brand: window.V2State?.filterBrand || 'all',
+            protocol: window.V2State?.filterProtocol || 'all',
+            status: window.V2State?.filterStatus || 'all',
+            auth_status: window.V2State?.filterAuth || 'all',
+            geo: window.V2State?.filterGeo || 'all',
+            search: (window.V2State?.geoSearch || '').trim(),
+            format: 'json',
+        });
+        const resp = await fetch(`/api/v2/results/export-ips?${queryParams.toString()}`);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        _v2CurrentExportIps = data.ips || [];
+        window._v2CurrentExportIps = _v2CurrentExportIps;
+
+        const countEl = document.getElementById('v2-export-ips-count');
+        if (countEl) countEl.textContent = `${_v2CurrentExportIps.length.toLocaleString('ru-RU')} уникальных IP`;
+
+        const linesEl = document.getElementById('v2-export-ips-lines-count');
+        if (linesEl) linesEl.textContent = _v2CurrentExportIps.length ? `${_v2CurrentExportIps.length.toLocaleString('ru-RU')} строк` : 'Пусто';
+
+        const ta = document.getElementById('v2-export-ips-textarea');
+        if (ta) {
+            ta.value = _v2CurrentExportIps.join('\n');
+            if (!_v2CurrentExportIps.length) {
+                ta.placeholder = 'Нет IP для выгрузки по выбранным фильтрам';
+            }
+        }
+    } catch (err) {
+        console.error('Failed to fetch full export IPs:', err);
+        _v2CurrentExportIps = v2GetFilteredIpsList();
+        window._v2CurrentExportIps = _v2CurrentExportIps;
+        const countEl = document.getElementById('v2-export-ips-count');
+        if (countEl) countEl.textContent = `${_v2CurrentExportIps.length.toLocaleString('ru-RU')} уникальных IP (локально)`;
+        const ta = document.getElementById('v2-export-ips-textarea');
+        if (ta) ta.value = _v2CurrentExportIps.join('\n');
+    }
 }
 window.v2OpenExportIpsModal = v2OpenExportIpsModal;
 
@@ -2718,21 +2760,24 @@ function v2CloseExportIpsModal() {
 window.v2CloseExportIpsModal = v2CloseExportIpsModal;
 
 function v2DownloadFilteredIps() {
-    const ips = v2GetFilteredIpsList();
+    const ips = (_v2CurrentExportIps && _v2CurrentExportIps.length) ? _v2CurrentExportIps : v2GetFilteredIpsList();
     if (!ips.length) {
         alert('Нет IP-адресов для скачивания по текущим фильтрам');
         return;
     }
     const textContent = ips.join('\n') + '\n';
     const parts = ['ips'];
-    if (window.V2State.filterCategory && window.V2State.filterCategory !== 'all') {
+    if (window.V2State?.filterCategory && window.V2State.filterCategory !== 'all') {
         parts.push(window.V2State.filterCategory);
     }
-    if (window.V2State.filterBrand && window.V2State.filterBrand !== 'all') {
+    if (window.V2State?.filterBrand && window.V2State.filterBrand !== 'all') {
         parts.push(window.V2State.filterBrand.toLowerCase().replace(/[^a-z0-9_-]/g, ''));
     }
-    if (window.V2State.filterStatus && window.V2State.filterStatus !== 'all') {
+    if (window.V2State?.filterStatus && window.V2State.filterStatus !== 'all') {
         parts.push(window.V2State.filterStatus);
+    }
+    if (window.V2State?.filterGeo && window.V2State.filterGeo !== 'all') {
+        parts.push(window.V2State.filterGeo.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase());
     }
     const filename = `${parts.join('_')}_${ips.length}_${new Date().toISOString().slice(0, 10)}.txt`;
     const blob = new Blob([textContent], { type: 'text/plain;charset=utf-8' });
@@ -2747,7 +2792,7 @@ function v2DownloadFilteredIps() {
 window.v2DownloadFilteredIps = v2DownloadFilteredIps;
 
 async function v2CopyIpsToClipboard() {
-    const ips = v2GetFilteredIpsList();
+    const ips = (_v2CurrentExportIps && _v2CurrentExportIps.length) ? _v2CurrentExportIps : v2GetFilteredIpsList();
     if (!ips.length) {
         alert('Нет IP-адресов для копирования');
         return;
@@ -2780,7 +2825,7 @@ async function v2CopyIpsToClipboard() {
 window.v2CopyIpsToClipboard = v2CopyIpsToClipboard;
 
 function v2InsertIpsIntoScannerTargets() {
-    const ips = v2GetFilteredIpsList();
+    const ips = (_v2CurrentExportIps && _v2CurrentExportIps.length) ? _v2CurrentExportIps : v2GetFilteredIpsList();
     if (!ips.length) {
         alert('Нет IP-адресов для вставки');
         return;
