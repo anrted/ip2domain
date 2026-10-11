@@ -429,11 +429,22 @@ async def add_to_go2rtc(
                     if "@" not in host_part:
                         stream_url = f"{parts[0]}://{creds_str}{parts[1]}"
 
-    # Prepare sources: primary RTSP with TCP transport and no backchannel audio hangs + ffmpeg copy fallback
+    # Prepare sources: primary RTSP with TCP transport, HTTP tunneling fallback for Dahua/tunneling, and ffmpeg copy fallback
     sources = []
     if stream_url.startswith("rtsp://") or stream_url.startswith("rtsps://"):
-        main_src = stream_url if "#" in stream_url else f"{stream_url}#transport=tcp#backchannel=0"
-        sources = [main_src, f"ffmpeg:{stream_url}#video=copy"]
+        is_http_transport = False
+        if res and res.get("streams"):
+            for s in res["streams"]:
+                if s.get("url") == stream_url and s.get("transport") == "http":
+                    is_http_transport = True
+                    break
+        main_tcp = stream_url if "#" in stream_url else f"{stream_url}#transport=tcp#backchannel=0"
+        ff_http = f"ffmpeg:{stream_url}#input=rtsp_http#video=copy"
+        ff_copy = f"ffmpeg:{stream_url}#video=copy"
+        if is_http_transport:
+            sources = [ff_http, main_tcp, ff_copy]
+        else:
+            sources = [main_tcp, ff_copy, ff_http]
     else:
         sources = [stream_url]
 
@@ -535,9 +546,10 @@ async def get_stream_preview(
             path = snap_path
             codec = "JPEG"
 
+    transport = ""
     if not ok:
         stream_type = selected.get("type") or ("rtmp" if stream_url.startswith("rtmp://") else ("hls" if ".m3u8" in stream_url else ("mjpeg" if "mjpg" in stream_url.lower() else "rtsp")))
-        ok, path, codec, w, h = await capture_stream_frame(
+        ok, path, codec, w, h, transport = await capture_stream_frame(
             stream_url=stream_url,
             stream_type=stream_type,
             capture_dir=_V2_CAPTURE_DIR,
@@ -562,6 +574,7 @@ async def get_stream_preview(
                         s["screenshot"] = path
                         s["codec"] = codec
                         s["resolution"] = f"{w}x{h}" if w and h else ""
+                        s["transport"] = transport or ("http" if snap_path else "tcp")
                         if creds and creds.get("user"):
                             s["credentials"] = creds
                 storage.save_v2_result(res)

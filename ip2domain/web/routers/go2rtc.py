@@ -196,6 +196,14 @@ async def add_go2rtc_stream(req: Request):
                 expanded_urls.append(clean_ff)
             continue
 
+        # Check if stream has recorded transport == 'http' in scanner_v2
+        is_http_transport = False
+        if v2_res and v2_res.get("streams"):
+            for s in v2_res["streams"]:
+                if s.get("url") == raw_target and s.get("transport") == "http":
+                    is_http_transport = True
+                    break
+
         if parsed.scheme in ("rtsp", "rtsps"):
             # Ensure TCP transport and no backchannel by default to prevent UDP drops / audio handshake hangs
             tcp_url = raw_target
@@ -204,20 +212,31 @@ async def add_go2rtc_stream(req: Request):
             elif "transport=" not in tcp_url:
                 tcp_url = f"{tcp_url}#transport=tcp"
 
-            if tcp_url not in expanded_urls:
-                expanded_urls.append(tcp_url)
-
             # ffmpeg copy fallback for cameras with non-standard RTSP interleaved packets
             ff_fallback = f"ffmpeg:{raw_target}#video=copy"
-            if ff_fallback not in expanded_urls:
-                expanded_urls.append(ff_fallback)
+            # RTSP-over-HTTP fallback for Dahua and cameras with RTSP HTTP tunneling (bypasses 401 on TCP)
+            ff_http_fallback = f"ffmpeg:{raw_target}#input=rtsp_http#video=copy"
+
+            if is_http_transport:
+                for cand in (ff_http_fallback, tcp_url, ff_fallback):
+                    if cand not in expanded_urls:
+                        expanded_urls.append(cand)
+            else:
+                for cand in (tcp_url, ff_fallback, ff_http_fallback):
+                    if cand not in expanded_urls:
+                        expanded_urls.append(cand)
 
             # If no credentials exist in URL, add common camera defaults as fallbacks
             if not parsed.username:
                 host_port = parsed.netloc.split("@")[-1]
                 admin_blank = urllib.parse.urlunsplit((parsed.scheme, f"admin:@{host_port}", parsed.path, parsed.query, parsed.fragment))
                 admin_admin = urllib.parse.urlunsplit((parsed.scheme, f"admin:admin@{host_port}", parsed.path, parsed.query, parsed.fragment))
-                for extra in (f"{admin_blank}#transport=tcp#backchannel=0", f"{admin_admin}#transport=tcp#backchannel=0"):
+                for extra in (
+                    f"{admin_blank}#transport=tcp#backchannel=0",
+                    f"{admin_admin}#transport=tcp#backchannel=0",
+                    f"ffmpeg:{admin_blank}#input=rtsp_http#video=copy",
+                    f"ffmpeg:{admin_admin}#input=rtsp_http#video=copy",
+                ):
                     if extra not in expanded_urls:
                         expanded_urls.append(extra)
         else:

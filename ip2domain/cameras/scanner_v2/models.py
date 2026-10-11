@@ -21,6 +21,7 @@ class StreamInfo:
     verification_status: str = "pending"  # pending | verified | failed | unsupported
     source_port: int = 0
     credentials: Optional[Dict[str, str]] = None
+    transport: str = ""              # tcp | http | udp
 
     @classmethod
     def from_dict(cls, data):
@@ -46,6 +47,7 @@ class StreamInfo:
             "source_port": self.source_port,
             "credentials": self.credentials,
             "auth_required": self.auth_required,
+            "transport": self.transport,
         }
 
 

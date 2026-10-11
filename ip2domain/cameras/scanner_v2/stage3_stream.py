@@ -90,14 +90,14 @@ async def capture_stream_frame(
     stream_type: str,
     capture_dir: Path,
     credentials: Optional[dict] = None,
-) -> Tuple[bool, str, str, int, int]:
+) -> Tuple[bool, str, str, int, int, str]:
     """Capture a single frame from the given stream URL using ffmpeg.
 
-    For RTSP streams, tries TCP transport first, then automatically falls back to UDP transport.
-    Returns: (success, screenshot_path, codec, width, height)
+    For RTSP streams, tries TCP transport first, then HTTP tunneling, then UDP transport.
+    Returns: (success, screenshot_path, codec, width, height, transport)
     """
     if not shutil.which("ffmpeg"):
-        return False, "", "", 0, 0
+        return False, "", "", 0, 0, ""
 
     capture_dir.mkdir(parents=True, exist_ok=True)
     final_path = _capture_path(capture_dir, stream_url)
@@ -112,8 +112,8 @@ async def capture_stream_frame(
                     w, h = frame.size
             except Exception:
                 pass
-            return True, str(local_path), "JPEG", w, h
-        return False, "", "", 0, 0
+            return True, str(local_path), "JPEG", w, h, "http"
+        return False, "", "", 0, 0, ""
 
     input_url = _format_input_url(stream_url, credentials)
     stype_key = stream_type if stream_type in _FFMPEG_ARGS else "default"
@@ -122,6 +122,12 @@ async def capture_stream_frame(
     attempts = [stype_key]
     if stream_type in ("rtsp", "rtsps"):
         attempts = ["rtsp", "rtsp_http", "rtsp_udp"]
+
+    attempt_transport_map = {
+        "rtsp": "tcp",
+        "rtsp_http": "http",
+        "rtsp_udp": "udp",
+    }
 
     for attempt_key in attempts:
         # Unique output prevents old frames and concurrent requests from
@@ -162,7 +168,8 @@ async def capture_stream_frame(
                     with Image.open(out_path) as frame:
                         width, height = frame.size
                 out_path.replace(final_path)
-                return True, str(final_path), codec, width, height
+                transport = attempt_transport_map.get(attempt_key, "tcp")
+                return True, str(final_path), codec, width, height, transport
 
         except asyncio.TimeoutError:
             logger.debug("[v2 Stage3] Frame capture timed out (%s)", attempt_key)
@@ -179,7 +186,7 @@ async def capture_stream_frame(
                 await proc.communicate()
             out_path.unlink(missing_ok=True)
 
-    return False, "", "", 0, 0
+    return False, "", "", 0, 0, ""
 
 
 def _build_safe_snapshot_url(raw_url: str) -> Optional[str]:
@@ -313,6 +320,7 @@ async def verify_single_stream(
     stream.verified = False
     stream.screenshot_path = ""
     stream.codec, stream.width, stream.height, stream.resolution = "", 0, 0, ""
+    stream.transport = ""
     stream.verification_status = "failed"
     try:
         if stream.stream_type == "http_snapshot":
@@ -320,6 +328,7 @@ async def verify_single_stream(
             if path:
                 stream.screenshot_path = path
                 stream.verified = True
+                stream.transport = "http"
                 try:
                     from PIL import Image
                     with Image.open(path) as frame:
@@ -329,7 +338,7 @@ async def verify_single_stream(
                 except OSError:
                     pass
         elif stream.stream_type in {"rtsp", "rtsps", "rtmp", "hls", "mjpeg", "udp_rtp"}:
-            ok, path, codec, w, h = await capture_stream_frame(
+            ok, path, codec, w, h, transport = await capture_stream_frame(
                 stream.url, "rtsp" if stream.stream_type == "rtsps" else stream.stream_type,
                 capture_dir, credentials,
             )
@@ -338,6 +347,7 @@ async def verify_single_stream(
                 stream.screenshot_path = path
                 stream.codec, stream.width, stream.height = codec, w, h
                 stream.resolution = f"{w}x{h}" if w and h else ""
+                stream.transport = transport
         else:
             stream.verification_status = "unsupported"
 

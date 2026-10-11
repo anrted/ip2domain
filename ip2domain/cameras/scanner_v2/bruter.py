@@ -477,7 +477,7 @@ class RtspBruteManager:
                     test_urls.append(cand_url)
 
             for url in test_urls[:8]:
-                ok, path, codec, w, h = await capture_stream_frame(
+                ok, path, codec, w, h, transport = await capture_stream_frame(
                     stream_url=url,
                     stream_type="rtsp",
                     capture_dir=capture_dir,
@@ -493,6 +493,7 @@ class RtspBruteManager:
                             s["screenshot"] = path
                             s["codec"] = codec
                             s["resolution"] = f"{w}x{h}" if w and h else ""
+                            s["transport"] = transport
                             matched = True
                     if not matched:
                         streams.insert(0, {
@@ -502,6 +503,7 @@ class RtspBruteManager:
                             "screenshot": path,
                             "codec": codec,
                             "resolution": f"{w}x{h}" if w and h else "",
+                            "transport": transport,
                         })
                     cam["streams"] = streams
                     cam["auth_required"] = False

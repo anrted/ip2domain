@@ -2121,17 +2121,25 @@ async function v2OpenStreamPlayer(srcUrl, camName, ip, currentIdx = 0) {
             }
         }
 
+        const curStream = (cam?.streams || [])[currentIdx] || (cam?.streams || []).find(s => s.url === actualSrcUrl || s.url === srcUrl);
+        const isHttpTransport = curStream?.transport === 'http';
+
         const mainUrl = (actualSrcUrl.startsWith('rtsp://') || actualSrcUrl.startsWith('rtsps://'))
             ? (actualSrcUrl.includes('#') ? actualSrcUrl : `${actualSrcUrl}#transport=tcp#backchannel=0`)
             : actualSrcUrl;
         const ffUrl = `ffmpeg:${actualSrcUrl}#video=copy`;
+        const ffHttpUrl = `ffmpeg:${actualSrcUrl}#input=rtsp_http#video=copy`;
+
+        const streamCandidates = (actualSrcUrl.startsWith('rtsp://') || actualSrcUrl.startsWith('rtsps://'))
+            ? (isHttpTransport ? [ffHttpUrl, mainUrl, ffUrl] : [mainUrl, ffUrl, ffHttpUrl])
+            : [actualSrcUrl];
 
         const regResp = await fetch("/api/go2rtc/streams", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 name: tempName,
-                url: [mainUrl, ffUrl]
+                url: streamCandidates
             })
         });
 
