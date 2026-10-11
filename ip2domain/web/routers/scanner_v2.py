@@ -250,22 +250,40 @@ async def get_results(
         search=search,
     )
     results = [_sanitize_v2_result(r) for r in results]
-    total_matching = storage.get_v2_results_count(
-        brand=brand,
-        protocol=protocol,
-        has_preview=has_preview,
-        verified_only=verified_only,
-        auth_status=auth_status,
-        category=category,
-        geo=geo,
-        search=search,
-    )
+
     stats = storage.get_v2_stats()
+    total_db = stats.get("total", 0)
+
+    has_filters = bool(
+        (brand and brand != "all")
+        or (protocol and protocol != "all")
+        or has_preview
+        or verified_only
+        or (auth_status and auth_status != "all")
+        or (category and category != "all")
+        or (geo and geo != "all")
+        or (search and search.strip())
+    )
+
+    if not has_filters:
+        total_matching = total_db
+    else:
+        total_matching = storage.get_v2_results_count(
+            brand=brand,
+            protocol=protocol,
+            has_preview=has_preview,
+            verified_only=verified_only,
+            auth_status=auth_status,
+            category=category,
+            geo=geo,
+            search=search,
+        )
+
     return JSONResponse(content={
         "results": results,
         "total": len(results),
         "total_matching": total_matching,
-        "total_db": stats.get("total", total_matching),
+        "total_db": total_db,
         "stats": stats,
         "limit": limit,
         "offset": offset,

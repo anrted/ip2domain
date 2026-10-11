@@ -909,53 +909,105 @@ function v2UpdateGeoDropdown() {
     if (!select) return;
 
     const curVal = window.V2State.filterGeo || 'all';
-    const citiesMap = new Map();
-    const regionsMap = new Map();
-    let ruCount = 0, byCount = 0, noGeoCount = 0;
+    const stats = window.V2State.stats || {};
 
-    (window.V2State.results || []).forEach(cam => {
-        if (cam.city) {
-            citiesMap.set(cam.city, (citiesMap.get(cam.city) || 0) + 1);
-        }
-        if (cam.region) {
-            regionsMap.set(cam.region, (regionsMap.get(cam.region) || 0) + 1);
-        }
-        const cc = (cam.country_code || '').toUpperCase();
-        if (cc === 'RU') ruCount++;
-        else if (cc === 'BY') byCount++;
+    // Check if we have global database geo stats
+    const hasGlobalStats = stats.by_city && Object.keys(stats.by_city).length > 0;
 
-        if (!cam.city && !cam.region) noGeoCount++;
-    });
+    // If options already populated from global stats and have options, just keep value selected
+    if (select.dataset.hasGlobal === 'true' && !window.V2State._geoDropdownNeedsRefresh) {
+        if (select.value !== curVal) select.value = curVal;
+        return;
+    }
 
     let html = '<option value="all">Все регионы и города</option>';
 
-    if (ruCount > 0 || byCount > 0) {
-        html += '<optgroup label="Страны">';
-        if (ruCount > 0) html += `<option value="country:RU">🇷🇺 Россия (${ruCount})</option>`;
-        if (byCount > 0) html += `<option value="country:BY">🇧🇾 Беларусь (${byCount})</option>`;
-        html += '</optgroup>';
-    }
+    if (hasGlobalStats) {
+        select.dataset.hasGlobal = 'true';
+        window.V2State._geoDropdownNeedsRefresh = false;
 
-    if (citiesMap.size > 0) {
-        html += '<optgroup label="Города">';
-        const sortedCities = Array.from(citiesMap.entries()).sort((a, b) => b[1] - a[1]);
-        sortedCities.forEach(([city, count]) => {
-            html += `<option value="city:${_esc(city)}">📍 ${_esc(city)} (${count})</option>`;
+        const byCountry = stats.by_country || {};
+        const countryEntries = Object.entries(byCountry);
+        if (countryEntries.length > 0) {
+            html += '<optgroup label="Страны">';
+            countryEntries.forEach(([code, count]) => {
+                let name = code;
+                if (code === 'RU') name = '🇷🇺 Россия';
+                else if (code === 'BY') name = '🇧🇾 Беларусь';
+                else if (code === 'TR') name = '🇹🇷 Турция';
+                else if (code === 'US') name = '🇺🇸 США';
+                else if (code === 'DE') name = '🇩🇪 Германия';
+                else if (code === 'GB') name = '🇬🇧 Великобритания';
+                else if (code === 'CN') name = '🇨🇳 Китай';
+                else if (code === 'KZ') name = '🇰🇿 Казахстан';
+                html += `<option value="country:${_esc(code)}">${name} (${count})</option>`;
+            });
+            html += '</optgroup>';
+        }
+
+        const byCity = stats.by_city || {};
+        const cityEntries = Object.entries(byCity);
+        if (cityEntries.length > 0) {
+            html += '<optgroup label="Города">';
+            cityEntries.forEach(([city, count]) => {
+                html += `<option value="city:${_esc(city)}">📍 ${_esc(city)} (${count})</option>`;
+            });
+            html += '</optgroup>';
+        }
+
+        const byRegion = stats.by_region || {};
+        const regionEntries = Object.entries(byRegion);
+        if (regionEntries.length > 0) {
+            html += '<optgroup label="Регионы / Области">';
+            regionEntries.forEach(([region, count]) => {
+                html += `<option value="region:${_esc(region)}">🗺️ ${_esc(region)} (${count})</option>`;
+            });
+            html += '</optgroup>';
+        }
+
+        const totalDb = stats.total || 0;
+        const totalWithGeo = Object.values(byCountry).reduce((a, b) => a + b, 0);
+        const noGeo = Math.max(0, totalDb - totalWithGeo);
+        if (noGeo > 0) {
+            html += `<optgroup label="Другое"><option value="__no_geo__">Без гео-привязки (${noGeo})</option></optgroup>`;
+        }
+    } else {
+        const citiesMap = new Map();
+        const regionsMap = new Map();
+        let ruCount = 0, byCount = 0, noGeoCount = 0;
+
+        (window.V2State.results || []).forEach(cam => {
+            if (cam.city) citiesMap.set(cam.city, (citiesMap.get(cam.city) || 0) + 1);
+            if (cam.region) regionsMap.set(cam.region, (regionsMap.get(cam.region) || 0) + 1);
+            const cc = (cam.country_code || '').toUpperCase();
+            if (cc === 'RU') ruCount++;
+            else if (cc === 'BY') byCount++;
+            if (!cam.city && !cam.region) noGeoCount++;
         });
-        html += '</optgroup>';
-    }
 
-    if (regionsMap.size > 0) {
-        html += '<optgroup label="Регионы / Области">';
-        const sortedRegions = Array.from(regionsMap.entries()).sort((a, b) => b[1] - a[1]);
-        sortedRegions.forEach(([region, count]) => {
-            html += `<option value="region:${_esc(region)}">🗺️ ${_esc(region)} (${count})</option>`;
-        });
-        html += '</optgroup>';
-    }
-
-    if (noGeoCount > 0) {
-        html += `<optgroup label="Другое"><option value="__no_geo__">Без гео-привязки (${noGeoCount})</option></optgroup>`;
+        if (ruCount > 0 || byCount > 0) {
+            html += '<optgroup label="Страны">';
+            if (ruCount > 0) html += `<option value="country:RU">🇷🇺 Россия (${ruCount})</option>`;
+            if (byCount > 0) html += `<option value="country:BY">🇧🇾 Беларусь (${byCount})</option>`;
+            html += '</optgroup>';
+        }
+        if (citiesMap.size > 0) {
+            html += '<optgroup label="Города">';
+            Array.from(citiesMap.entries()).sort((a, b) => b[1] - a[1]).forEach(([city, count]) => {
+                html += `<option value="city:${_esc(city)}">📍 ${_esc(city)} (${count})</option>`;
+            });
+            html += '</optgroup>';
+        }
+        if (regionsMap.size > 0) {
+            html += '<optgroup label="Регионы / Области">';
+            Array.from(regionsMap.entries()).sort((a, b) => b[1] - a[1]).forEach(([region, count]) => {
+                html += `<option value="region:${_esc(region)}">🗺️ ${_esc(region)} (${count})</option>`;
+            });
+            html += '</optgroup>';
+        }
+        if (noGeoCount > 0) {
+            html += `<optgroup label="Другое"><option value="__no_geo__">Без гео-привязки (${noGeoCount})</option></optgroup>`;
+        }
     }
 
     select.innerHTML = html;

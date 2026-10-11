@@ -264,16 +264,16 @@ class ScannerV2StorageMixin:
                 where += " AND (result_json NOT LIKE '%\"city\"%' OR result_json LIKE '%\"city\": \"\"%')"
             elif geo.startswith("country:"):
                 code = geo.replace("country:", "").upper()
-                where += " AND result_json LIKE ?"
-                params.append(f'%"country_code": "{code}"%')
+                where += " AND json_extract(result_json, '$.country_code') = ?"
+                params.append(code)
             elif geo.startswith("region:"):
                 reg = geo.replace("region:", "")
-                where += " AND result_json LIKE ?"
-                params.append(f'%"region": "{reg}"%')
+                where += " AND json_extract(result_json, '$.region') = ?"
+                params.append(reg)
             elif geo.startswith("city:"):
                 cit = geo.replace("city:", "")
-                where += " AND result_json LIKE ?"
-                params.append(f'%"city": "{cit}"%')
+                where += " AND json_extract(result_json, '$.city') = ?"
+                params.append(cit)
         if search:
             s = search.strip()
             where += " AND (ip LIKE ? OR brand LIKE ? OR model LIKE ? OR result_json LIKE ?)"
@@ -314,12 +314,12 @@ class ScannerV2StorageMixin:
                     query += " OFFSET ?"
                     params.append(offset)
 
+            from ip2domain.data.geo_city_db import normalize_geo
             rows = conn.execute(query, params).fetchall()
             results = []
             for row in rows:
                 try:
                     r = json.loads(row["result_json"])
-                    from ip2domain.data.geo_city_db import normalize_geo
                     clean_geo = normalize_geo(r)
                     r.update(city=clean_geo["city"], region=clean_geo["region"])
                     r.setdefault("geo_precision", clean_geo["precision"])
@@ -401,10 +401,10 @@ class ScannerV2StorageMixin:
             )
 
     def get_v2_stats(self) -> Dict:
-        """Return protocol, brand, and category statistics for v2 results with short TTL cache."""
+        """Return protocol, brand, category and global geo statistics for v2 results with TTL cache."""
         now = time.time()
         cached = getattr(self, "_v2_stats_cache", None)
-        if cached and (now - cached.get("ts", 0) < 30):
+        if cached and (now - cached.get("ts", 0) < 120):
             return cached["data"]
 
         with self._get_connection() as conn:
@@ -422,7 +422,38 @@ class ScannerV2StorageMixin:
                 cat = row["device_category"] or "camera"
                 by_category[cat] = row["cnt"]
 
-            data = {"total": total, "by_brand": by_brand, "by_category": by_category}
+            by_country = {}
+            for row in conn.execute(
+                "SELECT json_extract(result_json, '$.country_code') as cc, COUNT(*) as cnt "
+                "FROM v2_results WHERE is_garbage=0 AND json_extract(result_json, '$.country_code') IS NOT NULL "
+                "AND json_extract(result_json, '$.country_code') != '' GROUP BY cc ORDER BY cnt DESC LIMIT 30"
+            ).fetchall():
+                by_country[row["cc"]] = row["cnt"]
+
+            by_city = {}
+            for row in conn.execute(
+                "SELECT json_extract(result_json, '$.city') as c, COUNT(*) as cnt "
+                "FROM v2_results WHERE is_garbage=0 AND json_extract(result_json, '$.city') IS NOT NULL "
+                "AND json_extract(result_json, '$.city') != '' GROUP BY c ORDER BY cnt DESC LIMIT 200"
+            ).fetchall():
+                by_city[row["c"]] = row["cnt"]
+
+            by_region = {}
+            for row in conn.execute(
+                "SELECT json_extract(result_json, '$.region') as r, COUNT(*) as cnt "
+                "FROM v2_results WHERE is_garbage=0 AND json_extract(result_json, '$.region') IS NOT NULL "
+                "AND json_extract(result_json, '$.region') != '' GROUP BY r ORDER BY cnt DESC LIMIT 100"
+            ).fetchall():
+                by_region[row["r"]] = row["cnt"]
+
+            data = {
+                "total": total,
+                "by_brand": by_brand,
+                "by_category": by_category,
+                "by_country": by_country,
+                "by_city": by_city,
+                "by_region": by_region,
+            }
             self._v2_stats_cache = {"ts": now, "data": data}
             return data
 
