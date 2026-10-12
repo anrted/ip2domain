@@ -43,6 +43,15 @@ _FFMPEG_ARGS = {
         "-fflags", "nobuffer",
         "-flags", "low_delay",
     ],
+    "rtsp_http": [
+        "-rtsp_transport", "http",
+        "-stimeout", "5000000",
+        "-timeout", "5000000",
+        "-analyzeduration", "1000000",
+        "-probesize", "500000",
+        "-fflags", "nobuffer",
+        "-flags", "low_delay",
+    ],
     "hls": [
         "-protocol_whitelist", "http,https,tcp,tls,file,crypto",
         "-timeout", "5000000",
@@ -121,13 +130,15 @@ async def capture_stream_frame(
     input_url = _format_input_url(stream_url, credentials)
     stype_key = stream_type if stream_type in _FFMPEG_ARGS else "default"
 
-    # For RTSP, try TCP first, then fall back to UDP (skip obsolete rtsp_http)
+    # For RTSP, try TCP first, then HTTP tunneling, then fall back to UDP
+    # (Some cameras only accept rtsp_http or have different auth policies on HTTP tunnel)
     attempts = [stype_key]
     if stream_type in ("rtsp", "rtsps"):
-        attempts = ["rtsp", "rtsp_udp"]
+        attempts = ["rtsp", "rtsp_http", "rtsp_udp"]
 
     attempt_transport_map = {
         "rtsp": "tcp",
+        "rtsp_http": "http",
         "rtsp_udp": "udp",
     }
 
@@ -173,20 +184,10 @@ async def capture_stream_frame(
                 transport = attempt_transport_map.get(attempt_key, "tcp")
                 return True, str(final_path), codec, width, height, transport
 
-            # Fail-fast on fatal RTSP errors (401, 404, 403, connection refused)
-            # Retrying UDP on a path that returned 401 Unauthorized or 404 Not Found is pointless
+            # If the path definitely does not exist (404), trying other transports on the exact same path is pointless
             if proc.returncode != 0:
                 err_lower = stderr_text.lower()
-                is_fatal = (
-                    "401 unauthorized" in err_lower
-                    or "404 not found" in err_lower
-                    or "404 stream not found" in err_lower
-                    or "403 forbidden" in err_lower
-                    or "connection refused" in err_lower
-                    or "method not allowed" in err_lower
-                    or "authentication error" in err_lower
-                )
-                if is_fatal:
+                if "404 not found" in err_lower or "404 stream not found" in err_lower:
                     break
 
         except asyncio.TimeoutError:
