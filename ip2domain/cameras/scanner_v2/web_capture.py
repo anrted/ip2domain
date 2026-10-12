@@ -78,7 +78,7 @@ async def capture_web_screenshot(
     model: str = "",
     title: str = "",
     category: str = "router",
-    timeout: float = 8.0,
+    timeout: float = 5.0,
 ) -> Optional[str]:
     """Capture a screenshot of a web panel via wkhtmltoimage or generate a visual card."""
     if not capture_dir:
@@ -104,7 +104,9 @@ async def capture_web_screenshot(
             "--height", "640",
             "--load-error-handling", "ignore",
             "--load-media-error-handling", "ignore",
-            "--javascript-delay", "1200",
+            "--disable-plugins",
+            "--no-stop-slow-scripts",
+            "--javascript-delay", "400",
             target_url,
             str(out_file),
         ]

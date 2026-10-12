@@ -22,32 +22,35 @@ from .models import CameraResult, StreamInfo
 logger = logging.getLogger(__name__)
 
 _FFMPEG = shutil.which("ffmpeg") or "ffmpeg"
-_FRAME_TIMEOUT = 14.0
+_FRAME_TIMEOUT = 8.0
 
-# ffmpeg flags by stream type (timeout in microseconds: 7,000,000 = 7s)
+# ffmpeg flags by stream type (timeout in microseconds: 5,000,000 = 5s)
 _FFMPEG_ARGS = {
     "rtsp": [
         "-rtsp_transport", "tcp",
-        "-timeout", "7000000",
-        "-analyzeduration", "2000000",
-        "-probesize", "1000000",
+        "-stimeout", "5000000",
+        "-timeout", "5000000",
+        "-analyzeduration", "1000000",
+        "-probesize", "500000",
+        "-fflags", "nobuffer",
+        "-flags", "low_delay",
     ],
     "rtsp_udp": [
         "-rtsp_transport", "udp",
-        "-timeout", "7000000",
-        "-analyzeduration", "2000000",
-    ],
-    "rtsp_http": [
-        "-rtsp_transport", "http",
-        "-timeout", "7000000",
-        "-analyzeduration", "2000000",
-        "-probesize", "1000000",
+        "-timeout", "5000000",
+        "-analyzeduration", "1000000",
+        "-probesize", "500000",
+        "-fflags", "nobuffer",
+        "-flags", "low_delay",
     ],
     "hls": [
         "-protocol_whitelist", "http,https,tcp,tls,file,crypto",
+        "-timeout", "5000000",
     ],
-    "mjpeg": [],
-    "rtmp": ["-rw_timeout", "7000000"],
+    "mjpeg": [
+        "-timeout", "5000000",
+    ],
+    "rtmp": ["-rw_timeout", "5000000"],
     "default": [],
 }
 
@@ -118,14 +121,13 @@ async def capture_stream_frame(
     input_url = _format_input_url(stream_url, credentials)
     stype_key = stream_type if stream_type in _FFMPEG_ARGS else "default"
 
-    # For RTSP, try TCP first, then HTTP, then fall back to UDP
+    # For RTSP, try TCP first, then fall back to UDP (skip obsolete rtsp_http)
     attempts = [stype_key]
     if stream_type in ("rtsp", "rtsps"):
-        attempts = ["rtsp", "rtsp_http", "rtsp_udp"]
+        attempts = ["rtsp", "rtsp_udp"]
 
     attempt_transport_map = {
         "rtsp": "tcp",
-        "rtsp_http": "http",
         "rtsp_udp": "udp",
     }
 
@@ -170,6 +172,22 @@ async def capture_stream_frame(
                 out_path.replace(final_path)
                 transport = attempt_transport_map.get(attempt_key, "tcp")
                 return True, str(final_path), codec, width, height, transport
+
+            # Fail-fast on fatal RTSP errors (401, 404, 403, connection refused)
+            # Retrying UDP on a path that returned 401 Unauthorized or 404 Not Found is pointless
+            if proc.returncode != 0:
+                err_lower = stderr_text.lower()
+                is_fatal = (
+                    "401 unauthorized" in err_lower
+                    or "404 not found" in err_lower
+                    or "404 stream not found" in err_lower
+                    or "403 forbidden" in err_lower
+                    or "connection refused" in err_lower
+                    or "method not allowed" in err_lower
+                    or "authentication error" in err_lower
+                )
+                if is_fatal:
+                    break
 
         except asyncio.TimeoutError:
             logger.debug("[v2 Stage3] Frame capture timed out (%s)", attempt_key)
@@ -253,7 +271,7 @@ async def _download_http_snapshot(
     password = credentials.get("password", "") if credentials else ""
 
     try:
-        async with httpx.AsyncClient(verify=False, timeout=4.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(verify=False, timeout=3.0, follow_redirects=True) as client:
             resp = None
             if user:
                 resp = await client.get(safe_url, auth=(user, password))
@@ -263,13 +281,17 @@ async def _download_http_snapshot(
                 resp = await client.get(safe_url)
 
             if resp.status_code == 401:
-                for cand_u, cand_p in [("admin", "admin"), ("admin", "12345"), ("admin", "123456"), ("root", "root"), ("admin", "")]:
+                is_digest = "digest" in resp.headers.get("www-authenticate", "").lower()
+                for cand_u, cand_p in [("admin", "admin"), ("admin", "12345"), ("admin", "123456"), ("root", "root")]:
                     if cand_u == user and cand_p == password:
                         continue
                     try:
-                        cand_resp = await client.get(safe_url, auth=(cand_u, cand_p))
-                        if cand_resp.status_code == 401:
+                        if is_digest:
                             cand_resp = await client.get(safe_url, auth=httpx.DigestAuth(cand_u, cand_p))
+                        else:
+                            cand_resp = await client.get(safe_url, auth=(cand_u, cand_p))
+                            if cand_resp.status_code == 401:
+                                cand_resp = await client.get(safe_url, auth=httpx.DigestAuth(cand_u, cand_p))
                         if cand_resp.status_code == 200 and len(cand_resp.content or b"") >= 2048:
                             resp = cand_resp
                             if credentials is not None:

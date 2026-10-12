@@ -213,12 +213,14 @@ async def _capture_job_streams(job, capture_dir, storage):
 
         await run_bounded(http_tasks, _do_http_snap, max(4, min(http_concurrency, 24)), job.is_cancelled)
 
-    # ── Pass 2: Bounded ffmpeg Video Stream Queue (3-4 workers) ────────
-    ffmpeg_concurrency = int(os.environ.get("IP2DOMAIN_V2_FFMPEG_CONCURRENCY", "4"))
+    # ── Pass 2: Bounded ffmpeg Video Stream Queue (4-8 workers) ────────
+    ffmpeg_concurrency = int(os.environ.get("IP2DOMAIN_V2_FFMPEG_CONCURRENCY", "6"))
     video_tasks = []
     for cam in job.results:
         for s in cam.streams:
             if s.stream_type in {"rtsp", "rtsps", "rtmp", "hls", "mjpeg", "udp_rtp"} and s.url:
+                if s.verified and s.screenshot_path and Path(s.screenshot_path).exists():
+                    continue
                 video_tasks.append((cam, s))
 
     if video_tasks and not job.is_cancelled():
@@ -238,7 +240,7 @@ async def _capture_job_streams(job, capture_dir, storage):
             if ok and storage:
                 storage.save_v2_result(cam.to_dict())
 
-        await run_bounded(video_tasks, _do_video_frame, max(2, min(ffmpeg_concurrency, 6)), job.is_cancelled)
+        await run_bounded(video_tasks, _do_video_frame, max(2, min(ffmpeg_concurrency, 8)), job.is_cancelled)
 
     # ── Pass 3: Web Panels and Dashboards (Routers, Gateways, Web Servers) ──
     web_candidates = []
@@ -252,6 +254,8 @@ async def _capture_job_streams(job, capture_dir, storage):
             )
         )
         if should_capture_web:
+            if cam.web_screenshot and (Path(capture_dir) / Path(cam.web_screenshot).name).exists():
+                continue
             web_candidates.append((cam, web_port))
 
     if web_candidates and not job.is_cancelled():
