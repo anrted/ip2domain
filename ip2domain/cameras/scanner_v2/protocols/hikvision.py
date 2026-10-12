@@ -108,9 +108,9 @@ async def probe_hikvision(
                 except Exception:
                     pass
 
-                # Fallback: standard channels 101, 102, 201, 202, etc.
+                # Fallback: standard channels 101, 102, 201, 202, up to 3201
                 if not rtsp_urls:
-                    for ch in range(1, 9):
+                    for ch in range(1, 33):
                         rtsp_urls.append(f"rtsp://{ip}:554/Streaming/Channels/{ch}01")
                         rtsp_urls.append(f"rtsp://{ip}:554/Streaming/Channels/{ch}02")
 

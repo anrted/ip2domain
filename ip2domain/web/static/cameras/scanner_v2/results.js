@@ -224,6 +224,17 @@ window._isServerDevice = _isServerDevice;
 
 function _isCameraDevice(c) {
     if (!c || _isSpRecord(c)) return false;
+
+    // Explicit non-camera check if not also tagged camera
+    const isExplicitNonCam = ['generic_web', 'router', 'server', 'iot', 'industrial', 'device'].includes(c.device_category);
+    const hasVideoStream = (c.streams || []).some(s => 
+        (s.type !== 'web_panel' && s.stream_type !== 'web_panel') &&
+        (s.verified || ['rtsp', 'rtsps', 'mjpeg', 'hls', 'webrtc'].includes(s.type || s.stream_type) || (s.screenshot && String(s.screenshot).trim().length > 0))
+    );
+    if (isExplicitNonCam && !hasVideoStream && !_hasCategory(c, 'camera') && !_hasCategory(c, 'intercom')) {
+        return false;
+    }
+
     if (_hasCategory(c, 'camera')) return true;
     if (_hasCategory(c, 'intercom')) return true;
 
@@ -235,17 +246,14 @@ function _isCameraDevice(c) {
     const protos = c.protocols || [];
     if (_V2_CAMERA_PROTOCOLS.some(p => protos.includes(p))) return true;
 
-    // Verified stream or real screenshot
-    if ((c.streams || []).some(s => s.verified || (s.screenshot && String(s.screenshot).trim().length > 0))) return true;
-
-    // Has RTSP or video stream
-    if ((c.streams || []).some(s => s.type === 'rtsp' || s.type === 'rtsps' || s.type === 'mjpeg')) return true;
+    // Has video stream
+    if (hasVideoStream) return true;
 
     // If pure non-camera without video
-    if (c.device_category === 'router' || c.device_category === 'generic_web' || c.device_category === 'device' || c.device_category === 'iot' || c.device_category === 'server') return false;
+    if (isExplicitNonCam) return false;
 
     // Has video streams and is not generic web
-    if ((c.streams || []).length > 0 && !brand.includes('generic web device')) return true;
+    if ((c.streams || []).some(s => s.type !== 'web_panel' && s.stream_type !== 'web_panel') && !brand.includes('generic web device') && !brand.includes('web service')) return true;
 
     return false;
 }
@@ -634,7 +642,14 @@ function v2RenderCameraCard(cam) {
     // A frame belongs to exactly one URL, including its port and channel.
     const previewKey = JSON.stringify([cam.ip, currentStreamUrl]);
     const cachedBlobUrl = window.V2State.previewCache[previewKey] || '';
-    const screenshotPath = cam.web_screenshot || currentStreamObj?.screenshot || cachedBlobUrl;
+    let screenshotPath = '';
+    if (currentStreamObj?.screenshot) {
+        screenshotPath = currentStreamObj.screenshot;
+    } else if (cachedBlobUrl) {
+        screenshotPath = cachedBlobUrl;
+    } else if (cam.web_screenshot) {
+        screenshotPath = cam.web_screenshot;
+    }
 
     // Preview area HTML
     let previewHtml = '';
@@ -894,6 +909,28 @@ function v2RenderCameraCard(cam) {
         `;
     }
 
+    // Multi-device / multi-service presentation
+    let multiDeviceHtml = '';
+    const hasMultipleEndpoints = Array.isArray(cam.endpoints) && cam.endpoints.length > 1;
+    if (hasMultipleEndpoints) {
+        const epChips = cam.endpoints.map(e => {
+            const p = e.port || '';
+            const b = e.brand || '';
+            const cat = e.device_category || (e.protocols?.includes('rtsp') ? 'камера' : 'веб');
+            const isCur = (endpoint && endpoint.port === e.port) || (currentStreamObj?.source_port === e.port);
+            const chipStyle = isCur
+                ? 'background:rgba(99,102,241,0.35);border:1px solid #818cf8;color:#e0e7ff;font-weight:600'
+                : 'background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);color:#94a3b8';
+            return `<span class="v2-endpoint-chip" style="display:inline-flex;align-items:center;gap:3px;font-size:0.7rem;padding:2px 7px;border-radius:4px;cursor:pointer;${chipStyle}" onclick="v2SelectEndpointPort('${_esc(cam.ip)}', ${p})" title="Переключить на порт ${p}: ${b} (${cat})">
+                <strong style="color:${isCur ? '#a5b4fc' : '#cbd5e1'}">:${p}</strong> ${b ? b + ' ' : ''}<span style="opacity:0.75">(${cat})</span>
+            </span>`;
+        }).join('');
+        multiDeviceHtml = `<div class="v2-endpoints-bar" style="margin:5px 0 7px 0;display:flex;flex-wrap:wrap;gap:4px;align-items:center">
+            <span style="font-size:0.7rem;color:#64748b;font-weight:600">Сервисы на IP:</span>
+            ${epChips}
+        </div>`;
+    }
+
     return `<div class="v2-camera-card" id="v2-cam-${safeIp}">
         ${previewHtml}
         <div style="position:absolute;top:8px;left:8px;display:flex;gap:5px;z-index:3">
@@ -902,11 +939,15 @@ function v2RenderCameraCard(cam) {
         </div>
         <div class="v2-camera-body">
             <div class="v2-camera-brand">${_esc(displayBrand)}</div>
-            <div class="v2-camera-ip">${_esc(cam.ip)}${endpoint?.port ? ':' + endpoint.port : (cam.rtsp_port ? ':' + cam.rtsp_port : '')}${credsBadge}</div>
+            <div class="v2-camera-ip">
+                ${_esc(cam.ip)}${endpoint?.port ? ':' + endpoint.port : (cam.rtsp_port ? ':' + cam.rtsp_port : '')}${credsBadge}
+                ${hasMultipleEndpoints ? `<span style="font-size:0.68rem;background:rgba(99,102,241,0.2);color:#a5b4fc;border:1px solid rgba(99,102,241,0.35);padding:1px 5px;border-radius:3px;margin-left:5px" title="На данном IP обнаружено несколько независимых сервисов">⚡ ${cam.endpoints.length} сервиса</span>` : ''}
+            </div>
+            ${multiDeviceHtml}
             ${cam.domain ? `<div style="font-size:0.75rem;color:#38bdf8;font-weight:600;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${_esc(cam.domain)}">🌐 ${_esc(cam.domain)}</div>` : ''}
             ${locationHtml}
             <div class="v2-camera-model">${_esc(displayModel)}</div>
-            ${endpointPorts.length > 1 ? `<div class="v2-camera-model">Порты: ${endpointPorts.join(', ')}</div>` : ''}
+            ${endpointPorts.length > 1 && !hasMultipleEndpoints ? `<div class="v2-camera-model">Порты: ${endpointPorts.join(', ')}</div>` : ''}
             <div class="v2-proto-badges">${badges}</div>
             ${streamSelectorHtml}
             ${actionsHtml}
@@ -974,6 +1015,20 @@ function v2OnStreamChange(ip, streamUrl) {
     }
 }
 window.v2OnStreamChange = v2OnStreamChange;
+
+function v2SelectEndpointPort(ip, port) {
+    const cam = (window.V2State.results || []).find(c => c.ip === ip);
+    if (!cam) return;
+    const matchingStream = (cam.streams || []).find(s => s.source_port === port);
+    if (matchingStream) {
+        v2OnStreamChange(ip, matchingStream.url);
+    } else {
+        const isHttps = [443, 8443, 9443, 10443].includes(port);
+        const url = `${isHttps ? 'https' : 'http'}://${cam.domain || ip}:${port}/`;
+        v2OnStreamChange(ip, url);
+    }
+}
+window.v2SelectEndpointPort = v2SelectEndpointPort;
 
 async function v2CapturePreview(ip, event) {
     if (event) event.stopPropagation();

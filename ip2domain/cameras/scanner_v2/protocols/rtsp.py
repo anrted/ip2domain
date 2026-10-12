@@ -497,7 +497,7 @@ async def probe_rtsp_direct(
     }
 
     ports_to_try = (rtsp_ports or [554])[:3]  # cap: probe at most 3 RTSP ports
-    _probe_deadline = asyncio.get_event_loop().time() + 15.0  # hard 15s cap on entire probe
+    _probe_deadline = asyncio.get_event_loop().time() + 30.0  # 30s cap on probe to support multi-channel NVRs
 
     for port in ports_to_try:
         reader = None
@@ -595,10 +595,10 @@ async def probe_rtsp_direct(
             elif result["brand"] == "Generic DVR":
                 probe_paths = _ANTS_PATHS + [p for p in db_brand_paths if p not in _ANTS_PATHS]
             elif db_brand_paths:
-                probe_paths = db_brand_paths[:60]
+                probe_paths = db_brand_paths[:128]
             else:
                 top_db = _get_compiled_db().get("top_rtsp", [])
-                base_probe = (top_db[:60] if top_db else []) or _GENERIC_PATHS[:60]
+                base_probe = (top_db[:128] if top_db else []) or _GENERIC_PATHS[:128]
                 priority_paths = [
                     "/av0_0",
                     "/av0_1",
@@ -622,10 +622,11 @@ async def probe_rtsp_direct(
                 p for p in probe_paths
                 if not re.search(r"\.(html?|png|jpe?g|gif|css|js|asp|txt|xml|ico)($|\?)", p, re.IGNORECASE)
             ]
-            probe_paths = probe_paths[:20]  # cap: at most 20 prioritized paths per port
+            probe_paths = probe_paths[:128]  # probe up to 128 paths to fully cover multi-channel NVRs
 
             found_urls: List[str] = []
             failed_auth_paths = 0
+            consecutive_drops = 0
             cseq = 4
             cached_working_cred: Optional[Tuple[str, str]] = None
             cached_auth_hdr_challenge: str = opts if ("401" in opts or "WWW-Authenticate" in opts) else ""
@@ -703,7 +704,8 @@ async def probe_rtsp_direct(
                             break
 
                     if authed:
-                        if len(found_urls) >= 4:
+                        consecutive_drops = 0
+                        if len(found_urls) >= 128:
                             break
                         continue
                     else:
@@ -716,6 +718,9 @@ async def probe_rtsp_direct(
 
                 # Reconnect on dropped socket
                 if not desc:
+                    consecutive_drops += 1
+                    if consecutive_drops >= 3:
+                        break
                     try:
                         w.close()
                         await w.wait_closed()
@@ -724,9 +729,17 @@ async def probe_rtsp_direct(
                     writer = None
                     r, w = await ensure_conn()
                     if not r or not w:
-                        continue
+                        break
                     desc = await _rtsp_request(r, w, "DESCRIBE", url, cseq, req_extra, timeout=1.5)
                     cseq += 1
+                    if not desc:
+                        consecutive_drops += 1
+                        if consecutive_drops >= 3:
+                            break
+                    else:
+                        consecutive_drops = 0
+                else:
+                    consecutive_drops = 0
 
                 if not result["brand"]:
                     brand = _detect_brand_from_rtsp_text(desc)
@@ -753,7 +766,7 @@ async def probe_rtsp_direct(
                         pass
                     writer = None
 
-                    if len(found_urls) >= 4:
+                    if len(found_urls) >= 128:
                         break
                     continue
 
@@ -816,7 +829,8 @@ async def probe_rtsp_direct(
                             break
 
                     if authed:
-                        if len(found_urls) >= 4:
+                        consecutive_drops = 0
+                        if len(found_urls) >= 128:
                             break
                     else:
                         if not cached_working_cred:

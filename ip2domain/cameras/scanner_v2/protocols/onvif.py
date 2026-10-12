@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import ipaddress
 import logging
 import os
 import uuid
@@ -26,6 +27,15 @@ _ONVIF_PATH = "/onvif/device_service"
 
 _WSSE_PW_TYPE = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordDigest"
 _WSSE_NONCE_TYPE = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-soap-message-security-1.0#Base64Binary"
+
+
+def _is_private_ip(host: Optional[str]) -> bool:
+    if not host:
+        return False
+    try:
+        return ipaddress.ip_address(host).is_private
+    except ValueError:
+        return False
 
 
 def _ws_security_header(user: str, p_str: str) -> str:
@@ -192,14 +202,25 @@ async def probe_onvif(
                         if stream_xml:
                             uri = _extract_xml_value(stream_xml, "Uri")
                             if uri.startswith(("rtsp://", "rtsps://")):
-                                rtsp_urls.append(uri)
                                 parsed_uri = urlsplit(uri)
+                                is_same_host = (parsed_uri.hostname == ip)
+                                is_private = _is_private_ip(parsed_uri.hostname)
+                                target_is_private = _is_private_ip(ip)
+
+                                # Only keep original uri if it matches the target IP, or if it's not a private LAN IP on a public target
+                                if is_same_host or (not is_private and not target_is_private):
+                                    rtsp_urls.append(uri)
+
+                                # Always generate rewritten URLs pointing to the scanned target IP
                                 if parsed_uri.hostname and parsed_uri.hostname != ip:
                                     r_port = parsed_uri.port or (port if port != 80 else 554)
                                     for p_try in dict.fromkeys([r_port, port, 554]):
-                                        netloc = f"{ip}:{p_try}" if p_try not in (554, None) else ip
-                                        rewritten = urlunsplit((parsed_uri.scheme, netloc, parsed_uri.path, parsed_uri.query, parsed_uri.fragment))
-                                        rtsp_urls.append(rewritten)
+                                        port_suffix = f":{p_try}" if p_try not in (554, None) else ""
+                                        if u_str and not parsed_uri.username:
+                                            netloc_cred = f"{u_str}:{auth_val}@{ip}{port_suffix}"
+                                            rtsp_urls.append(urlunsplit((parsed_uri.scheme, netloc_cred, parsed_uri.path, parsed_uri.query, parsed_uri.fragment)))
+                                        netloc_clean = f"{ip}{port_suffix}"
+                                        rtsp_urls.append(urlunsplit((parsed_uri.scheme, netloc_clean, parsed_uri.path, parsed_uri.query, parsed_uri.fragment)))
 
                 result["rtsp_urls"] = list(dict.fromkeys(rtsp_urls))  # dedup
                 return result

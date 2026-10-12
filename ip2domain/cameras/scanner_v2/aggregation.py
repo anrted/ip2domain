@@ -4,6 +4,8 @@ No network I/O. New non-camera plugins must use HostObservation instead.
 """
 from __future__ import annotations
 
+import ipaddress
+from urllib.parse import urlsplit
 from typing import Dict, List, Optional
 
 from .models import CameraResult, StreamInfo, HTTP_PORTS, RTSP_PORTS
@@ -899,6 +901,25 @@ def prune_unverified_streams(camera: CameraResult) -> None:
     """
     if not camera or not camera.streams:
         return
+
+    # Filter out unroutable private LAN IPs if scanning a public target IP
+    target_is_private = False
+    try:
+        target_is_private = ipaddress.ip_address(camera.ip).is_private
+    except ValueError:
+        pass
+
+    if not target_is_private:
+        clean_streams = []
+        for s in camera.streams:
+            try:
+                host = urlsplit(s.url).hostname
+                if host and ipaddress.ip_address(host).is_private:
+                    continue
+            except Exception:
+                pass
+            clean_streams.append(s)
+        camera.streams = clean_streams
 
     verified = [s for s in camera.streams if s.verified]
     if verified:

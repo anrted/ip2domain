@@ -1,11 +1,13 @@
 """Camera Scanner v2 — SQLite storage mixin."""
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 import re
 import time
 from typing import Dict, List, Optional
+from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
 
@@ -125,15 +127,38 @@ class ScannerV2StorageMixin:
             conn.execute("BEGIN IMMEDIATE")
             previous = conn.execute("SELECT result_json FROM v2_results WHERE ip = ?", (ip,)).fetchone()
             result = dict(result)
+            target_is_private = False
+            try:
+                target_is_private = ipaddress.ip_address(ip).is_private
+            except ValueError:
+                pass
+
+            def _clean_stream_key(u: str) -> str:
+                return re.sub(r"://[^/@]+@", "://", u)
+
+            def _is_routable_stream(s: Dict) -> bool:
+                if target_is_private:
+                    return True
+                u = s.get("url") or ""
+                try:
+                    host = urlsplit(u).hostname
+                    if host and ipaddress.ip_address(host).is_private:
+                        return False
+                except Exception:
+                    pass
+                return True
+
             if previous:
                 old = json.loads(previous[0])
 
-                def _clean_stream_key(u: str) -> str:
-                    return re.sub(r"://[^/@]+@", "://", u)
-
-                streams = {_clean_stream_key(s["url"]): s for s in old.get("streams", []) if s.get("url")}
+                # Only preserve previously verified streams from old scans; discard old dead/speculative guesses
+                old_verified = [
+                    s for s in old.get("streams", [])
+                    if s.get("url") and s.get("verified") and _is_routable_stream(s)
+                ]
+                streams = {_clean_stream_key(s["url"]): s for s in old_verified}
                 for stream in result.get("streams", []):
-                    if stream.get("url"):
+                    if stream.get("url") and _is_routable_stream(stream):
                         streams[_clean_stream_key(stream["url"])] = stream
                 result["streams"] = list(streams.values())
                 for key in ("protocols", "open_ports"):
@@ -145,6 +170,8 @@ class ScannerV2StorageMixin:
                 result["endpoints"] = list(endpoints.values())
                 if not result.get("credentials") and old.get("credentials"):
                     result["credentials"] = old["credentials"]
+            else:
+                result["streams"] = [s for s in result.get("streams", []) if s.get("url") and _is_routable_stream(s)]
 
             cat = str(result.get("device_category", "")).strip().lower()
             if not cat:
