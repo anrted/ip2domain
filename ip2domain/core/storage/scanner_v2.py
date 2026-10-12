@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from typing import Dict, List, Optional
 
@@ -126,10 +127,14 @@ class ScannerV2StorageMixin:
             result = dict(result)
             if previous:
                 old = json.loads(previous[0])
-                streams = {s["url"]: s for s in old.get("streams", []) if s.get("url")}
+
+                def _clean_stream_key(u: str) -> str:
+                    return re.sub(r"://[^/@]+@", "://", u)
+
+                streams = {_clean_stream_key(s["url"]): s for s in old.get("streams", []) if s.get("url")}
                 for stream in result.get("streams", []):
                     if stream.get("url"):
-                        streams[stream["url"]] = stream
+                        streams[_clean_stream_key(stream["url"])] = stream
                 result["streams"] = list(streams.values())
                 for key in ("protocols", "open_ports"):
                     result[key] = list(dict.fromkeys(old.get(key, []) + result.get(key, [])))

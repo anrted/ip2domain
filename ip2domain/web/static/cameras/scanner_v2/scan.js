@@ -34,7 +34,7 @@ async function v2StartScan(event) {
         masscan_rate: masscanRate,
         concurrency: 150,
         port_timeout: 1.2,
-        stage2_concurrency: 20,
+        stage2_concurrency: 80,
         protocols,
         credentials: window.V2State.credentials.filter(c => c.user),
         capture_frames: captureFrames,

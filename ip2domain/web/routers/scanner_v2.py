@@ -60,7 +60,7 @@ class ScanRequest(BaseModel):
     masscan_rate: int = 50000
     concurrency: int = 150
     port_timeout: float = 1.2
-    stage2_concurrency: int = 20
+    stage2_concurrency: int = 80
     protocols: List[str] = []                        # empty = all
     credentials: List[CredentialPair] = []           # empty = defaults
     capture_frames: bool = True
@@ -564,12 +564,17 @@ async def get_stream_preview(
     transport = ""
     if not ok:
         stream_type = selected.get("type") or ("rtmp" if stream_url.startswith("rtmp://") else ("hls" if ".m3u8" in stream_url else ("mjpeg" if "mjpg" in stream_url.lower() else "rtsp")))
-        ok, path, codec, w, h, transport = await capture_stream_frame(
+        c_res = await capture_stream_frame(
             stream_url=stream_url,
             stream_type=stream_type,
             capture_dir=_V2_CAPTURE_DIR,
             credentials=creds,
         )
+        if len(c_res) >= 6:
+            ok, path, codec, w, h, transport = c_res[:6]
+        else:
+            ok, path, codec, w, h = c_res[:5]
+            transport = ""
 
 
     if ok and Path(path).exists():

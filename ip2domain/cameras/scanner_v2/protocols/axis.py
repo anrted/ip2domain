@@ -6,7 +6,7 @@ from typing import Dict, List, Optional, Tuple
 import httpx
 
 logger = logging.getLogger(__name__)
-_TIMEOUT = 3.0
+_TIMEOUT = httpx.Timeout(2.0, connect=1.0)
 
 _AXIS_BRAND = "/axis-cgi/param.cgi?action=list&group=root.Brand"
 _AXIS_NETWORK = "/axis-cgi/param.cgi?action=list&group=root.Network.eth0"
@@ -62,6 +62,9 @@ async def probe_axis(
                     axis_service_detected = True
 
                 if resp.status_code == 401:
+                    # If headers don't indicate Axis, don't waste credential attempts on generic servers
+                    if not axis_service_detected:
+                        break
                     continue
                 if resp.status_code != 200:
                     break

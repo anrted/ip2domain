@@ -20,7 +20,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-_TIMEOUT = 2.5
+_TIMEOUT = httpx.Timeout(2.0, connect=1.0)
 _ONVIF_PATH = "/onvif/device_service"
 
 
@@ -117,8 +117,8 @@ async def probe_onvif(
             onvif_service_confirmed = False
             auth_challenge = False
 
-            # Try GetDeviceInformation with each credential pair (cap at 8 to avoid long brute)
-            for u_str, auth_val in (credentials or [("", "")])[:8]:
+            # Try GetDeviceInformation with each credential pair (cap at 3 to avoid long brute)
+            for u_str, auth_val in (credentials or [("", "")])[:3]:
                 xml = await _soap_post(
                     client, url,
                     "<tds:GetDeviceInformation/>",

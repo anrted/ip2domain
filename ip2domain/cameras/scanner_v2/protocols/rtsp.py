@@ -14,7 +14,7 @@ import re
 from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
-_TIMEOUT = 3.0
+_TIMEOUT = 1.5
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Vendor-specific and generic RTSP stream path catalogs
@@ -497,7 +497,7 @@ async def probe_rtsp_direct(
     }
 
     ports_to_try = (rtsp_ports or [554])[:3]  # cap: probe at most 3 RTSP ports
-    _probe_deadline = asyncio.get_event_loop().time() + 45.0  # hard 45s cap on entire probe
+    _probe_deadline = asyncio.get_event_loop().time() + 15.0  # hard 15s cap on entire probe
 
     for port in ports_to_try:
         reader = None
@@ -622,7 +622,7 @@ async def probe_rtsp_direct(
                 p for p in probe_paths
                 if not re.search(r"\.(html?|png|jpe?g|gif|css|js|asp|txt|xml|ico)($|\?)", p, re.IGNORECASE)
             ]
-            probe_paths = probe_paths[:35]  # cap: at most 35 paths per port
+            probe_paths = probe_paths[:20]  # cap: at most 20 prioritized paths per port
 
             found_urls: List[str] = []
             failed_auth_paths = 0
@@ -703,7 +703,7 @@ async def probe_rtsp_direct(
                             break
 
                     if authed:
-                        if len(found_urls) >= 16:
+                        if len(found_urls) >= 4:
                             break
                         continue
                     else:
@@ -711,7 +711,7 @@ async def probe_rtsp_direct(
                         continue
 
                 req_extra = f"{direct_auth_hdr}Accept: application/sdp\r\n" if direct_auth_hdr else "Accept: application/sdp\r\n"
-                desc = await _rtsp_request(r, w, "DESCRIBE", url, cseq, req_extra, timeout=2.5)
+                desc = await _rtsp_request(r, w, "DESCRIBE", url, cseq, req_extra, timeout=1.5)
                 cseq += 1
 
                 # Reconnect on dropped socket
@@ -725,7 +725,7 @@ async def probe_rtsp_direct(
                     r, w = await ensure_conn()
                     if not r or not w:
                         continue
-                    desc = await _rtsp_request(r, w, "DESCRIBE", url, cseq, req_extra, timeout=2.5)
+                    desc = await _rtsp_request(r, w, "DESCRIBE", url, cseq, req_extra, timeout=1.5)
                     cseq += 1
 
                 if not result["brand"]:
@@ -753,7 +753,7 @@ async def probe_rtsp_direct(
                         pass
                     writer = None
 
-                    if len(found_urls) >= 128:
+                    if len(found_urls) >= 4:
                         break
                     continue
 
@@ -816,7 +816,7 @@ async def probe_rtsp_direct(
                             break
 
                     if authed:
-                        if len(found_urls) >= 16:
+                        if len(found_urls) >= 4:
                             break
                     else:
                         if not cached_working_cred:

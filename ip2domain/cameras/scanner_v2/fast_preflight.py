@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 import httpx
 
-_PREFLIGHT_TIMEOUT = 1.2
+_PREFLIGHT_TIMEOUT = 1.0
 
 # Server headers that definitively identify standard web software without CCTV/IoT
 _STANDARD_WEB_SERVERS = (
@@ -57,11 +57,12 @@ async def run_fast_preflight(
 
     scheme = "https" if port in (443, 8443, 9443, 10443) else "http"
     target_url = f"{scheme}://{ip}:{port}/"
+    to_obj = timeout if isinstance(timeout, httpx.Timeout) else httpx.Timeout(timeout, connect=min(0.8, float(timeout)))
 
     try:
         async with httpx.AsyncClient(verify=False, follow_redirects=True) as client:
             try:
-                resp = await client.get(target_url, timeout=timeout)
+                resp = await client.get(target_url, timeout=to_obj)
             except (httpx.ConnectError, httpx.ConnectTimeout):
                 # Host/port not reachable
                 res.is_alive = False
@@ -129,7 +130,7 @@ async def run_fast_preflight(
                 res.category = "cctv_hikvision"
                 res.brand = "Hikvision"
                 res.model = "IP Camera / DVR"
-                res.target_protocols = ["hikvision", "onvif", "hls"]
+                res.target_protocols = ["hikvision", "onvif", "rtsp", "hls"]
                 return res
 
             # C. Dahua / IMOU
@@ -139,7 +140,7 @@ async def run_fast_preflight(
                 res.category = "cctv_dahua"
                 res.brand = "Dahua"
                 res.model = "IP Camera / DVR"
-                res.target_protocols = ["dahua", "onvif", "hls"]
+                res.target_protocols = ["dahua", "onvif", "rtsp", "hls"]
                 return res
 
             # D. Axis
@@ -147,7 +148,7 @@ async def run_fast_preflight(
                 res.category = "cctv_axis"
                 res.brand = "Axis"
                 res.model = "Network Camera"
-                res.target_protocols = ["axis", "onvif", "hls"]
+                res.target_protocols = ["axis", "onvif", "rtsp", "hls"]
                 return res
 
             # E. Video Intercoms (Qualvision, Tantos, Beward, etc.)

@@ -115,8 +115,8 @@ def s7_request():
 
 def s7_response(data):
     # COTP Connection Confirm (CC TPDU)
-    if len(data) >= 11 and data[0:2] == b"\x03\x00" and int.from_bytes(data[2:4],"big") == len(data) and data[5] == 0xd0:
-        return {"protocol": "iso-on-tcp", "handshake": "COTP connection confirm", "probable_protocol": "s7comm"}
+    if len(data) >= 11 and data[0:2] == b"\x03\x00" and int.from_bytes(data[2:4], "big") == len(data) and data[5] == 0xd0:
+        return {"protocol": "s7comm", "handshake": "COTP connection confirm", "probable_protocol": "s7comm", "vendor": "Siemens"}
     return None
 
 
@@ -143,6 +143,6 @@ def bacnet_request():
 
 
 def bacnet_response(data):
-    if len(data) >= 8 and data[0] == 0x81 and int.from_bytes(data[2:4],"big") == len(data) and data[1] in (0x0a,0x0b) and data[4] == 1 and data[6:8] == b"\x10\x00":
+    if len(data) >= 4 and data[0] == 0x81 and data[1] in (0x00, 0x01, 0x02, 0x03, 0x04, 0x09, 0x0a, 0x0b):
         return {"protocol": "bacnet", "server": "BACnet/IP Building Automation Device"}
     return None

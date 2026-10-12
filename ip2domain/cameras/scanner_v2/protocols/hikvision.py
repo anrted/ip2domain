@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Tuple
 import httpx
 
 logger = logging.getLogger(__name__)
-_TIMEOUT = 3.0
+_TIMEOUT = httpx.Timeout(2.0, connect=1.0)
 
 _ISAPI_DEVICE_INFO = "/ISAPI/System/deviceInfo"
 _ISAPI_CHANNELS = "/ISAPI/Streaming/channels"
@@ -73,6 +73,9 @@ async def probe_hikvision(
                     hik_service_detected = True
 
                 if resp.status_code == 401:
+                    # If headers don't indicate Hikvision, don't waste credential attempts on generic servers
+                    if not hik_service_detected:
+                        break
                     # Wrong credentials, try next pair
                     continue
                 if resp.status_code != 200:

@@ -35,14 +35,11 @@ async def run_bounded(
                     item = next(iterator)
                 except StopIteration:
                     return
-            try:
-                await worker(item)
-            except Exception as exc:
-                logger.warning("[run_bounded] Worker error on item: %s", exc)
+            await worker(item)
 
     tasks = [asyncio.create_task(consume()) for _ in range(concurrency)]
     try:
-        await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.gather(*tasks)
     finally:
         for task in tasks:
             if not task.done():

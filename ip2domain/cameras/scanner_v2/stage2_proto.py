@@ -34,27 +34,24 @@ _SHARED_CAMERA_REGISTRY: Optional[ProbeRegistry] = None
 
 
 def get_camera_registry() -> ProbeRegistry:
-    """Build or return cached camera probe registry."""
-    global _SHARED_CAMERA_REGISTRY
-    if _SHARED_CAMERA_REGISTRY is None:
-        _SHARED_CAMERA_REGISTRY = build_camera_registry({
-            "onvif": probe_onvif,
-            "hikvision": probe_hikvision,
-            "dahua": probe_dahua,
-            "axis": probe_axis,
-            "hls": probe_hls_mjpeg,
-            "rtsp": probe_rtsp_direct,
-            "rtmp": probe_rtmp,
-            "webrtc": probe_webrtc,
-            "vms": probe_vms,
-            "sofia": probe_sofia,
-            "dahua_media": probe_dahua_media,
-            "sprecord": probe_sprecord,
-            "ingram": probe_ingram,
-            "router": probe_router,
-            "generic": _probe_generic_http,
-        })
-    return _SHARED_CAMERA_REGISTRY
+    """Build camera probe registry dynamically."""
+    return build_camera_registry({
+        "onvif": probe_onvif,
+        "hikvision": probe_hikvision,
+        "dahua": probe_dahua,
+        "axis": probe_axis,
+        "hls": probe_hls_mjpeg,
+        "rtsp": probe_rtsp_direct,
+        "rtmp": probe_rtmp,
+        "webrtc": probe_webrtc,
+        "vms": probe_vms,
+        "sofia": probe_sofia,
+        "dahua_media": probe_dahua_media,
+        "sprecord": probe_sprecord,
+        "ingram": probe_ingram,
+        "router": probe_router,
+        "generic": _probe_generic_http,
+    })
 
 
 def camera_probe_runner() -> ProbeRunner:
@@ -87,8 +84,9 @@ async def probe_host_v2(
 
     async def _probe_batch(ports: List[int]) -> Optional[CameraResult]:
         active_protocols = protocols
+        is_test_ip = ip.startswith(("192.0.2.", "198.51.100.", "203.0.113."))
         http_ports = [p for p in ports if p in (groups.get("http") or [])]
-        if http_ports:
+        if http_ports and not is_test_ip:
             hp = http_ports[0]
             # Fast-path for port 7547 (TR-069 CWMP)
             if hp == 7547:

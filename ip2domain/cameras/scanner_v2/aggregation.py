@@ -119,15 +119,13 @@ def merge_host_cameras(cameras: List[CameraResult]) -> Optional[CameraResult]:
 
     host.categories = all_cats or [host.device_category]
 
-    # Preserve credentials: find best discovered credentials across all endpoints
-    best_creds = {}
-    for c in cameras:
-        if c.credentials and (c.credentials.get("user") or c.credentials.get("password")):
-            best_creds = dict(c.credentials)
-            break
-    if not best_creds and cameras and cameras[0].credentials:
-        best_creds = dict(cameras[0].credentials)
-    host.credentials = best_creds
+    # Preserve credentials: use if uniform across endpoints, else empty for host
+    non_empty_creds = [c.credentials for c in cameras if c.credentials and (c.credentials.get("user") or c.credentials.get("password"))]
+    unique_creds = {tuple(sorted(c.items())) for c in non_empty_creds}
+    if len(unique_creds) == 1:
+        host.credentials = dict(non_empty_creds[0])
+    else:
+        host.credentials = {}
     host.auth_required = True if any(c.auth_required is True for c in cameras) else None
     if host.domain and (443 in host.open_ports or host.http_port == 443 or "443" in str(host.web_url)):
         host.web_url = f"https://{host.domain}/"

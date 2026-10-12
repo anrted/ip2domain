@@ -348,7 +348,7 @@ async def _on_startup():
                         masscan_rate=v2_params.get("masscan_rate", 50000),
                         concurrency=v2_params.get("concurrency", 150),
                         port_timeout=v2_params.get("port_timeout", 1.2),
-                        stage2_concurrency=v2_params.get("stage2_concurrency", 20),
+                        stage2_concurrency=v2_params.get("stage2_concurrency", 80),
                         credentials=v2_params.get("credentials"),
                         protocols=v2_params.get("protocols"),
                         capture_frames=v2_params.get("capture_frames", True),

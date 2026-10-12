@@ -338,10 +338,15 @@ async def verify_single_stream(
                 except OSError:
                     pass
         elif stream.stream_type in {"rtsp", "rtsps", "rtmp", "hls", "mjpeg", "udp_rtp"}:
-            ok, path, codec, w, h, transport = await capture_stream_frame(
+            c_res = await capture_stream_frame(
                 stream.url, "rtsp" if stream.stream_type == "rtsps" else stream.stream_type,
                 capture_dir, credentials,
             )
+            if len(c_res) >= 6:
+                ok, path, codec, w, h, transport = c_res[:6]
+            else:
+                ok, path, codec, w, h = c_res[:5]
+                transport = ""
             if ok:
                 stream.verified = True
                 stream.screenshot_path = path
