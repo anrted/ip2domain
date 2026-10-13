@@ -12,6 +12,132 @@ from urllib.parse import urlsplit
 logger = logging.getLogger(__name__)
 
 
+
+_CAMERA_BRANDS = (
+    "hikvision", "hiwatch", "dahua", "axis", "uniview", "unv", "reolink",
+    "xiongmai", "rvi-", "rvi cctv", "rvi group", "tiandy", "mobotix", "trassir", "novicam", "ltv",
+    "milesight", "tvt", "sunell", "avigilon", "flir", "vivotek", "grandstream",
+    "activecam", "polyvision", "tapo", "vstarcam", "sricam", "jovision",
+    "topsvision", "beward", "nvsip", "ezviz", "hilook", "imou", "lorex", "foscam",
+    "amcrest", "hanwha", "wisenet", "samsung", "cp plus", "bosch", "pelco",
+    "herospeed", "srihome", "topsee", "unimo", "udrocx", "ants", "vvtk",
+    "devline", "линия", "девляйн", "vesta", "веста", "si-cam", "sicam", "си-кам",
+    "macroscop", "макроскоп", "dssl", "optimus", "оптимус", "satvision", "сатвижн",
+    "tantos", "тантос", "raysharp", "рейшарп", "smartec", "смартек", "ipeye", "айпиай",
+    "proto-x", "protox", "falcon eye", "falconeye", "sputnik", "ростелеком", "qtech"
+)
+
+_ROUTER_KEYWORDS = (
+    "broadband / gpon", "tr-069", "mikrotik", "keenetic", "openwrt", "router",
+    "gpon", "ont", "cpe", "gateway", "routeros", "airos", "edgeos", "zte",
+    "huawei home gateway", "adsl", "vdsl", "modem", "zyxel", "d-link", "netgear",
+    "teltonika", "robustel", "inhand", "cisco", "meraki", "fortinet",
+    "huawei echolife", "eltex", "snr", "totolink", "tenda", "mercusys",
+    "tp-link router", "wi-fi router", "dsl-", "tl-wr", "archer"
+)
+
+_WEB_SERVER_KEYWORDS = (
+    "nginx", "apache", "microsoft-iis", "litespeed", "caddy", "lighttpd"
+)
+
+_GENERIC_WEB_TITLES = (
+    "401 unauthorized", "403 forbidden", "404 not found", "500 internal",
+    "welcome to nginx", "apache2 ubuntu default page", "iis windows server",
+    "test page", "under construction", "index of /"
+)
+
+
+def _match_camera_brand(b: str, m: str, t: str) -> bool:
+    """Accurately match camera vendor strings without substring collisions like 'rvi' in 'service'."""
+    comb = f"{b} {m} {t}".lower()
+    if b in ("generic web device", "unknown", "") and m in ("web service", "http", ""):
+        return False
+    if "rvi" in comb:
+        if bool(re.search(r"\brvi\b", comb)) and "service" not in comb:
+            return True
+        if "rvi-" in comb or "rvi cctv" in comb or "rvi group" in comb:
+            return True
+    return any(cb in comb for cb in _CAMERA_BRANDS)
+
+
+def classify_v2_device(
+    brand: str = "",
+    model: str = "",
+    title: str = "",
+    protos: Optional[List[str]] = None,
+    streams: Optional[List[Dict]] = None,
+    open_ports: Optional[List[int]] = None,
+    cur_cat: str = "",
+) -> str:
+    """Classify a scan result into its canonical device category."""
+    b = (brand or "").lower()
+    m = (model or "").lower()
+    t = (title or "").lower()
+    p_str = " ".join(str(p) for p in (protos or [])).lower()
+
+    if "sprecord" in b or "sprecord" in m or "sprecord" in p_str:
+        return "sprecord"
+    if any(ic in b or ic in m or ic in t for ic in ("intercom", "видеодомофон", "door station", "akuvox", "bas-ip", "true ip")):
+        return "intercom"
+
+    has_verified_stream = any(
+        bool(s.get("verified")) and s.get("type") != "web_panel" and s.get("stream_type") != "web_panel"
+        for s in (streams or [])
+    )
+    if has_verified_stream:
+        return "camera"
+
+    # Explicit check: Generic Web Device without camera ports or verified streams is always generic_web
+    is_pure_generic_web = (
+        b in ("generic web device", "generic", "unknown", "")
+        and m in ("web service", "http", "")
+        and not any(p in (554, 8554, 34567, 37777, 9780, 8899) for p in (open_ports or []))
+        and not any(cp in p_str for cp in ("rtsp", "dhip", "sofia", "isapi", "onvif", "vesta", "devline"))
+    )
+    if is_pure_generic_web:
+        return "generic_web"
+
+    # Industrial automation, sensors, telemetry (Modbus, IEC 60870)
+    if any(ind in b or ind in m or ind in t or ind in p_str for ind in ("modbus", "iec104", "iec 60870", "powerlogic", "scada", "plc", "метеостанция", "асудд")):
+        return "industrial"
+    if open_ports and any(p in (502, 2404) for p in open_ports) and not any(p in (554, 8554, 34567, 37777) for p in open_ports):
+        return "industrial"
+
+    # Remote desktop / terminals (RDP, VNC)
+    if any(rd in b or rd in m or rd in p_str for rd in ("rdp", "vnc")):
+        return "device"
+    if open_ports and any(p in (3389, 5900) for p in open_ports) and not any(p in (554, 8554, 34567, 37777) for p in open_ports):
+        return "device"
+
+    is_router_sig = (
+        any(rk in b or rk in m or rk in t for rk in _ROUTER_KEYWORDS)
+        or "http_router" in p_str or "winbox" in p_str or "router" in p_str or "vpn" in p_str
+        or (b == "ubiquiti unifi" and any(u in t for u in ("edgeos", "airos", "unifi network", "unifi os")))
+        or ("tp-link" in b and not any(k in m or k in b for k in ("tapo", "kasa", "tl-sc")))
+        or (open_ports and any(p in (1701, 1723, 8291, 7547, 8728, 8729) for p in open_ports) and not any(p in (554, 8554, 34567, 37777, 9780) for p in open_ports))
+    )
+    if is_router_sig:
+        return "router"
+
+    # Camera brand detection by brand, model, or title (DevLine, VeSta, Si-Cam, Hikvision, etc.)
+    if _match_camera_brand(b, m, t):
+        return "camera"
+
+    if any(wk in b or wk in m or wk in t for wk in _WEB_SERVER_KEYWORDS):
+        return "generic_web"
+
+    if b in ("generic web device", "generic", "unknown", "") and (
+        any(gt in t for gt in _GENERIC_WEB_TITLES) or not any(p in (554, 8554, 34567, 37777, 9780) for p in (open_ports or []))
+    ):
+        return "generic_web"
+
+    if any(p in (554, 8554, 34567, 37777, 9780, 8899) for p in (open_ports or [])) or any(cp in p_str for cp in ("rtsp", "dhip", "sofia", "isapi", "onvif", "vesta", "devline")):
+        return "camera"
+
+    cur_norm = (cur_cat or "").lower().strip()
+    return cur_norm if cur_norm in ("router", "generic_web", "server", "iot", "device") else "generic_web"
+
+
 class ScannerV2StorageMixin:
     """Adds v2_results and v2_jobs tables to the StorageManager."""
 
@@ -173,21 +299,21 @@ class ScannerV2StorageMixin:
             else:
                 result["streams"] = [s for s in result.get("streams", []) if s.get("url") and _is_routable_stream(s)]
 
-            cat = str(result.get("device_category", "")).strip().lower()
-            if not cat:
-                if any("sprecord" in str(x).lower() for x in (result.get("brand", ""), result.get("model", ""), result.get("protocols", []))):
-                    cat = "sprecord"
-                elif "router" in str(result.get("protocols", [])) or "winbox" in str(result.get("protocols", [])):
-                    cat = "router"
-                elif any("intercom" in str(x).lower() for x in (result.get("categories", []), result.get("brand", ""))):
-                    cat = "intercom"
-                elif any("generic_web" in str(x).lower() for x in (result.get("categories", []), result.get("brand", ""))):
-                    cat = "generic_web"
-                elif result.get("device_category"):
-                    cat = str(result["device_category"])
-                else:
-                    cat = "camera"
+            cur_cat = str(result.get("device_category", "")).strip().lower()
+            open_ports = result.get("open_ports", [])
+            web_title = result.get("web_title", "")
+            cat = classify_v2_device(
+                brand=result.get("brand", ""),
+                model=result.get("model", ""),
+                title=web_title,
+                protos=result.get("protocols", []),
+                streams=result.get("streams", []),
+                open_ports=open_ports,
+                cur_cat=cur_cat,
+            )
             result["device_category"] = cat
+            if not result.get("categories") or result.get("categories") == ["camera"]:
+                result["categories"] = [cat]
 
             has_prev = 1 if (
                 any(bool(s.get("screenshot")) for s in result.get("streams", []))
@@ -338,7 +464,7 @@ class ScannerV2StorageMixin:
         )
         with self._get_connection() as conn:
             query = f"SELECT result_json, in_go2rtc FROM v2_results{where_clause}"
-            query += " ORDER BY has_preview DESC, updated_at DESC"
+            query += " ORDER BY (streams_json LIKE '%\"verified\": true%') DESC, has_preview DESC, updated_at DESC, ip ASC"
             if limit and limit > 0:
                 query += " LIMIT ?"
                 params.append(limit)
@@ -694,3 +820,71 @@ class ScannerV2StorageMixin:
                 return json.loads(row[0])
             except Exception:
                 return []
+
+    def reclassify_v2_results(self, limit: Optional[int] = None) -> Dict[str, int]:
+        """Reclassify existing records in v2_results table using updated signatures."""
+        counts: Dict[str, int] = {}
+        with self._get_connection() as conn:
+            query = "SELECT ip, brand, model, protocols, streams_json, result_json, device_category FROM v2_results"
+            if limit:
+                query += f" LIMIT {int(limit)}"
+            rows = conn.execute(query).fetchall()
+            updates = []
+            for row in rows:
+                ip = row["ip"] if isinstance(row, dict) or hasattr(row, "keys") else row[0]
+                brand = row["brand"] if isinstance(row, dict) or hasattr(row, "keys") else row[1]
+                model = row["model"] if isinstance(row, dict) or hasattr(row, "keys") else row[2]
+                protos_json = row["protocols"] if isinstance(row, dict) or hasattr(row, "keys") else row[3]
+                streams_json = row["streams_json"] if isinstance(row, dict) or hasattr(row, "keys") else row[4]
+                r_json = row["result_json"] if isinstance(row, dict) or hasattr(row, "keys") else row[5]
+                cur_cat = row["device_category"] if isinstance(row, dict) or hasattr(row, "keys") else row[6]
+
+                try:
+                    r = json.loads(r_json) if r_json else {}
+                except Exception:
+                    r = {}
+                try:
+                    streams = json.loads(streams_json) if streams_json else []
+                except Exception:
+                    streams = []
+                try:
+                    protos = json.loads(protos_json) if protos_json else []
+                except Exception:
+                    protos = []
+
+                new_cat = classify_v2_device(
+                    brand=brand,
+                    model=model,
+                    title=r.get("web_title", ""),
+                    protos=protos,
+                    streams=streams,
+                    open_ports=r.get("open_ports", []),
+                    cur_cat=cur_cat,
+                )
+                counts[new_cat] = counts.get(new_cat, 0) + 1
+                if new_cat != cur_cat or r.get("device_category") != new_cat:
+                    r["device_category"] = new_cat
+                    if not r.get("categories") or r.get("categories") == [cur_cat]:
+                        r["categories"] = [new_cat]
+                    updates.append((new_cat, json.dumps(r, ensure_ascii=False), ip))
+
+                if len(updates) >= 2000:
+                    conn.executemany(
+                        "UPDATE v2_results SET device_category = ?, result_json = ? WHERE ip = ?",
+                        updates,
+                    )
+                    conn.commit()
+                    updates.clear()
+
+            if updates:
+                conn.executemany(
+                    "UPDATE v2_results SET device_category = ?, result_json = ? WHERE ip = ?",
+                    updates,
+                )
+                conn.commit()
+                updates.clear()
+
+        if hasattr(self, "_v2_stats_cache"):
+            self._v2_stats_cache = None
+        return counts
+

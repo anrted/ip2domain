@@ -112,4 +112,106 @@ async def probe_vms(
                 except Exception:
                     pass
 
+                # 5. DevLine («Линия») Video Surveillance VMS
+                try:
+                    r = await client.get(f"{base}/", auth=auth, timeout=2.5)
+                    server_hdr = r.headers.get("server", "").lower()
+                    text_l = r.text[:2048].lower()
+                    if "devline" in server_hdr or "devline" in text_l or "linia server" in server_hdr:
+                        result["success"] = True
+                        result["brand"] = "DevLine"
+                        result["model"] = "DevLine Линия (NVR/VMS)"
+                        result["http_port"] = port
+                        result["protocols"] = ["devline_vms", "http_snapshot", "hls"]
+                        # Generate snapshot and HLS URLs for channels 0..3
+                        for ch in range(4):
+                            result["vms_urls"].append(f"{base}/cameras/{ch}/image")
+                            result["vms_urls"].append(f"{base}/cameras/{ch}/streaming/sub.m3u8")
+                        if user and r.status_code == 200:
+                            result["credentials"] = {"user": user, "password": password}
+                        return result
+                except Exception:
+                    pass
+
+                # 6. Macroscop VMS (Russian enterprise IP surveillance)
+                try:
+                    # Probe root or /configex
+                    r_mac = await client.get(f"{base}/configex", auth=auth, timeout=2.5)
+                    if r_mac.status_code == 404:
+                        r_mac = await client.get(f"{base}/", auth=auth, timeout=2.0)
+                    server_hdr = r_mac.headers.get("server", "").lower()
+                    mac_text = r_mac.text[:4096].lower()
+                    if (
+                        "macroscop" in server_hdr
+                        or "macroscop" in mac_text
+                        or "макроскоп" in mac_text
+                        or "<channels>" in mac_text
+                        or "<channel id=" in mac_text
+                    ):
+                        result["success"] = True
+                        result["brand"] = "Macroscop"
+                        result["model"] = "Macroscop VMS Server"
+                        result["http_port"] = port
+                        result["protocols"] = ["macroscop_vms", "http_snapshot", "mjpeg"]
+                        # Extract channel UUIDs if present in config XML
+                        import re as _re
+                        chan_ids = _re.findall(r'Id="([a-f0-9\-]{16,40})"', r_mac.text, _re.IGNORECASE)
+                        for cid in chan_ids[:6]:
+                            result["vms_urls"].append(f"{base}/image?channelid={cid}")
+                            result["vms_urls"].append(f"{base}/mjpeg?channelid={cid}")
+                        # Fallback standard channel index URLs
+                        if not result["vms_urls"]:
+                            for ch in range(4):
+                                result["vms_urls"].append(f"{base}/image?channelid={ch}")
+                                result["vms_urls"].append(f"{base}/command?cmd=getimage&channelid={ch}")
+                        if user and r_mac.status_code == 200:
+                            result["credentials"] = {"user": user, "password": password}
+                        return result
+                except Exception:
+                    pass
+
+                # 7. Trassir VMS (DSSL Russian surveillance system)
+                try:
+                    r_trs = await client.get(f"{base}/", auth=auth, timeout=2.5)
+                    s_trs = r_trs.headers.get("server", "").lower()
+                    t_trs = r_trs.text[:2048].lower()
+                    if "trassir" in s_trs or "trassir" in t_trs or "dssl" in t_trs:
+                        result["success"] = True
+                        result["brand"] = "Trassir"
+                        result["model"] = "Trassir NVR/VMS"
+                        result["http_port"] = port
+                        result["protocols"] = ["trassir_vms", "http_snapshot", "mjpeg"]
+                        for ch in range(4):
+                            result["vms_urls"].append(f"{base}/screenshot/{ch}")
+                            result["vms_urls"].append(f"{base}/video/{ch}?container=mjpeg")
+                            result["vms_urls"].append(f"{base}/get_stream?channel={ch}&container=mjpeg")
+                        if user and r_trs.status_code == 200:
+                            result["credentials"] = {"user": user, "password": password}
+                        return result
+                except Exception:
+                    pass
+
+                # 8. TVT / RaySharp Web NVR snapshot probing
+                try:
+                    for snap_p in (
+                        "/cgi-bin/snapshot.cgi?channel=1",
+                        "/cgi-bin/snapshot.cgi?chn=0",
+                        "/ccm/ccm_pic_get.js?h=0&channel=0",
+                    ):
+                        r_snap = await client.get(f"{base}{snap_p}", auth=auth, timeout=2.0)
+                        ctype = r_snap.headers.get("content-type", "").lower()
+                        if r_snap.status_code == 200 and "image/jpeg" in ctype:
+                            result["success"] = True
+                            brand_val = "RaySharp" if "chn=" in snap_p else "TVT"
+                            result["brand"] = brand_val
+                            result["model"] = f"{brand_val} DVR/NVR"
+                            result["http_port"] = port
+                            result["protocols"] = [f"{brand_val.lower()}_media", "http_snapshot"]
+                            result["vms_urls"].append(f"{base}{snap_p}")
+                            if user:
+                                result["credentials"] = {"user": user, "password": password}
+                            return result
+                except Exception:
+                    pass
+
     return result

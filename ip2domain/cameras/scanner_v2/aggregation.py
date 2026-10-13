@@ -29,21 +29,45 @@ from .protocols.rtmp import _RTMP_PATHS
 
 _KNOWN_CAMERA_BRAND_SUBSTRINGS = (
     "hikvision", "hiwatch", "dahua", "axis", "reolink", "trassir", "xiongmai", "flussonic",
-    "streamer", "dnvrs", "rvi", "uniview", "unv", "tiandy", "mobotix", "generic nvr", "generic dvr",
+    "streamer", "dnvrs", "rvi-", "rvi cctv", "rvi group", "uniview", "unv", "tiandy", "mobotix", "generic nvr", "generic dvr",
     "generic ipcam", "generic webcam", "generic surveillance", "generic video server", "generic rtsp",
     "unknown camera", "tp-link camera", "tapo", "kasa", "tl-sc", "ezviz", "hilook", "imou", "lorex",
     "foscam", "amcrest", "hanwha", "wisenet", "samsung", "topsvision", "topsee", "jovision", "h264",
     "netip", "netsurveillance", "cp plus", "bosch", "pelco", "vivotek", "grandstream", "beward",
     "activecam", "polyvision", "novicam", "ltv", "milesight", "tvt", "sunell", "avigilon", "flir",
-    "ubiquiti unifi", "vstarcam", "sricam", "srihome", "herospeed", "onvif", "unimo", "udrocx",
+    "unifi protect", "unifi video", "vstarcam", "sricam", "srihome", "herospeed", "onvif", "unimo", "udrocx",
     "ants", "vvtk", "nd8322p", "pcviewx", "webcamx",
+    "devline", "линия", "vesta", "веста", "si-cam", "sicam", "си-кам",
+    "macroscop", "макроскоп", "dssl", "optimus", "оптимус", "satvision", "сатвижн",
+    "tantos", "тантос", "raysharp", "рейшарп", "smartec", "смартек", "ipeye", "айпиай",
+    "proto-x", "protox", "falcon eye", "falconeye", "sputnik", "ростелеком", "qtech",
 )
 
 def _is_camera_brand(brand: str) -> bool:
     if not brand:
         return False
-    b = brand.lower()
-    return any(p in b for p in _KNOWN_CAMERA_BRAND_SUBSTRINGS)
+    b = brand.lower().strip()
+    if b in ("generic web device", "unknown", "web service", "generic router", "broadband router", "generic", ""):
+        return False
+    if "rvi" in b:
+        import re as _re
+        if bool(_re.search(r"\brvi\b", b)) and "service" not in b:
+            return True
+        if "rvi-" in b or "rvi cctv" in b or "rvi group" in b:
+            return True
+    return any(p in b for p in _KNOWN_CAMERA_BRAND_SUBSTRINGS if p not in ("rvi-", "rvi cctv", "rvi group"))
+
+
+def _brand_rank(b: str) -> int:
+    """Rank vendor brand specificity so known manufacturers take priority over generic labels."""
+    if not b:
+        return 0
+    b_l = b.lower().strip()
+    if b_l in ("generic web device", "web service", "unknown", "generic"):
+        return 1
+    if b_l in ("generic router", "broadband router", "generic dvr", "generic nvr", "generic ipcam", "generic rtsp", "generic surveillance"):
+        return 2
+    return 10
 
 
 def merge_host_cameras(cameras: List[CameraResult]) -> Optional[CameraResult]:
@@ -58,6 +82,11 @@ def merge_host_cameras(cameras: List[CameraResult]) -> Optional[CameraResult]:
     for camera in cameras:
         if camera.ip != host.ip:
             raise ValueError("Cannot merge different hosts")
+        # Upgrade brand and model to more specific manufacturer if available
+        if _brand_rank(camera.brand) > _brand_rank(host.brand):
+            host.brand = camera.brand
+            if camera.model:
+                host.model = camera.model
         for key in ("brand", "model", "serial", "firmware", "city", "region", "country_code", "isp", "timestamp", "web_title", "web_url", "web_screenshot", "domain"):
             if not getattr(host, key):
                 setattr(host, key, getattr(camera, key))
@@ -99,21 +128,32 @@ def merge_host_cameras(cameras: List[CameraResult]) -> Optional[CameraResult]:
         for cat in (getattr(c, "categories", []) or ([c.device_category] if getattr(c, "device_category", None) else [])):
             if cat and cat not in all_cats:
                 all_cats.append(cat)
-    if any(s.stream_type in ("rtsp", "rtsps") or (s.verified and s.stream_type != "web_panel") for s in host.streams):
+    has_verified_camera = any(s.verified and s.stream_type != "web_panel" for s in host.streams)
+    has_camera_brand = any(_is_camera_brand(c.brand) for c in cameras)
+    has_router_endpoint = any(c.device_category == "router" for c in cameras)
+
+    if has_verified_camera or has_camera_brand:
         if "camera" not in all_cats:
             all_cats.append("camera")
+    else:
+        # Purge misassigned 'camera' if host has zero verified media streams and zero camera brands
+        all_cats = [cat for cat in all_cats if cat != "camera"]
 
-    # Primary/canonical category for backward compatibility
-    if any(c.device_category == "camera" and c.streams for c in cameras):
-        host.device_category = "camera"
-    elif any(c.device_category == "intercom" for c in cameras):
+    # Primary/canonical category
+    if any(c.device_category == "intercom" for c in cameras):
         host.device_category = "intercom"
-    elif any(c.device_category == "router" for c in cameras):
+    elif has_verified_camera:
+        host.device_category = "camera"
+    elif has_router_endpoint:
         host.device_category = "router"
     elif any(c.device_category in ("iot", "industrial") for c in cameras):
         host.device_category = "iot"
     elif any(c.device_category == "server" for c in cameras):
         host.device_category = "server"
+    elif has_camera_brand and any(c.device_category == "camera" for c in cameras):
+        host.device_category = "camera"
+    elif any(c.device_category == "generic_web" for c in cameras):
+        host.device_category = "generic_web"
     elif all_cats:
         host.device_category = all_cats[0]
     else:
@@ -286,13 +326,13 @@ def merge_camera_results(
                 camera.protocols.append(p)
         for url in vms_r.get("vms_urls", []):
             if not any(s.url == url for s in camera.streams):
-                stype = "mjpeg" if ("mjpg" in url or "Video.cgi" in url or "faststream" in url) else "http_snapshot"
+                stype = "mjpeg" if ("mjpg" in url or "Video.cgi" in url or "faststream" in url) else ("hls" if ".m3u8" in url else "http_snapshot")
                 camera.streams.append(StreamInfo(url=url, stream_type=stype))
         detected = True
 
     # 10. Sofia / Xiongmai (NETSurveillance port 34567)
     if sofia_r.get("success"):
-        camera.brand = camera.brand or "Xiongmai"
+        camera.brand = sofia_r.get("brand", "") or camera.brand or "Xiongmai"
         camera.model = sofia_r.get("model", "") or camera.model or "Xiongmai NVR"
         camera.serial = sofia_r.get("serial", "") or camera.serial
         camera.firmware = sofia_r.get("firmware", "") or camera.firmware

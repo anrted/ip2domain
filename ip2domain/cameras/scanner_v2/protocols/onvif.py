@@ -140,9 +140,10 @@ async def probe_onvif(
                     continue
 
                 # Check if this endpoint confirmed it's an ONVIF service (even if auth failed)
-                if any(x in xml for x in ("onvif.org", "Fault", "NotAuthorized", "Sender", "DeviceInformation")):
+                xml_lower = xml.lower()
+                if "onvif.org" in xml_lower or "deviceinformation" in xml_lower or ("fault" in xml_lower and ("onvif" in xml_lower or "wsse" in xml_lower or "schemas.xmlsoap.org" in xml_lower and "envelope" in xml_lower and ("notauthorized" in xml_lower or "failedauthentication" in xml_lower))):
                     onvif_service_confirmed = True
-                if "NotAuthorized" in xml or "FailedAuthentication" in xml:
+                if "notauthorized" in xml_lower or "failedauthentication" in xml_lower or "auth" in xml_lower and "fault" in xml_lower:
                     auth_challenge = True
 
                 # Parse device info if authenticated

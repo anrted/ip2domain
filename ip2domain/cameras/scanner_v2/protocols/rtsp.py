@@ -32,6 +32,14 @@ _XM_PATHS = [
      "/0",
      "/1",
      "/11",
+     "/12",
+     "/user=admin&password=&channel=1&stream=0.sdp?real_stream",
+     "/user=admin&password=&channel=1&stream=1.sdp?real_stream",
+     "/user=admin&password=&channel=1&stream=2.sdp?real_stream",
+     "/user=admin&password=&channel=2&stream=0.sdp?real_stream",
+     "/user=admin&password=&channel=2&stream=1.sdp?real_stream",
+     "/user=admin&password=tlJwpbo6&channel=1&stream=0.sdp?real_stream",
+     "/user=admin_password=tlJwpbo6_channel=1_stream=0.sdp",
      "/ch0_0.h264",
      "/h264_pcm.sdp",
      "/user=admin_password=_channel=1_stream=0.sdp",
@@ -282,6 +290,109 @@ _FLUSSONIC_PATHS = [
 ]
 
 
+# DevLine («Линия»)
+_DEVLINE_PATHS = [
+    "/live/stream/0",
+    "/live/stream/1",
+    "/live/stream/2",
+    "/cameras/0/streaming/main",
+    "/cameras/0/streaming/sub",
+    "/cameras/1/streaming/main",
+    "/cameras/1/streaming/sub",
+    "/live/ch0",
+    "/live",
+]
+
+# Si-Cam (СИ-КАМ)
+_SICAM_PATHS = [
+    "/ch01/0",
+    "/ch01/1",
+    "/live/main",
+    "/live/sub",
+    "/h264/ch1/main/av_stream",
+    "/onvif1",
+    "/onvif2",
+    "/user=admin_password=admin_channel=1_stream=0.sdp",
+    "/user=admin_password=_channel=1_stream=0.sdp",
+]
+
+# Macroscop VMS (Российская VMS)
+_MACROSCOP_PATHS = [
+    "/channel1",
+    "/channel2",
+    "/channel1?subtype=0",
+    "/channel1?subtype=1",
+    "/channels/1",
+    "/channels/2",
+    "/channel0",
+    "/live",
+    "/",
+]
+
+# Trassir VMS (DSSL)
+_TRASSIR_PATHS = [
+    "/trassir-video/0",
+    "/trassir-video/1",
+    "/trassir-video/2",
+    "/live/0",
+    "/live/1",
+    "/live/ch0",
+    "/live/ch1",
+    "/ch01/0",
+    "/ch01/1",
+    "/",
+]
+
+# RaySharp (Tantos / Falcon Eye / Infinity)
+_RAYSHARP_PATHS = [
+    "/ch0_0.264",
+    "/ch0_1.264",
+    "/ch0_2.264",
+    "/ch1_0.264",
+    "/ch1_1.264",
+    "/ch01.264",
+    "/ch01_sub.264",
+    "/stream0",
+    "/stream1",
+    "/live/ch0",
+    "/",
+]
+
+# TVT (Novicam / Optimus / LTV / Satvision / Polyvision)
+_TVT_PATHS = [
+    "/ch01.264",
+    "/ch02.264",
+    "/ch01_sub.264",
+    "/ch02_sub.264",
+    "/broadcast/ch1",
+    "/broadcast/ch2",
+    "/media/live/1/1",
+    "/media/live/1/2",
+    "/live/ch0",
+    "/",
+]
+
+# IPEYE
+_IPEYE_PATHS = [
+    "/live/ch0",
+    "/live/ch1",
+    "/live",
+    "/h264",
+    "/live/main",
+    "/live/sub",
+    "/",
+]
+
+# Sputnik Intercom
+_SPUTNIK_PATHS = [
+    "/live",
+    "/stream",
+    "/h264",
+    "/video",
+    "/live/ch0",
+    "/",
+]
+
 # Tiandy / Grandstream / Foscam / Generic / Other DVR
 _GENERIC_PATHS = [
     "/av0_0",
@@ -344,6 +455,21 @@ _GENERIC_PATHS = [
 ]
 
 _RTSP_BRAND_PATTERNS = [
+    (r"macroscop|макроскоп", "Macroscop"),
+    (r"trassir|dssl", "Trassir"),
+    (r"vesta|веста", "VeSta"),
+    (r"raysharp|ray_sharp", "RaySharp"),
+    (r"tantos|тантос", "Tantos"),
+    (r"optimus|оптимус", "Optimus"),
+    (r"novicam|новикам", "Novicam"),
+    (r"satvision|сатвижн", "Satvision"),
+    (r"\bltv\b|ltv-cctv", "LTV"),
+    (r"polyvision|поливижн", "Polyvision"),
+    (r"smartec|смартек", "Smartec"),
+    (r"ipeye|айпиай", "IPEYE"),
+    (r"sputnik|спутник", "Sputnik"),
+    (r"proto-x|protox", "Proto-X"),
+    (r"falcon\s*eye", "Falcon Eye"),
     (r"beward", "Beward"),
     (r"2n|helios|verso", "2N"),
     (r"grandstream|gds", "Grandstream"),
@@ -379,7 +505,6 @@ _RTSP_BRAND_PATTERNS = [
     (r"d-link|dlink", "D-Link"),
     (r"digital watchdog|vmax", "Digital Watchdog"),
     (r"sharx", "Sharx"),
-    (r"trassir", "Trassir"),
     (r"embedded net dvr", "Hikvision"),
     (r"ipcam|ip camera|netcam", "Generic IPCam"),
     (r"nvr|dvr|streamer", "Generic DVR"),
@@ -566,8 +691,24 @@ async def probe_rtsp_direct(
                 probe_paths = _TOPSVISION_PATHS + [p for p in db_brand_paths if p not in _TOPSVISION_PATHS]
             elif result["brand"] == "Jovision":
                 probe_paths = ["/0", "/1", "/ch0", "/ch1", "/profile1", "/profile2"] + db_brand_paths
-            elif result["brand"] == "Xiongmai":
+            elif result["brand"] in ("Xiongmai", "VeSta"):
                 probe_paths = _XM_PATHS + [p for p in db_brand_paths if p not in _XM_PATHS]
+            elif result["brand"] == "DevLine":
+                probe_paths = _DEVLINE_PATHS + [p for p in db_brand_paths if p not in _DEVLINE_PATHS]
+            elif result["brand"] == "Si-Cam":
+                probe_paths = _SICAM_PATHS + [p for p in db_brand_paths if p not in _SICAM_PATHS]
+            elif result["brand"] == "Macroscop":
+                probe_paths = _MACROSCOP_PATHS + [p for p in db_brand_paths if p not in _MACROSCOP_PATHS]
+            elif result["brand"] == "Trassir":
+                probe_paths = _TRASSIR_PATHS + [p for p in db_brand_paths if p not in _TRASSIR_PATHS]
+            elif result["brand"] in ("RaySharp", "Tantos", "Falcon Eye"):
+                probe_paths = _RAYSHARP_PATHS + [p for p in db_brand_paths if p not in _RAYSHARP_PATHS]
+            elif result["brand"] in ("TVT", "Novicam", "Optimus", "LTV", "Satvision", "Polyvision", "Smartec", "Proto-X"):
+                probe_paths = _TVT_PATHS + _XM_PATHS + [p for p in db_brand_paths if p not in _TVT_PATHS]
+            elif result["brand"] == "IPEYE":
+                probe_paths = _IPEYE_PATHS + [p for p in db_brand_paths if p not in _IPEYE_PATHS]
+            elif result["brand"] == "Sputnik":
+                probe_paths = _SPUTNIK_PATHS + [p for p in db_brand_paths if p not in _SPUTNIK_PATHS]
             elif result["brand"] == "Hikvision":
                 probe_paths = _HIK_PATHS + [p for p in db_brand_paths if p not in _HIK_PATHS]
             elif result["brand"] == "Dahua":

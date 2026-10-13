@@ -60,9 +60,17 @@ _CAMERA_BRANDS = {
     "vvtk-http-server": "Vivotek",
     "ants_dvr": "Generic DVR",
     "pcviewx": "Generic DVR",
-    "webcamx": "Generic DVR",
     "novicam": "Novicam",
     "ltv": "LTV",
+    "devline": "DevLine",
+    "linia": "DevLine",
+    "девляйн": "DevLine",
+    "линия": "DevLine",
+    "vesta": "VeSta",
+    "веста": "VeSta",
+    "si-cam": "Si-Cam",
+    "sicam": "Si-Cam",
+    "си-кам": "Si-Cam",
     "milesight": "Milesight",
     "tvt": "TVT",
     "sunell": "Sunell",
@@ -106,6 +114,31 @@ _CAMERA_BRANDS = {
     "door station": "Door Station",
     "door phone": "Door Phone",
     "vto": "Dahua VTO (Домофон)",
+    "macroscop": "Macroscop",
+    "макроскоп": "Macroscop",
+    "dssl": "Trassir",
+    "optimus": "Optimus",
+    "оптимус": "Optimus",
+    "satvision": "Satvision",
+    "сатвижн": "Satvision",
+    "tantos": "Tantos",
+    "тантос": "Tantos",
+    "raysharp": "RaySharp",
+    "рейшарп": "RaySharp",
+    "smartec": "Smartec",
+    "смартек": "Smartec",
+    "ipeye": "IPEYE",
+    "айпиай": "IPEYE",
+    "proto-x": "Proto-X",
+    "protox": "Proto-X",
+    "falcon eye": "Falcon Eye",
+    "falconeye": "Falcon Eye",
+    "бевард": "Beward",
+    "поливижн": "Polyvision",
+    "новикам": "Novicam",
+    "ростелеком": "Rostelecom IPCam",
+    "rostelecom": "Rostelecom IPCam",
+    "qtech": "QTECH",
     "com hem": "Com Hem",
     "comhem": "Com Hem",
     "wi-fi hub": "Com Hem Wi-Fi Hub",
@@ -337,6 +370,55 @@ async def _probe_generic_http(
                                 result["auth_required"] = False
                         except Exception:
                             pass
+
+                    # DevLine («Линия») CCTV server detection
+                    if "devline" in server_l or "linia server" in server_l or "devline" in combined or "линия" in combined:
+                        result.update({
+                            "success": True,
+                            "brand": "DevLine",
+                            "model": "DevLine Линия (NVR/VMS)",
+                            "title": title or "DevLine Линия Surveillance",
+                            "http_port": port,
+                            "device_category": "camera",
+                            "web_url": default_web_url,
+                            "snapshot_path": "/cameras/0/image",
+                            "rtsp_path": "/live/stream/0",
+                            "auth_required": resp.status_code == 401,
+                        })
+                        return result
+
+                    # VeSta / Xiongmai Web interface detection
+                    if any(k in combined for k in ("vesta", "dvr_preview", "stream_main.png", "webcapture.jpg", "snap.jpg?jpegcam=")):
+                        v_brand = "VeSta" if "vesta" in combined else "Xiongmai"
+                        result.update({
+                            "success": True,
+                            "brand": v_brand,
+                            "model": title or f"{v_brand} DVR/NVR",
+                            "title": title or f"{v_brand} Web Client",
+                            "http_port": port,
+                            "device_category": "camera",
+                            "web_url": default_web_url,
+                            "snapshot_path": "/webcapture.jpg?command=snap&channel=1",
+                            "rtsp_path": "/user=admin&password=&channel=1&stream=0.sdp?real_stream",
+                            "auth_required": resp.status_code == 401,
+                        })
+                        return result
+
+                    # Si-Cam (СИ-КАМ) detection
+                    if any(k in combined for k in ("si-cam", "sicam", "си-кам")):
+                        result.update({
+                            "success": True,
+                            "brand": "Si-Cam",
+                            "model": title or "Si-Cam Network Camera",
+                            "title": title or "Si-Cam Surveillance",
+                            "http_port": port,
+                            "device_category": "camera",
+                            "web_url": default_web_url,
+                            "snapshot_path": "/cgi-bin/snapshot.cgi",
+                            "rtsp_path": "/live/main",
+                            "auth_required": resp.status_code == 401,
+                        })
+                        return result
 
                     # Com Hem / Sagemcom Wi-Fi Hub detection
                     if "com hem" in combined or "comhem" in combined or "wi-fi hub" in combined or "wifi hub" in combined:
@@ -626,8 +708,10 @@ async def _probe_generic_http(
                         brand = "Hikvision"
                     elif "streamer" in server_l or "flussonic" in server_l or "flussonic" in combined:
                         brand = "Flussonic"
-                    elif "trassir" in server_l or "trassir" in combined:
+                    elif "trassir" in server_l or "trassir" in combined or "dssl" in combined:
                         brand = "Trassir"
+                    elif "macroscop" in server_l or "macroscop" in combined or "макроскоп" in combined:
+                        brand = "Macroscop"
                     elif "reolink" in server_l or "reolink" in combined or ("data-application=web" in text and "reolink" in text.lower()):
                         brand = "Reolink"
 
@@ -658,6 +742,18 @@ async def _probe_generic_http(
                             "device_category": "camera",
                             "web_url": f"{scheme}://{ip}:{port}/",
                         })
+                        if brand == "Macroscop":
+                            result["snapshot_path"] = "/image?channelid=0"
+                            result["rtsp_path"] = "/channel1"
+                        elif brand == "Trassir":
+                            result["snapshot_path"] = "/screenshot/0"
+                            result["rtsp_path"] = "/trassir-video/0"
+                        elif brand in ("RaySharp", "Tantos"):
+                            result["snapshot_path"] = "/cgi-bin/snapshot.cgi?chn=0"
+                            result["rtsp_path"] = "/ch0_0.264"
+                        elif brand in ("TVT", "Novicam", "Optimus", "LTV", "Satvision"):
+                            result["snapshot_path"] = "/cgi-bin/snapshot.cgi?channel=1"
+                            result["rtsp_path"] = "/ch01.264"
                         return result
 
                     # Check router signatures

@@ -288,7 +288,7 @@ async def _capture_job_streams(job, capture_dir, storage):
                         cam.streams.insert(0, _SI(
                             url=web_url,
                             stream_type="web_panel",
-                            verified=True,
+                            verified=False,
                             screenshot_path=str(Path(capture_dir) / Path(sc_url).name),
                         ))
                     if storage:
@@ -729,12 +729,60 @@ async def run_v2_scan_pipeline(
                     camera = None
 
                 if not camera and open_ports:
-                    from .models import HTTP_PORTS as _HTTP_PORTS
-                    if 8291 in open_ports:
+                    from .models import HTTP_PORTS as _HTTP_PORTS, StreamInfo as _SI2
+                    if 9780 in open_ports or 9786 in open_ports:
+                        hp = 9780 if 9780 in open_ports else (80 if 80 in open_ports else 9786)
+                        camera = CameraResult(
+                            ip=ip, brand="DevLine", model="DevLine Линия (NVR/VMS)",
+                            http_port=hp, web_url=f"http://{ip}:{hp}/",
+                            device_category="camera", open_ports=sorted(open_ports),
+                            protocols=["devline_vms", "http"]
+                        )
+                        camera.streams.append(_SI2(url=f"http://{ip}:{hp}/cameras/0/image", stream_type="http_snapshot"))
+                        camera.streams.append(_SI2(url=f"rtsp://{ip}:554/live/stream/0", stream_type="rtsp"))
+                    elif 34567 in open_ports or 34599 in open_ports:
+                        camera = CameraResult(
+                            ip=ip, brand="VeSta / Xiongmai", model="NetIP DVR/NVR",
+                            rtsp_port=554, device_category="camera", open_ports=sorted(open_ports),
+                            protocols=["xiongmai_sofia", "vesta"]
+                        )
+                        camera.streams.append(_SI2(url=f"rtsp://{ip}:554/user=admin&password=&channel=1&stream=0.sdp?real_stream", stream_type="rtsp"))
+                        camera.streams.append(_SI2(url=f"rtsp://{ip}:554/user=admin_password=_channel=1_stream=0.sdp", stream_type="rtsp"))
+                    elif 502 in open_ports:
+                        camera = CameraResult(
+                            ip=ip, brand="Modbus TCP", model="Sensors / Automation PLC",
+                            device_category="industrial", open_ports=sorted(open_ports),
+                            protocols=["modbus"]
+                        )
+                    elif 2404 in open_ports:
+                        camera = CameraResult(
+                            ip=ip, brand="IEC 60870-5-104", model="Telecontrol / ASUDD",
+                            device_category="industrial", open_ports=sorted(open_ports),
+                            protocols=["iec104"]
+                        )
+                    elif 3389 in open_ports:
+                        camera = CameraResult(
+                            ip=ip, brand="Microsoft RDP", model="Industrial PC / ANPR Station",
+                            device_category="device", open_ports=sorted(open_ports),
+                            protocols=["rdp"]
+                        )
+                    elif 5900 in open_ports:
+                        camera = CameraResult(
+                            ip=ip, brand="VNC", model="Remote Desktop / Terminal",
+                            device_category="device", open_ports=sorted(open_ports),
+                            protocols=["vnc"]
+                        )
+                    elif any(p in (8291, 8728, 8729) for p in open_ports):
                         camera = CameraResult(
                             ip=ip, brand="MikroTik", model="RouterOS",
                             device_category="router", open_ports=sorted(open_ports),
-                            protocols=["winbox"]
+                            protocols=["winbox", "router"]
+                        )
+                    elif any(p in (1701, 1723) for p in open_ports):
+                        camera = CameraResult(
+                            ip=ip, brand="VPN Tunnel", model="PPTP / L2TP Gateway",
+                            device_category="router", open_ports=sorted(open_ports),
+                            protocols=["vpn", "router"]
                         )
                     elif any(p in _HTTP_PORTS for p in open_ports):
                         hp = next(p for p in open_ports if p in _HTTP_PORTS)

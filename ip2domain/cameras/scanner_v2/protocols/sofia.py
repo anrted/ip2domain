@@ -112,9 +112,11 @@ async def probe_sofia(
 
     creds_to_test = credentials or [
         ("admin", ""),
+        ("admin", "tlJwpbo6"),
         ("admin", "admin"),
         ("admin", "123456"),
         ("admin", "12345"),
+        ("admin", "1234"),
         ("root", "root"),
         ("default", ""),
     ]
@@ -165,7 +167,7 @@ async def probe_sofia(
                     session_id = raw_sess
                 else:
                     session_id = resp_sess
-                result["credentials"] = {"user": user, "password": pwd}
+                result["credentials"] = {"user": valid_user, "password": valid_pass}
                 break
 
         result["success"] = True  # Responded to Sofia framing!
@@ -184,6 +186,11 @@ async def probe_sofia(
             if unp and unp[2]:
                 s_info = unp[2].get("SystemInfo", {})
                 result["raw_info"] = s_info
+                hw = (s_info.get("HardWare", "") or "").lower()
+                dm = (s_info.get("DeviceModel", "") or "").lower()
+                if any(k in hw or k in dm for k in ("vesta", "vc-", "vs-", "vcg")):
+                    result["brand"] = "VeSta"
+                    result["protocols"].append("vesta")
                 result["model"] = s_info.get("HardWare", "") or s_info.get("DeviceModel", "Xiongmai NVR")
                 result["serial"] = s_info.get("SerialNo", "")
                 result["firmware"] = s_info.get("SoftWareVersion", "")
@@ -218,10 +225,16 @@ async def probe_sofia(
         num_channels = min(16, max(1, result["channels"]))
 
         for ch in range(1, num_channels + 1):
-            # Xiongmai RTSP channel format: /user=admin_password=_channel=1_stream=0.sdp or /live/ch0 or /1/h264major
-            result["streams"].append(f"rtsp://{auth_part}{ip}:{rtsp_port}/user={valid_user}&password={valid_pass}&channel={ch}&stream=0.sdp")
+            # VeSta / Xiongmai RTSP channel formats
+            result["streams"].append(f"rtsp://{auth_part}{ip}:{rtsp_port}/user={valid_user}&password={valid_pass}&channel={ch}&stream=0.sdp?real_stream")
+            result["streams"].append(f"rtsp://{auth_part}{ip}:{rtsp_port}/user={valid_user}&password={valid_pass}&channel={ch}&stream=1.sdp?real_stream")
+            result["streams"].append(f"rtsp://{auth_part}{ip}:{rtsp_port}/user={valid_user}&password={valid_pass}&channel={ch}&stream=2.sdp?real_stream")
+            result["streams"].append(f"rtsp://{auth_part}{ip}:{rtsp_port}/user={valid_user}_password={valid_pass}_channel={ch}_stream=0.sdp")
+            result["streams"].append(f"rtsp://{auth_part}{ip}:{rtsp_port}/user={valid_user}_password={valid_pass}_channel={ch}_stream=1.sdp")
             result["streams"].append(f"rtsp://{auth_part}{ip}:{rtsp_port}/live/ch{ch-1}")
             result["streams"].append(f"rtsp://{auth_part}{ip}:{rtsp_port}/1/h264major")
+        result["streams"].append(f"rtsp://{auth_part}{ip}:{rtsp_port}/11")
+        result["streams"].append(f"rtsp://{auth_part}{ip}:{rtsp_port}/12")
 
     except Exception as exc:
         logger.debug("[Sofia] Error communicating with %s:%s: %s", ip, port, exc)

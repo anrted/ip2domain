@@ -239,6 +239,29 @@ async def add_go2rtc_stream(req: Request):
                 ):
                     if extra not in expanded_urls:
                         expanded_urls.append(extra)
+        elif parsed.scheme in ("http", "https"):
+            target_lower = raw_target.lower()
+            is_hls = ".m3u8" in target_lower or "/hls" in target_lower
+            is_mjpeg = any(k in target_lower for k in ("mjpg", "mjpeg", "video.cgi", "faststream", "container=mjpeg", "action=stream", "videostream"))
+            is_flv = ".flv" in target_lower
+
+            if is_mjpeg:
+                # MJPEG: try native go2rtc mjpeg module first, then ffmpeg copy stream, then raw URL
+                for cand in (f"mjpeg:{raw_target}", f"ffmpeg:{raw_target}#video=copy", raw_target):
+                    if cand not in expanded_urls:
+                        expanded_urls.append(cand)
+            elif is_hls or is_flv:
+                for cand in (raw_target, f"ffmpeg:{raw_target}#video=copy"):
+                    if cand not in expanded_urls:
+                        expanded_urls.append(cand)
+            else:
+                for cand in (raw_target, f"ffmpeg:{raw_target}#video=copy"):
+                    if cand not in expanded_urls:
+                        expanded_urls.append(cand)
+        elif parsed.scheme in ("rtmp", "rtmps"):
+            for cand in (raw_target, f"ffmpeg:{raw_target}#video=copy"):
+                if cand not in expanded_urls:
+                    expanded_urls.append(cand)
         else:
             if u not in expanded_urls:
                 expanded_urls.append(u)

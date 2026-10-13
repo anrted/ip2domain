@@ -216,7 +216,7 @@ def _sanitize_v2_result(r: dict) -> dict:
             cleaned_streams = [{
                 "url": web_url,
                 "type": "web_panel",
-                "verified": bool(r.get("web_screenshot")),
+                "verified": False,
                 "screenshot": r.get("web_screenshot", ""),
             }]
         r["streams"] = cleaned_streams
@@ -545,8 +545,8 @@ async def get_stream_preview(
                         res["web_screenshot"] = sc_url
                         for s in res.get("streams", []):
                             if s.get("type") == "web_panel" or s.get("url") == stream_url:
-                                s["verified"] = True
-                                s["verification_status"] = "verified"
+                                s["verified"] = False
+                                s["verification_status"] = "web_captured"
                                 s["screenshot"] = sc_url
                         storage.save_v2_result(res)
                     return FileResponse(str(full_path), media_type="image/jpeg", headers={"Cache-Control": "private, max-age=5"})

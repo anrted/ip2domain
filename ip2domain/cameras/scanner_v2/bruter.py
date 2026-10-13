@@ -25,6 +25,7 @@ _DEFAULT_RTSP_BRUTE_PYTHON = _DEFAULT_RTSP_BRUTE_DIR / ".venv" / "bin" / "python
 DEFAULT_USERNAMES = [
     "admin",
     "root",
+    "web",
     "service",
     "user",
     "operator",
@@ -38,6 +39,8 @@ DEFAULT_PASSWORDS = [
     "admin",
     "12345",
     "123456",
+    "1234",
+    "tlJwpbo6",
     "12345678",
     "123456789",
     "admin123",

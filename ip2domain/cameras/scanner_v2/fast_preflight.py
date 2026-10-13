@@ -167,6 +167,62 @@ async def run_fast_preflight(
                 res.target_protocols = ["sprecord"]
                 return res
 
+            # G. DevLine («Линия») CCTV VMS
+            if "devline" in combined or "linia server" in server_l or "devline linia server" in combined:
+                res.category = "cctv_devline"
+                res.brand = "DevLine"
+                res.model = res.title or "DevLine Линия (NVR/VMS)"
+                res.target_protocols = ["vms", "generic", "onvif", "rtsp"]
+                return res
+
+            # H. VeSta / Xiongmai DVR
+            if any(k in combined for k in ("vesta", "dvr_preview", "stream_main.png")):
+                res.category = "cctv_vesta"
+                res.brand = "VeSta" if "vesta" in combined else "Xiongmai"
+                res.model = res.title or "VeSta DVR/NVR"
+                res.target_protocols = ["sofia", "onvif", "rtsp", "generic"]
+                return res
+
+            # I. Si-Cam
+            if any(k in combined for k in ("si-cam", "sicam", "си-кам")):
+                res.category = "cctv_sicam"
+                res.brand = "Si-Cam"
+                res.model = res.title or "Si-Cam Network Camera"
+                res.target_protocols = ["onvif", "rtsp", "generic", "sofia"]
+                return res
+
+            # J. Macroscop VMS
+            if "macroscop" in combined or "макроскоп" in combined or "<channels>" in combined:
+                res.category = "cctv_macroscop"
+                res.brand = "Macroscop"
+                res.model = res.title or "Macroscop VMS Server"
+                res.target_protocols = ["vms", "generic", "rtsp"]
+                return res
+
+            # K. Trassir VMS
+            if "trassir" in combined or "dssl" in combined:
+                res.category = "cctv_trassir"
+                res.brand = "Trassir"
+                res.model = res.title or "Trassir NVR/VMS"
+                res.target_protocols = ["vms", "generic", "rtsp"]
+                return res
+
+            # L. RaySharp DVR / IPCam (Tantos, Falcon Eye, etc.)
+            if any(k in combined for k in ("raysharp", "ray_sharp", "рейшарп")):
+                res.category = "cctv_raysharp"
+                res.brand = "RaySharp"
+                res.model = res.title or "RaySharp DVR"
+                res.target_protocols = ["generic", "rtsp", "onvif"]
+                return res
+
+            # M. TVT DVR / IPCam (Novicam, Optimus, LTV, Satvision)
+            if any(k in combined for k in ("tvt", "nvms-1000", "nvms-1200", "netdvr")):
+                res.category = "cctv_tvt"
+                res.brand = "TVT"
+                res.model = res.title or "TVT DVR"
+                res.target_protocols = ["generic", "rtsp", "onvif"]
+                return res
+
             # G. Known Routers
             router_brands = [
                 ("MikroTik", ("mikrotik", "routeros", "webfig")),

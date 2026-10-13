@@ -737,26 +737,37 @@ async function v2LoadStoredResults(force = false, append = false) {
 
         if (append) {
             const existingMap = new Map((window.V2State.results || []).map((r, i) => [r.ip, i]));
+            const newItems = [];
             for (const item of incoming) {
                 if (!existingMap.has(item.ip)) {
                     window.V2State.results.push(item);
                     existingMap.set(item.ip, window.V2State.results.length - 1);
+                    newItems.push(item);
                 }
             }
+            window.V2State.visibleCount = (window.V2State.results || []).length;
+            window.V2State.totalMatching = (data.total_matching !== undefined) ? data.total_matching : (window.V2State.results || []).length;
+            window.V2State.totalInDb = (data.total_db !== undefined) ? data.total_db : window.V2State.totalMatching;
+            if (data.stats) {
+                window.V2State.stats = data.stats;
+            }
+            window.V2State.resultsLoaded = true;
+
+            v2UpdateResultsCount();
+            v2RenderResults(true, newItems);
         } else {
             window.V2State.results = incoming;
-        }
+            window.V2State.visibleCount = (window.V2State.results || []).length;
+            window.V2State.totalMatching = (data.total_matching !== undefined) ? data.total_matching : (window.V2State.results || []).length;
+            window.V2State.totalInDb = (data.total_db !== undefined) ? data.total_db : window.V2State.totalMatching;
+            if (data.stats) {
+                window.V2State.stats = data.stats;
+            }
+            window.V2State.resultsLoaded = true;
 
-        window.V2State.visibleCount = (window.V2State.results || []).length;
-        window.V2State.totalMatching = (data.total_matching !== undefined) ? data.total_matching : (window.V2State.results || []).length;
-        window.V2State.totalInDb = (data.total_db !== undefined) ? data.total_db : window.V2State.totalMatching;
-        if (data.stats) {
-            window.V2State.stats = data.stats;
+            v2UpdateResultsCount();
+            v2RenderResults(false);
         }
-        window.V2State.resultsLoaded = true;
-
-        v2UpdateResultsCount();
-        v2RenderResults();
         const card = document.getElementById('v2-results-card');
         if (card) {
             card.classList.add('visible');
@@ -775,19 +786,23 @@ window.v2LoadStoredResults = v2LoadStoredResults;
 
 const _V2_CAMERA_BRAND_PATTERNS = [
     'hikvision', 'hiwatch', 'dahua', 'axis', 'reolink', 'trassir', 'xiongmai', 'flussonic',
-    'streamer', 'dnvrs', 'rvi', 'uniview', 'unv', 'tiandy', 'mobotix', 'generic nvr', 'generic dvr',
+    'streamer', 'dnvrs', 'rvi-', 'rvi cctv', 'rvi group', 'uniview', 'unv', 'tiandy', 'mobotix', 'generic nvr', 'generic dvr',
     'generic ipcam', 'generic webcam', 'generic surveillance', 'generic video server', 'generic rtsp',
-    'unknown camera', 'tp-link', 'ezviz', 'hilook', 'imou', 'lorex', 'foscam', 'amcrest', 'hanwha',
+    'unknown camera', 'ezviz', 'hilook', 'imou', 'lorex', 'foscam', 'amcrest', 'hanwha',
     'wisenet', 'samsung', 'topsvision', 'topsee', 'jovision', 'h264', 'netip', 'netsurveillance',
     'cp plus', 'bosch', 'pelco', 'vivotek', 'grandstream', 'beward', 'activecam', 'polyvision',
-    'novicam', 'ltv', 'milesight', 'tvt', 'sunell', 'avigilon', 'flir', 'ubiquiti unifi', 'tapo',
+    'novicam', 'ltv', 'milesight', 'tvt', 'sunell', 'avigilon', 'flir', 'unifi protect', 'unifi video', 'tapo',
     'tl-sc', 'vstarcam', 'sricam', 'srihome', 'herospeed', 'onvif', 'unimo', 'udrocx', 'ants',
-    'vvtk', 'nd8322p'
+    'vvtk', 'nd8322p', 'devline', 'линия', 'vesta', 'веста', 'si-cam', 'sicam', 'си-кам',
+    'macroscop', 'макроскоп', 'dssl', 'optimus', 'оптимус', 'satvision', 'сатвижн',
+    'tantos', 'тантос', 'raysharp', 'рейшарп', 'smartec', 'смартек', 'ipeye', 'айпиай',
+    'proto-x', 'protox', 'falcon eye', 'falconeye', 'sputnik', 'ростелеком', 'qtech'
 ];
 
 const _V2_CAMERA_PROTOCOLS = [
     'onvif', 'rtsp', 'rtsp_direct', 'dhip', 'sofia', 'hls', 'webrtc', 'isapi',
-    'dahua_cgi', 'hikvision_isapi', 'rtmp'
+    'dahua_cgi', 'hikvision_isapi', 'rtmp', 'vesta', 'devline_vms', 'macroscop_vms', 'trassir_vms',
+    'raysharp', 'tvt_media'
 ];
 
 function _isSpRecord(cam) {
@@ -836,36 +851,39 @@ window._isServerDevice = _isServerDevice;
 function _isCameraDevice(c) {
     if (!c || _isSpRecord(c)) return false;
 
-    // Explicit non-camera check if not also tagged camera
-    const isExplicitNonCam = ['generic_web', 'router', 'server', 'iot', 'industrial', 'device'].includes(c.device_category);
+    const brand = (c.brand || '').toLowerCase();
+    const model = (c.model || '').toLowerCase();
     const hasVideoStream = (c.streams || []).some(s => 
         (s.type !== 'web_panel' && s.stream_type !== 'web_panel') &&
         (s.verified || ['rtsp', 'rtsps', 'mjpeg', 'hls', 'webrtc'].includes(s.type || s.stream_type) || (s.screenshot && String(s.screenshot).trim().length > 0))
     );
+
+    // If pure generic web device or web service and has NO real video stream, never classify as camera
+    if ((brand.includes('generic web device') || brand === 'generic' || model === 'web service') && !hasVideoStream) {
+        return false;
+    }
+
+    // Explicit non-camera check if not also tagged camera
+    const isExplicitNonCam = ['generic_web', 'router', 'server', 'iot', 'industrial', 'device'].includes(c.device_category);
     if (isExplicitNonCam && !hasVideoStream && !_hasCategory(c, 'camera') && !_hasCategory(c, 'intercom')) {
         return false;
     }
 
+    if (hasVideoStream) return true;
     if (_hasCategory(c, 'camera')) return true;
     if (_hasCategory(c, 'intercom')) return true;
 
     // Brand matches known camera brand
-    const brand = (c.brand || '').toLowerCase();
-    if (_V2_CAMERA_BRAND_PATTERNS.some(b => brand.includes(b))) return true;
+    if (_V2_CAMERA_BRAND_PATTERNS.some(b => {
+        if (b === 'rvi') return brand.includes('rvi-') || brand.includes('rvi cctv');
+        return brand.includes(b);
+    })) return true;
 
     // Known camera protocols
     const protos = c.protocols || [];
     if (_V2_CAMERA_PROTOCOLS.some(p => protos.includes(p))) return true;
 
-    // Has video stream
-    if (hasVideoStream) return true;
-
-    // If pure non-camera without video
     if (isExplicitNonCam) return false;
-
-    // Has video streams and is not generic web
-    if ((c.streams || []).some(s => s.type !== 'web_panel' && s.stream_type !== 'web_panel') && !brand.includes('generic web device') && !brand.includes('web service')) return true;
-
     return false;
 }
 window._isCameraDevice = _isCameraDevice;
@@ -1106,7 +1124,7 @@ function v2GetFilteredResults() {
 }
 window.v2GetFilteredResults = v2GetFilteredResults;
 
-function v2RenderResults() {
+function v2RenderResults(append = false, newItems = null) {
     const grid = document.getElementById('v2-camera-grid');
     if (!grid) return;
 
@@ -1126,10 +1144,13 @@ function v2RenderResults() {
         return;
     }
 
-    // Default sorting: cameras with preview / screenshot first!
-    items = [...items].sort((a, b) => _cameraScore(b) - _cameraScore(a));
+    if (append && Array.isArray(newItems) && newItems.length > 0) {
+        const newHtml = newItems.map(cam => v2RenderCameraCard(cam)).join('');
+        grid.insertAdjacentHTML('beforeend', newHtml);
+    } else {
+        grid.innerHTML = items.map(cam => v2RenderCameraCard(cam)).join('');
+    }
 
-    grid.innerHTML = items.map(cam => v2RenderCameraCard(cam)).join('');
     initV2LazyLoading();
     const totalMatching = (window.V2State.totalMatching !== undefined) ? window.V2State.totalMatching : items.length;
     v2RenderPagination(items.length, totalMatching);
@@ -1208,6 +1229,9 @@ window.initV2LazyLoading = initV2LazyLoading;
 
 function _streamScore(s) {
     let score = 0;
+    if (s.type === 'web_panel' || s.stream_type === 'web_panel') {
+        return s.screenshot ? 10 : 0;
+    }
     if (s.screenshot && String(s.screenshot).trim().length > 0) score += 1000;
     if (s.verified) score += 500;
     if (s.width && s.height) score += Math.min(100, Math.floor((s.width * s.height) / 20000));
@@ -1343,7 +1367,8 @@ function v2RenderCameraCard(cam) {
         `;
     }
 
-    const verified = streams.some(s => s.verified) || Boolean(cam.web_screenshot);
+    const hasVerifiedVideo = streams.some(s => s.verified && s.stream_type !== 'web_panel' && s.type !== 'web_panel');
+    const verified = hasVerifiedVideo;
     const catBadges = [];
     const allCats = Array.isArray(cam.categories) && cam.categories.length > 0
         ? cam.categories
@@ -1377,7 +1402,7 @@ function v2RenderCameraCard(cam) {
     } else if (allCats.includes('camera') || allCats.includes('intercom')) {
         authBadge = is401
             ? '<span class="v2-auth-badge auth-locked" title="Один или несколько сервисов требуют авторизацию">🔒 Требуется пароль</span>'
-            : (verified
+            : (hasVerifiedVideo
                 ? '<span class="v2-auth-badge auth-open">✓ Видео подтверждено</span>'
                 : '<span class="v2-auth-badge">○ Видео не подтверждено</span>');
     } else {
@@ -1395,8 +1420,9 @@ function v2RenderCameraCard(cam) {
     const protocols = (cam.protocols || []).slice(0, 5);
     const badges = protocols.map(p => `<span class="v2-proto-badge ${_protoBadgeClass(p)}">${_protoLabel(p)}</span>`).join('');
 
-    // Stream selector dropdown (top 15 streams sorted by quality/preview)
-    const hasMediaStreams = streams.some(s => s.stream_type === 'rtsp' || s.stream_type === 'rtmp' || s.stream_type === 'hls');
+    // Filter real media streams (RTSP, RTMP, HLS, snapshot, MJPEG) excluding web panels
+    const mediaStreams = streams.filter(s => s.stream_type !== 'web_panel' && s.type !== 'web_panel');
+    const hasMediaStreams = mediaStreams.length > 0;
     let streamSelectorHtml = '';
     if (isAudioDevice) {
         const recordCountMatch = (cam.model || '').match(/\(([^)]+)\)/);
@@ -1415,8 +1441,8 @@ function v2RenderCameraCard(cam) {
                 </div>
             </div>
         `;
-    } else if (isNonCamera && !hasMediaStreams) {
-        const titleText = cam.web_title || (isRouter ? 'Панель управления' : (isWebDevice ? 'Веб-сервис' : 'Сетевой узел'));
+    } else if (!hasMediaStreams) {
+        const titleText = cam.web_title || (isRouter ? 'Панель управления' : (isWebDevice ? 'Веб-сервис' : 'Веб-интерфейс'));
         streamSelectorHtml = `
             <div class="v2-stream-selector-row">
                 <div class="v2-stream-info-header">
@@ -1433,8 +1459,8 @@ function v2RenderCameraCard(cam) {
                 </div>
             </div>
         `;
-    } else if (totalStreams > 0) {
-        const streamOptions = streams.map((s, idx) => {
+    } else {
+        const streamOptions = mediaStreams.map((s, idx) => {
             const shortPath = _esc(s.url);
             const isSel = s.url === currentStreamUrl ? 'selected' : '';
             let tag = '';
@@ -1444,22 +1470,19 @@ function v2RenderCameraCard(cam) {
             return `<option value="${_esc(s.url)}" ${isSel}>#${idx + 1} ${shortPath}${tag}</option>`;
         }).join('');
 
-        const moreOption = '';
-
-        const confirmedStreams = streams.filter(s => s.verified).length;
-        const streamCountText = `${confirmedStreams} подтверждено · ${totalStreams} URL`;
+        const confirmedStreams = mediaStreams.filter(s => s.verified).length;
+        const streamCountText = `${confirmedStreams} подтверждено · ${mediaStreams.length} URL`;
 
         streamSelectorHtml = `
             <div class="v2-stream-selector-row">
                 <div class="v2-stream-info-header">
                     <span style="color:rgba(255,255,255,0.45)">Поток:</span>
-                    <span class="v2-stream-count-badge" onclick="v2OpenStreamModal('${_esc(cam.ip)}')" title="Открыть полный список ${totalStreams} потоков">
+                    <span class="v2-stream-count-badge" onclick="v2OpenStreamModal('${_esc(cam.ip)}')" title="Открыть полный список ${mediaStreams.length} потоков">
                         🎥 ${streamCountText}
                     </span>
                 </div>
                 <select class="v2-stream-select" id="v2-select-${safeIp}" onchange="v2OnStreamChange('${_esc(cam.ip)}', this.value)">
                     ${streamOptions}
-                    ${moreOption}
                 </select>
             </div>
         `;
@@ -1809,7 +1832,12 @@ if (typeof window._protoBadgeClass !== 'function') {
         if (p.includes('hls')) return 'hls';
         if (p.includes('mjpeg')) return 'mjpeg';
         if (p.includes('rtmp')) return 'rtmp';
+        if (p.includes('flv')) return 'flv';
         if (p.includes('rtsp')) return 'rtsp';
+        if (p.includes('sofia') || p.includes('vesta') || p.includes('xiongmai')) return 'sofia';
+        if (p.includes('webrtc') || p.includes('whep')) return 'webrtc';
+        if (p.includes('vms') || p.includes('devline') || p.includes('macroscop') || p.includes('trassir') || p.includes('mobotix') || p.includes('frigate') || p.includes('blue_iris') || p.includes('avtech')) return 'vms';
+        if (p.includes('snapshot')) return 'snapshot';
         return 'generic';
     };
 }
@@ -1842,34 +1870,136 @@ if (typeof window.v2CopyUrl !== 'function') {
         }
     };
 }
-if (typeof window.v2AddSpecificStreamToGo2rtc !== 'function') {
-    window.v2AddSpecificStreamToGo2rtc = async function (ip, streamUrl, channelIdx) {
-        const safeIp = ip.replace(/\./g, '_');
-        const streamName = `v2_${safeIp}_ch${channelIdx}`;
-        try {
-            const isHttp = streamUrl.startsWith('http://') || streamUrl.startsWith('https://');
-            const urls = isHttp ? [streamUrl] : [streamUrl, `ffmpeg:${streamUrl}#video=copy`];
-            const resp = await fetch("/api/go2rtc/streams", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    name: streamName,
-                    url: urls
-                })
-            });
-            if (resp.ok) {
-                alert(`Поток #${channelIdx} (${streamName}) успешно добавлен в go2rtc!`);
-            } else {
-                const data = await resp.json().catch(() => ({}));
-                alert('Ошибка добавления: ' + (data.detail || resp.statusText));
-            }
-        } catch (e) {
-            alert('Ошибка сети: ' + e.message);
+
+window.v2GetStreamKind = function (url, st) {
+    if (!url) return 'unknown';
+    const u = url.toLowerCase();
+    const type = (st && (st.type || st.stream_type) || '').toLowerCase();
+    if (type === 'web_panel') return 'web_panel';
+    if (u.startsWith('rtsp://') || u.startsWith('rtsps://') || type === 'rtsp') return 'rtsp';
+    if (u.startsWith('rtmp://') || u.startsWith('rtmps://') || type === 'rtmp') return 'rtmp';
+    if (u.includes('.m3u8') || u.includes('/hls/') || type === 'hls') return 'hls';
+    if (
+        type === 'mjpeg' ||
+        u.includes('.mjpg') ||
+        u.includes('mjpeg') ||
+        u.includes('video.cgi') ||
+        u.includes('faststream') ||
+        u.includes('container=mjpeg') ||
+        u.includes('action=stream') ||
+        u.includes('videostream')
+    ) {
+        return 'mjpeg';
+    }
+    if (u.includes('.flv') || type === 'flv') return 'flv';
+    if (u.startsWith('webrtc://') || u.startsWith('whep:') || u.includes('/whep') || type === 'webrtc' || type === 'whep') return 'webrtc';
+    if (type === 'http_audio') return 'http_audio';
+    if (
+        type === 'http_snapshot' ||
+        u.includes('.jpg') ||
+        u.includes('.jpeg') ||
+        u.includes('snapshot') ||
+        u.includes('/screenshot') ||
+        u.includes('/image') ||
+        u.includes('latest.jpg')
+    ) {
+        return 'http_snapshot';
+    }
+    if (u.startsWith('http://') || u.startsWith('https://')) return 'http_stream';
+    return 'generic';
+};
+
+window.v2IsPlayableVideoStream = function (st) {
+    if (!st) return false;
+    const u = (typeof st === 'string' ? st : (st.url || '')).toLowerCase();
+    const type = (typeof st === 'object' ? (st.type || st.stream_type || '') : '').toLowerCase();
+    if (type === 'web_panel') return false;
+    if (['rtsp', 'rtsps', 'rtmp', 'rtmps', 'hls', 'mjpeg', 'flv', 'webrtc', 'whep'].includes(type)) return true;
+    if (u.startsWith('rtsp://') || u.startsWith('rtsps://') || u.startsWith('rtmp://') || u.startsWith('rtmps://') || u.startsWith('webrtc://') || u.startsWith('whep:')) return true;
+    if (u.includes('.m3u8') || u.includes('/hls/')) return true;
+    if (u.includes('.mjpg') || u.includes('mjpeg') || u.includes('video.cgi') || u.includes('faststream') || u.includes('container=mjpeg') || u.includes('action=stream') || u.includes('videostream')) return true;
+    if (u.includes('.flv')) return true;
+    return false;
+};
+
+window.v2InjectCredentials = function (url, user, pass) {
+    if (!url || !user) return url;
+    const credsPart = `${encodeURIComponent(user)}:${encodeURIComponent(pass || '')}@`;
+    if (url.includes(':***@')) {
+        return url.replace(/:[^\/@]+@/, `:${encodeURIComponent(pass || '')}@`);
+    }
+    const schemeSep = url.indexOf('://');
+    if (schemeSep === -1) return url;
+    const scheme = url.substring(0, schemeSep);
+    const rest = url.substring(schemeSep + 3);
+    const hostPart = rest.split('/')[0];
+    if (hostPart.includes('@')) {
+        return url;
+    }
+    return `${scheme}://${credsPart}${rest}`;
+};
+
+window.v2GetBrandHint = function (brand, model) {
+    const b = (brand || '').toLowerCase();
+    const m = (model || '').toLowerCase();
+    if (b.includes('devline') || b.includes('линия')) return 'DevLine («Линия»): admin / (без пароля)';
+    if (b.includes('macroscop') || b.includes('макроскоп')) return 'Macroscop VMS: root / root (или admin / admin)';
+    if (b.includes('trassir')) return 'Trassir VMS: admin / 12345 (или admin / admin)';
+    if (b.includes('vesta') || b.includes('xiongmai') || b.includes('sofia') || m.includes('xiongmai')) return 'VeSta / Xiongmai (34567): admin / (без пароля)';
+    if (b.includes('hikvision') || b.includes('hiwatch')) return 'Hikvision / HiWatch: admin / 12345 (или admin12345)';
+    if (b.includes('dahua')) return 'Dahua: admin / admin (или admin123)';
+    if (b.includes('axis')) return 'Axis: root / pass (или root / root)';
+    if (b.includes('mobotix')) return 'Mobotix (MXPEG): admin / meinsm';
+    if (b.includes('frigate')) return 'Frigate NVR: обычно без авторизации';
+    if (b.includes('blue iris')) return 'Blue Iris: логин учетной записи VMS';
+    if (b.includes('avtech')) return 'Avtech: admin / admin';
+    if (b.includes('raysharp') || b.includes('tvt')) return 'TVT / RaySharp: admin / 123456 (или без пароля)';
+    return 'Камера: логин обычно admin';
+};
+
+window.v2AddSpecificStreamToGo2rtc = async function (ip, streamUrl, channelIdx) {
+    const safeIp = ip.replace(/\./g, '_');
+    const streamName = `v2_${safeIp}_ch${channelIdx}`;
+    try {
+        const uLower = (streamUrl || '').toLowerCase();
+        let urls = [streamUrl];
+        if (streamUrl.startsWith('rtsp://') || streamUrl.startsWith('rtsps://')) {
+            urls = [streamUrl, `ffmpeg:${streamUrl}#video=copy`, `ffmpeg:${streamUrl}#input=rtsp_http#video=copy`];
+        } else if (uLower.includes('.m3u8')) {
+            urls = [streamUrl, `ffmpeg:${streamUrl}#video=copy`];
+        } else if (uLower.includes('mjpg') || uLower.includes('mjpeg') || uLower.includes('video.cgi') || uLower.includes('faststream') || uLower.includes('container=mjpeg')) {
+            urls = [`mjpeg:${streamUrl}`, `ffmpeg:${streamUrl}#video=copy`, streamUrl];
+        } else if (uLower.includes('.flv')) {
+            urls = [streamUrl, `ffmpeg:${streamUrl}#video=copy`];
+        } else {
+            urls = [streamUrl, `ffmpeg:${streamUrl}#video=copy`];
         }
-    };
-}
+        const resp = await fetch("/api/go2rtc/streams", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                name: streamName,
+                url: urls
+            })
+        });
+        if (resp.ok) {
+            window.v2CopyUrl && window.v2CopyUrl ? null : null;
+            const toast = document.createElement('div');
+            toast.textContent = `✓ Поток #${channelIdx} (${streamName}) добавлен в go2rtc!`;
+            toast.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:rgba(16,185,129,0.95);color:#fff;padding:8px 16px;border-radius:8px;font-size:13px;z-index:999999;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 2500);
+        } else {
+            const data = await resp.json().catch(() => ({}));
+            alert('Ошибка добавления: ' + (data.detail || resp.statusText));
+        }
+    } catch (e) {
+        alert('Ошибка сети: ' + e.message);
+    }
+};
 
 window._v2LiveSnapshotTimer = null;
+window._v2LiveSnapshotInterval = 1200;
 
 function v2ToggleLiveSnapshot(ip, streamUrl) {
     const badge = document.getElementById('v2-modal-live-badge');
@@ -1899,10 +2029,94 @@ function v2ToggleLiveSnapshot(ip, streamUrl) {
         v2RefreshSingleSnapshot(ip, streamUrl);
         window._v2LiveSnapshotTimer = setInterval(() => {
             v2RefreshSingleSnapshot(ip, streamUrl);
-        }, 1200);
+        }, window._v2LiveSnapshotInterval || 1200);
     }
 }
 window.v2ToggleLiveSnapshot = v2ToggleLiveSnapshot;
+
+function v2SetSnapshotInterval(ms, ip, streamUrl) {
+    window._v2LiveSnapshotInterval = ms;
+    const btns = document.querySelectorAll('.v2-snap-speed-btn');
+    btns.forEach(b => {
+        b.style.background = 'rgba(255,255,255,0.08)';
+        b.style.color = '#cbd5e1';
+    });
+    const cur = document.getElementById(`v2-speed-${ms}`);
+    if (cur) {
+        cur.style.background = 'rgba(99,102,241,0.8)';
+        cur.style.color = '#fff';
+    }
+    if (window._v2LiveSnapshotTimer) {
+        clearInterval(window._v2LiveSnapshotTimer);
+        window._v2LiveSnapshotTimer = setInterval(() => {
+            v2RefreshSingleSnapshot(ip, streamUrl);
+        }, ms);
+    }
+}
+window.v2SetSnapshotInterval = v2SetSnapshotInterval;
+
+function v2DownloadCurrentSnapshot(ip, streamUrl, currentIdx = 0) {
+    const img = document.getElementById('v2-modal-live-img');
+    if (!img || !img.src) return;
+    const a = document.createElement('a');
+    a.href = img.src;
+    a.download = `cam_${ip.replace(/\./g, '_')}_ch${currentIdx + 1}_${Date.now()}.jpg`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+}
+window.v2DownloadCurrentSnapshot = v2DownloadCurrentSnapshot;
+
+function v2FullscreenPlayer() {
+    const el = document.getElementById('v2-player-viewport');
+    if (!el) return;
+    if (document.fullscreenElement) {
+        document.exitFullscreen().catch(() => {});
+    } else {
+        el.requestFullscreen().catch(() => {});
+    }
+}
+window.v2FullscreenPlayer = v2FullscreenPlayer;
+
+function v2SwitchMjpegMode(mode, ip, streamUrl) {
+    const iframe = document.getElementById('v2-modal-iframe');
+    const directImg = document.getElementById('v2-modal-mjpeg-direct');
+    const loader = document.getElementById('v2-modal-loader');
+    const btnRtc = document.getElementById('v2-mjpeg-btn-rtc');
+    const btnDir = document.getElementById('v2-mjpeg-btn-dir');
+
+    if (mode === 'direct') {
+        if (iframe) iframe.style.display = 'none';
+        if (loader) loader.style.display = 'none';
+        if (directImg) {
+            directImg.src = streamUrl;
+            directImg.style.display = 'block';
+        }
+        if (btnDir) {
+            btnDir.style.background = 'rgba(6,182,212,0.9)';
+            btnDir.style.color = '#fff';
+        }
+        if (btnRtc) {
+            btnRtc.style.background = 'rgba(255,255,255,0.08)';
+            btnRtc.style.color = '#cbd5e1';
+        }
+    } else {
+        if (directImg) {
+            directImg.style.display = 'none';
+            directImg.src = '';
+        }
+        if (iframe) iframe.style.display = 'block';
+        if (btnRtc) {
+            btnRtc.style.background = 'rgba(99,102,241,0.9)';
+            btnRtc.style.color = '#fff';
+        }
+        if (btnDir) {
+            btnDir.style.background = 'rgba(255,255,255,0.08)';
+            btnDir.style.color = '#cbd5e1';
+        }
+    }
+}
+window.v2SwitchMjpegMode = v2SwitchMjpegMode;
 
 function v2RefreshSingleSnapshot(ip, streamUrl) {
     const img = document.getElementById('v2-modal-live-img');
@@ -1954,7 +2168,7 @@ function v2OpenStreamModal(ip) {
                 <button class="v2-modal-close" onclick="document.getElementById('v2-stream-modal-overlay').remove()">✕</button>
             </div>
             <div class="v2-modal-search">
-                <input type="text" id="v2-modal-search-input" placeholder="Поиск по URL или типу потока (например: h264, ch1, main, rtsp)..."
+                <input type="text" id="v2-modal-search-input" placeholder="Поиск по URL или типу потока (h264, hls, mjpeg, rtsp, ch1, sub)..."
                     oninput="v2FilterModalStreams('${_esc(cam.ip)}', this.value)">
             </div>
             <div class="v2-modal-body" id="v2-modal-stream-list">
@@ -1974,7 +2188,8 @@ function _renderModalStreamItems(cam, streams) {
     }
 
     return streams.map((s, idx) => {
-        const type = (s.type || s.stream_type || 'rtsp').toUpperCase();
+        const kind = window.v2GetStreamKind(s.url, s);
+        const type = (s.type || s.stream_type || kind).toUpperCase();
         const verBadge = s.verified ? '<span class="v2-verified-badge" style="position:static;display:inline-block;padding:0.1rem 0.35rem;font-size:0.55rem">✓ Live</span>' : '';
         const source = (cam.endpoints || []).find(e => e.port === s.source_port);
         const sourceLabel = source ? `${source.brand || ''} ${source.model || ''} · порт ${source.port}` : '';
@@ -1984,14 +2199,14 @@ function _renderModalStreamItems(cam, streams) {
             <div class="v2-stream-item">
                 <div style="display:flex;align-items:center;gap:0.5rem;flex:1;min-width:0">
                     <span style="font-size:0.7rem;color:rgba(255,255,255,0.3);min-width:28px">#${idx + 1}</span>
-                    <span class="v2-proto-badge ${_protoBadgeClass(type.toLowerCase())}">${type}</span>
+                    <span class="v2-proto-badge ${_protoBadgeClass(kind || type.toLowerCase())}">${type}</span>
                     ${s.screenshot ? `<img loading="lazy" width="96" height="54" style="object-fit:contain" src="${_esc(s.screenshot.startsWith('blob:') ? s.screenshot : '/api/v2/capture?path=' + encodeURIComponent(s.screenshot))}" alt="Кадр потока ${idx + 1}">` : ''}
                     <span class="v2-stream-item-url" title="${_esc(s.url)}">${_esc(s.url)}</span>
                     ${verBadge} ${resText}
                     ${sourceLabel ? `<small>${_esc(sourceLabel)}</small>` : ''}
                 </div>
                 <div class="v2-stream-item-actions">
-                    <button class="v2-btn-small" style="background:rgba(99,102,241,0.25);color:#c4b5fd;border:1px solid rgba(99,102,241,0.5);font-weight:600" onclick="v2OpenStreamPlayer('${_esc(s.url)}', '${_esc(cam.brand || cam.ip)}', '${_esc(cam.ip)}', ${idx})" title="Тест потока в реальном времени (WebRTC / MSE плеер)">▶ Тест</button>
+                    <button class="v2-btn-small" style="background:rgba(99,102,241,0.25);color:#c4b5fd;border:1px solid rgba(99,102,241,0.5);font-weight:600" onclick="v2OpenStreamPlayer('${_esc(s.url)}', '${_esc(cam.brand || cam.ip)}', '${_esc(cam.ip)}', ${idx})" title="Тест потока в реальном времени (WebRTC / MSE / MJPEG)">▶ Тест</button>
                     <button class="v2-btn-small" onclick="v2CopyUrl('${_esc(s.url)}')" title="Скопировать URL">📋 Копировать</button>
                     <button class="v2-btn-small v2-btn-green" onclick="v2CaptureFromModal('${_esc(cam.ip)}', '${_esc(s.url)}', this)">📸 Превью</button>
                     <button class="v2-btn-small" onclick="v2AddSpecificStreamToGo2rtc('${_esc(cam.ip)}', '${_esc(s.url)}', ${idx + 1})">+ go2rtc</button>
@@ -2031,17 +2246,19 @@ function v2OpenSelectedStreamPlayer(ip) {
         v2OpenSpRecordPlayer(ip);
         return;
     }
-    if (!cam.streams || !cam.streams.length) return;
+    const streams = (cam.streams || []).filter(s => s.type !== 'web_panel');
+    if (!streams.length) return;
+
     let streamUrl = window.V2State.selectedStreams[ip] || '';
-    if (!streamUrl || streamUrl.startsWith('ws://') || streamUrl.includes('.jpg') || streamUrl.includes('.jpeg') || streamUrl.includes('snapshot')) {
-        const playable = cam.streams.find(s => (s.url || '').startsWith('rtsp://') || (s.url || '').startsWith('rtmp://') || (s.url || '').includes('.mjpg') || (s.url || '').includes('video.cgi') || (s.url || '').includes('.m3u8'));
+    if (!streamUrl || streamUrl.startsWith('ws://') || (!window.v2IsPlayableVideoStream(streamUrl) && streams.some(s => window.v2IsPlayableVideoStream(s)))) {
+        const playable = streams.find(s => window.v2IsPlayableVideoStream(s));
         if (playable) {
             streamUrl = playable.url;
         } else {
-            streamUrl = cam.streams[0].url;
+            streamUrl = streams[0].url;
         }
     }
-    const idx = (cam.streams || []).findIndex(s => s.url === streamUrl);
+    const idx = streams.findIndex(s => s.url === streamUrl);
     v2OpenStreamPlayer(streamUrl, cam.brand || cam.ip, ip, idx >= 0 ? idx : 0);
 }
 window.v2OpenSelectedStreamPlayer = v2OpenSelectedStreamPlayer;
@@ -2050,16 +2267,18 @@ async function v2OpenStreamPlayer(srcUrl, camName, ip, currentIdx = 0) {
     if (!srcUrl) return;
 
     const cam = (window.V2State.results || []).find(c => c.ip === ip);
-    const streams = cam?.streams || [];
+    const streams = (cam?.streams || []).filter(s => s.type !== 'web_panel');
     const totalStreams = streams.length;
+    const curStream = streams[currentIdx] || streams.find(s => s.url === srcUrl) || { url: srcUrl };
+    const kind = window.v2GetStreamKind(srcUrl, curStream);
 
     let dialog = document.getElementById('v2-player-dialog');
     if (!dialog) {
         dialog = document.createElement('dialog');
         dialog.id = 'v2-player-dialog';
         dialog.className = 'centra-player-dialog';
-        dialog.style.maxWidth = '940px';
-        dialog.style.width = '94vw';
+        dialog.style.maxWidth = '960px';
+        dialog.style.width = '95vw';
         dialog.style.background = '#0f172a';
         dialog.style.color = '#f8fafc';
         dialog.style.borderRadius = '16px';
@@ -2087,6 +2306,11 @@ async function v2OpenStreamPlayer(srcUrl, camName, ip, currentIdx = 0) {
         document.body.appendChild(dialog);
     }
 
+    if (window._v2LiveSnapshotTimer) {
+        clearInterval(window._v2LiveSnapshotTimer);
+        window._v2LiveSnapshotTimer = null;
+    }
+
     const prevTempName = dialog.dataset.tempStreamName;
     if (prevTempName) {
         fetch(`/api/go2rtc/streams/${encodeURIComponent(prevTempName)}`, { method: "DELETE" }).catch(() => { });
@@ -2100,60 +2324,94 @@ async function v2OpenStreamPlayer(srcUrl, camName, ip, currentIdx = 0) {
     const prevStream = totalStreams > 1 ? streams[prevIdx] : null;
     const nextStream = totalStreams > 1 ? streams[nextIdx] : null;
 
+    const brandHint = window.v2GetBrandHint(cam?.brand, cam?.model);
+    const kindLabelMap = {
+        rtsp: '🎥 RTSP Stream',
+        hls: '📺 HLS (VMS / Web Stream)',
+        mjpeg: '🎞️ MJPEG (VMS / IPCam)',
+        rtmp: '🔴 RTMP Stream',
+        flv: '⚡ HTTP-FLV Stream',
+        webrtc: '🟢 WebRTC / WHEP',
+        http_snapshot: '📷 HTTP Snapshot (Кадр)',
+        http_stream: '🌐 HTTP Stream',
+        generic: '🎥 Видеопоток'
+    };
+    const streamKindTitle = kindLabelMap[kind] || '🎥 Видеопоток';
+
     dialog.innerHTML = `
-        <div style="display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; padding: 0.85rem 1.2rem; background: rgba(15,23,42,0.95); border-bottom: 1px solid rgba(255,255,255,0.1);">
+        <div style="display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; padding: 0.85rem 1.2rem; background: rgba(15,23,42,0.98); border-bottom: 1px solid rgba(255,255,255,0.1);">
             <div style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;">
-                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
                     <span style="font-size:1.1rem">🎥</span>
-                    <strong style="font-size:0.95rem">Тест видеопотока · ${_esc(ip)} (${_esc(camName)})</strong>
+                    <strong style="font-size:0.95rem">${_esc(streamKindTitle)} · ${_esc(ip)}</strong>
+                    <span style="color:#94a3b8;font-size:0.85rem">(${_esc(camName)})</span>
+                    <span class="v2-proto-badge ${_protoBadgeClass(kind)}" style="font-size:0.68rem;padding:2px 6px">${kind.toUpperCase()}</span>
                     ${totalStreams > 1 ? `<span style="font-size: 0.72rem; padding: 0.15rem 0.45rem; border-radius: 6px; background: rgba(99,102,241,0.25); color: #c4b5fd; font-weight: 600;">Поток ${currentIdx + 1} из ${totalStreams}</span>` : ''}
                 </div>
-                <small style="display: block; color: #93c5fd; font-family: monospace; font-size: 0.72rem; overflow: hidden; text-overflow: ellipsis; margin-top: 2px;">${_esc(srcUrl)}</small>
+                <small style="display: block; color: #93c5fd; font-family: monospace; font-size: 0.72rem; overflow: hidden; text-overflow: ellipsis; margin-top: 3px;">${_esc(srcUrl)}</small>
             </div>
             <div style="display: flex; align-items: center; gap: 0.4rem; flex-shrink: 0;">
                 ${totalStreams > 1 ? `
                     <button type="button" class="btn btn-ghost btn-small" style="font-size: 0.75rem; padding: 0.3rem 0.6rem; border-radius:6px; background:rgba(255,255,255,0.06); color:#cbd5e1; border:1px solid rgba(255,255,255,0.1);" title="Предыдущий поток" onclick="v2OpenStreamPlayer('${_esc(prevStream.url)}', '${_esc(camName)}', '${_esc(ip)}', ${prevIdx})">◀ Назад</button>
                     <button type="button" class="btn btn-ghost btn-small" style="font-size: 0.75rem; padding: 0.3rem 0.6rem; border-radius:6px; background:rgba(255,255,255,0.06); color:#cbd5e1; border:1px solid rgba(255,255,255,0.1);" title="Следующий поток" onclick="v2OpenStreamPlayer('${_esc(nextStream.url)}', '${_esc(camName)}', '${_esc(ip)}', ${nextIdx})">Вперед ▶</button>
                 ` : ''}
-                <button type="button" class="btn btn-small" style="background: #10b981; color:#fff; font-size: 0.75rem; font-weight:600; padding:0.3rem 0.65rem; border-radius:6px; border:none; cursor:pointer;" onclick="v2AddSpecificStreamToGo2rtc('${_esc(ip)}', '${_esc(srcUrl)}', ${currentIdx + 1}); this.disabled=true; this.textContent='✓ Добавлено';">+ В go2rtc</button>
+                <button type="button" class="btn btn-small" style="background: rgba(255,255,255,0.08); color:#cbd5e1; border:1px solid rgba(255,255,255,0.15); font-size: 0.75rem; padding:0.3rem 0.6rem; border-radius:6px; cursor:pointer;" onclick="v2CopyUrl('${_esc(srcUrl)}')" title="Скопировать URL">📋 URL</button>
+                <a href="${_esc(srcUrl)}" target="_blank" class="btn btn-small" style="background: rgba(59,130,246,0.2); color:#93c5fd; border:1px solid rgba(59,130,246,0.4); font-size: 0.75rem; padding:0.3rem 0.6rem; border-radius:6px; text-decoration:none;" title="Открыть в новой вкладке">↗ Вкладка</a>
+                <button type="button" class="btn btn-small" style="background: #10b981; color:#fff; font-size: 0.75rem; font-weight:600; padding:0.3rem 0.65rem; border-radius:6px; border:none; cursor:pointer;" onclick="v2AddSpecificStreamToGo2rtc('${_esc(ip)}', '${_esc(srcUrl)}', ${currentIdx + 1}); this.disabled=true; this.textContent='✓ В go2rtc';">+ В go2rtc</button>
                 <button type="button" style="background:none; border:none; color:#94a3b8; font-size:1.4rem; cursor:pointer; padding:0 4px; line-height:1;" onclick="document.getElementById('v2-player-dialog').close()" aria-label="Закрыть">×</button>
             </div>
         </div>
-        <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.4rem 1.2rem; background: rgba(10,14,26,0.9); border-bottom: 1px solid rgba(255,255,255,0.06); font-size: 0.75rem;">
-            <div style="display: flex; align-items: center; gap: 0.4rem;">
-                <span style="color: #94a3b8;">🔒 Авторизация потока:</span>
-                <input type="text" id="v2-player-user-input" placeholder="Логин (admin)" value="${_esc(cam?.credentials?.user || '')}" style="background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); color: #fff; padding: 3px 8px; border-radius: 4px; font-size: 0.72rem; width: 100px;">
-                <input type="password" id="v2-player-pass-input" placeholder="Пароль" value="${_esc(cam?.credentials?.password || '')}" style="background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); color: #fff; padding: 3px 8px; border-radius: 4px; font-size: 0.72rem; width: 110px;">
+
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.4rem 1.2rem; background: rgba(10,14,26,0.92); border-bottom: 1px solid rgba(255,255,255,0.06); font-size: 0.75rem; flex-wrap: wrap;">
+            <div style="display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;">
+                <span style="color: #94a3b8;">🔒 Авторизация:</span>
+                <input type="text" id="v2-player-user-input" placeholder="Логин (admin)" value="${_esc(cam?.credentials?.user || curStream?.credentials?.user || '')}" style="background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); color: #fff; padding: 3px 8px; border-radius: 4px; font-size: 0.72rem; width: 100px;">
+                <input type="password" id="v2-player-pass-input" placeholder="Пароль" value="${_esc(cam?.credentials?.password || curStream?.credentials?.password || '')}" style="background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); color: #fff; padding: 3px 8px; border-radius: 4px; font-size: 0.72rem; width: 110px;">
                 <button type="button" class="btn btn-small" style="font-size: 0.72rem; padding: 3px 10px; background: rgba(99,102,241,0.7); color: #fff; border: 1px solid #818cf8; border-radius: 4px; cursor: pointer; font-weight: 600;" onclick="v2ApplyCredentialsAndReload('${_esc(ip)}', '${_esc(srcUrl)}', '${_esc(camName)}', ${currentIdx})">▶ Воспроизвести с паролем</button>
             </div>
-            <span style="color: #64748b; font-size: 0.7rem;">(Для Hikvision/HiWatch логин обычно admin)</span>
+            <span style="color: #64748b; font-size: 0.7rem;">${_esc(brandHint)}</span>
         </div>
-        <div style="position: relative; width: 100%; aspect-ratio: 16/9; background: #000; display: flex; align-items: center; justify-content: center; overflow: hidden;">
+
+        ${kind === 'mjpeg' ? `
+            <div style="display: flex; align-items: center; justify-content: space-between; padding: 0.35rem 1.2rem; background: rgba(15,23,42,0.95); border-bottom: 1px solid rgba(255,255,255,0.06); font-size: 0.74rem;">
+                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                    <span style="color: #06b6d4; font-weight: 600;">🎞️ Режим воспроизведения MJPEG:</span>
+                    <button type="button" id="v2-mjpeg-btn-rtc" class="btn btn-small" style="background: rgba(99,102,241,0.9); color: #fff; border: 1px solid rgba(99,102,241,0.5); font-size: 0.7rem; padding: 2px 8px; border-radius: 4px; cursor: pointer;" onclick="v2SwitchMjpegMode('go2rtc', '${_esc(ip)}', '${_esc(srcUrl)}')">🎥 WebRTC / MSE (go2rtc)</button>
+                    <button type="button" id="v2-mjpeg-btn-dir" class="btn btn-small" style="background: rgba(255,255,255,0.08); color: #cbd5e1; border: 1px solid rgba(255,255,255,0.15); font-size: 0.7rem; padding: 2px 8px; border-radius: 4px; cursor: pointer;" onclick="v2SwitchMjpegMode('direct', '${_esc(ip)}', '${_esc(srcUrl)}')">🖼️ Прямой MJPEG браузера (30 FPS)</button>
+                </div>
+                <span style="color: #94a3b8; font-size: 0.7rem;">Прямой режим работает без транскодирования через браузер</span>
+            </div>
+        ` : ''}
+
+        <div id="v2-player-viewport" style="position: relative; width: 100%; aspect-ratio: 16/9; background: #000; display: flex; align-items: center; justify-content: center; overflow: hidden;">
             <div id="v2-modal-loader" style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.75rem; color: #cbd5e1;">
                 <span class="v2-spinner" style="width: 32px; height: 32px; border-width:3px; border-top-color:#6366f1;"></span>
-                <span style="font-size: 0.85rem; color:#a5b4fc;">Подключение к видеопотоку (WebRTC / MSE)...</span>
+                <span style="font-size: 0.85rem; color:#a5b4fc;">Подключение к видеопотоку (WebRTC / MSE / go2rtc)...</span>
             </div>
             <iframe id="v2-modal-iframe" style="display: none; width: 100%; height: 100%; border: none;" allow="autoplay; fullscreen"></iframe>
-            
+            <img id="v2-modal-mjpeg-direct" style="display: none; max-width: 100%; max-height: 100%; object-fit: contain;" alt="Прямой MJPEG поток">
+
             ${totalStreams > 1 ? `
                 <button type="button" style="position: absolute; left: 12px; top: 50%; transform: translateY(-50%); width: 40px; height: 40px; border-radius: 50%; background: rgba(15,23,42,0.8); border: 1px solid rgba(255,255,255,0.25); color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; backdrop-filter: blur(6px); transition: all 0.2s; z-index: 10; font-size:1.1rem;" onmouseover="this.style.background='rgba(99,102,241,0.9)'" onmouseout="this.style.background='rgba(15,23,42,0.8)'" onclick="v2OpenStreamPlayer('${_esc(prevStream.url)}', '${_esc(camName)}', '${_esc(ip)}', ${prevIdx})" title="Предыдущий поток (#${prevIdx + 1})">◀</button>
                 <button type="button" style="position: absolute; right: 12px; top: 50%; transform: translateY(-50%); width: 40px; height: 40px; border-radius: 50%; background: rgba(15,23,42,0.8); border: 1px solid rgba(255,255,255,0.25); color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; backdrop-filter: blur(6px); transition: all 0.2s; z-index: 10; font-size:1.1rem;" onmouseover="this.style.background='rgba(99,102,241,0.9)'" onmouseout="this.style.background='rgba(15,23,42,0.8)'" onclick="v2OpenStreamPlayer('${_esc(nextStream.url)}', '${_esc(camName)}', '${_esc(ip)}', ${nextIdx})" title="Следующий поток (#${nextIdx + 1})">▶</button>
             ` : ''}
         </div>
+
         ${totalStreams > 1 ? `
             <div style="display: flex; gap: 0.4rem; padding: 0.5rem 0.8rem; background: rgba(10, 14, 26, 0.98); overflow-x: auto; border-top: 1px solid rgba(255,255,255,0.08); align-items: center;" class="v2-modal-playlist">
-                <span style="font-size: 0.72rem; color: #94a3b8; white-space: nowrap; margin-right: 0.3rem; font-weight: 600;">Каналы (${totalStreams}):</span>
+                <span style="font-size: 0.72rem; color: #94a3b8; white-space: nowrap; margin-right: 0.3rem; font-weight: 600;">Каналы / Потоки (${totalStreams}):</span>
                 ${streams.map((st, i) => {
-        const isCur = i === currentIdx;
-        const stUrl = st.url || "";
-        const stType = (st.type || st.stream_type || 'RTSP').toUpperCase();
-        const live = st.verified ? '✓' : '';
-        return `
+                    const isCur = i === currentIdx;
+                    const stUrl = st.url || "";
+                    const stKind = window.v2GetStreamKind(stUrl, st);
+                    const stType = (st.type || st.stream_type || stKind).toUpperCase();
+                    const live = st.verified ? '✓' : '';
+                    return `
                         <button type="button" id="v2-stream-pill-${i}" class="v2-btn-small" style="font-size: 0.7rem; padding: 0.25rem 0.55rem; white-space: nowrap; border-radius: 6px; ${isCur ? 'background: rgba(99,102,241,0.9); color: #fff; border: 1px solid #a5b4fc; font-weight: 700; box-shadow: 0 0 10px rgba(99,102,241,0.6);' : 'background: rgba(255,255,255,0.06); color: #cbd5e1; border: 1px solid rgba(255,255,255,0.1);'}" onclick="v2OpenStreamPlayer('${_esc(stUrl)}', '${_esc(camName)}', '${_esc(ip)}', ${i})">
                             ${isCur ? '▶ ' : ''}#${i + 1} · ${_esc(stType)} ${live}
                         </button>
                     `;
-    }).join('')}
+                }).join('')}
             </div>
         ` : ''}
     `;
@@ -2163,84 +2421,90 @@ async function v2OpenStreamPlayer(srcUrl, camName, ip, currentIdx = 0) {
     }
 
     try {
-        const isHttpSnapshot = srcUrl.startsWith('http://') || srcUrl.startsWith('https://');
+        const userInput = document.getElementById('v2-player-user-input')?.value.trim();
+        const passInput = document.getElementById('v2-player-pass-input')?.value;
+        const u = (userInput !== undefined && userInput !== '') ? userInput : (cam?.credentials?.user || curStream?.credentials?.user || '');
+        const p = (passInput !== undefined && passInput !== '') ? passInput : (cam?.credentials?.password ?? curStream?.credentials?.password ?? '');
 
-        if (isHttpSnapshot) {
-            const iframe = document.getElementById('v2-modal-iframe');
+        // ── Case A: Pure HTTP Snapshot Mode ──────────────────────────────────
+        if (kind === 'http_snapshot') {
+            const viewport = document.getElementById('v2-player-viewport');
             const loader = document.getElementById('v2-modal-loader');
-            const playerContainer = iframe ? iframe.parentElement : null;
-            if (playerContainer) {
-                if (loader) loader.style.display = 'none';
-                if (iframe) iframe.style.display = 'none';
+            const iframe = document.getElementById('v2-modal-iframe');
+            if (loader) loader.style.display = 'none';
+            if (iframe) iframe.style.display = 'none';
 
-                const u = cam?.credentials?.user || '';
-                const p = cam?.credentials?.password ?? '';
-                let initialSnapUrl = `/api/v2/preview?ip=${encodeURIComponent(ip)}&stream_url=${encodeURIComponent(srcUrl)}&_t=${Date.now()}`;
-                if (u) {
-                    initialSnapUrl += `&user=${encodeURIComponent(u)}&password=${encodeURIComponent(p)}`;
-                }
-
-                playerContainer.innerHTML = `
-                    <div style="position: relative; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: #000;">
-                        <img id="v2-modal-live-img" src="${initialSnapUrl}" alt="Live Snapshot" style="max-width: 100%; max-height: 100%; object-fit: contain;" onerror="this.style.display='none'; const el=document.getElementById('v2-modal-live-err'); if(el) el.style.display='flex';">
-                        <div id="v2-modal-live-err" style="display: none; flex-direction: column; align-items: center; justify-content: center; gap: 0.5rem; color: #ef4444; font-size: 0.85rem;">
-                            <span>⚠️ Поток недоступен (камера не отвечает по HTTP)</span>
-                        </div>
-                        <div style="position: absolute; bottom: 12px; right: 12px; display: flex; gap: 6px; background: rgba(0,0,0,0.65); padding: 4px 10px; border-radius: 6px; align-items: center; z-index: 20; backdrop-filter: blur(4px);">
-                            <span id="v2-modal-live-badge" style="font-size: 0.72rem; color: #10b981; font-weight: 600; display: flex; align-items: center; gap: 4px;">🟢 Realtime Live</span>
-                            <button type="button" id="v2-modal-live-toggle" class="btn btn-ghost btn-small" style="font-size: 0.72rem; padding: 3px 8px; border-radius:4px; background:rgba(16,185,129,0.2); border:1px solid #10b981; color:#fff;" onclick="v2ToggleLiveSnapshot('${_esc(ip)}', '${_esc(srcUrl)}')">⏸ Пауза</button>
-                            <button type="button" class="btn btn-ghost btn-small" style="font-size: 0.72rem; padding: 3px 8px; border-radius:4px; background:rgba(255,255,255,0.1); color:#fff;" onclick="v2RefreshSingleSnapshot('${_esc(ip)}', '${_esc(srcUrl)}')">🔄 Обновить</button>
-                        </div>
-                    </div>
-                `;
-                if (window._v2LiveSnapshotTimer) clearInterval(window._v2LiveSnapshotTimer);
-                window._v2LiveSnapshotTimer = setInterval(() => {
-                    v2RefreshSingleSnapshot(ip, srcUrl);
-                }, 1200);
+            let initialSnapUrl = `/api/v2/preview?ip=${encodeURIComponent(ip)}&stream_url=${encodeURIComponent(srcUrl)}&_t=${Date.now()}`;
+            if (u) {
+                initialSnapUrl += `&user=${encodeURIComponent(u)}&password=${encodeURIComponent(p)}`;
             }
+
+            viewport.innerHTML = `
+                <div style="position: relative; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: #000;">
+                    <img id="v2-modal-live-img" src="${initialSnapUrl}" alt="Live Snapshot" style="max-width: 100%; max-height: 100%; object-fit: contain;" onerror="this.style.display='none'; const el=document.getElementById('v2-modal-live-err'); if(el) el.style.display='flex';">
+                    
+                    <div id="v2-modal-live-err" style="display: none; flex-direction: column; align-items: center; justify-content: center; gap: 0.5rem; color: #ef4444; font-size: 0.85rem; padding: 1rem; text-align: center;">
+                        <span style="font-weight:600">⚠️ Кадр недоступен</span>
+                        <small style="color:#94a3b8">Возможно, требуется авторизация. Введите логин и пароль в поле выше и нажмите «Воспроизвести с паролем».</small>
+                    </div>
+
+                    <div style="position: absolute; bottom: 12px; right: 12px; display: flex; gap: 6px; background: rgba(0,0,0,0.75); padding: 5px 10px; border-radius: 8px; align-items: center; z-index: 20; backdrop-filter: blur(6px); border: 1px solid rgba(255,255,255,0.15);">
+                        <span id="v2-modal-live-badge" style="font-size: 0.72rem; color: #10b981; font-weight: 600; display: flex; align-items: center; gap: 4px;">🟢 Realtime Snapshot</span>
+                        <button type="button" id="v2-speed-500" class="btn btn-ghost btn-small v2-snap-speed-btn" style="font-size: 0.68rem; padding: 2px 6px; border-radius:4px; background:rgba(255,255,255,0.08); color:#cbd5e1;" onclick="v2SetSnapshotInterval(500, '${_esc(ip)}', '${_esc(srcUrl)}')">0.5с</button>
+                        <button type="button" id="v2-speed-1200" class="btn btn-ghost btn-small v2-snap-speed-btn" style="font-size: 0.68rem; padding: 2px 6px; border-radius:4px; background:rgba(99,102,241,0.8); color:#fff;" onclick="v2SetSnapshotInterval(1200, '${_esc(ip)}', '${_esc(srcUrl)}')">1.2с</button>
+                        <button type="button" id="v2-speed-3000" class="btn btn-ghost btn-small v2-snap-speed-btn" style="font-size: 0.68rem; padding: 2px 6px; border-radius:4px; background:rgba(255,255,255,0.08); color:#cbd5e1;" onclick="v2SetSnapshotInterval(3000, '${_esc(ip)}', '${_esc(srcUrl)}')">3с</button>
+                        <button type="button" id="v2-modal-live-toggle" class="btn btn-ghost btn-small" style="font-size: 0.72rem; padding: 3px 8px; border-radius:4px; background:rgba(16,185,129,0.2); border:1px solid #10b981; color:#fff;" onclick="v2ToggleLiveSnapshot('${_esc(ip)}', '${_esc(srcUrl)}')">⏸ Пауза</button>
+                        <button type="button" class="btn btn-ghost btn-small" style="font-size: 0.72rem; padding: 3px 8px; border-radius:4px; background:rgba(255,255,255,0.1); color:#fff;" onclick="v2RefreshSingleSnapshot('${_esc(ip)}', '${_esc(srcUrl)}')">🔄 Обновить</button>
+                        <button type="button" class="btn btn-ghost btn-small" style="font-size: 0.72rem; padding: 3px 8px; border-radius:4px; background:rgba(59,130,246,0.2); color:#93c5fd; border:1px solid rgba(59,130,246,0.4);" onclick="v2DownloadCurrentSnapshot('${_esc(ip)}', '${_esc(srcUrl)}', ${currentIdx})" title="Скачать снимок">⬇ JPG</button>
+                        <button type="button" class="btn btn-ghost btn-small" style="font-size: 0.72rem; padding: 3px 8px; border-radius:4px; background:rgba(255,255,255,0.1); color:#fff;" onclick="v2FullscreenPlayer()" title="Полный экран">⛶</button>
+                    </div>
+                </div>
+            `;
+
+            window._v2LiveSnapshotTimer = setInterval(() => {
+                v2RefreshSingleSnapshot(ip, srcUrl);
+            }, window._v2LiveSnapshotInterval || 1200);
             return;
         }
 
+        // ── Case B: Real Video Streams (RTSP, HLS, MJPEG, RTMP, FLV, WebRTC) ──
         let actualSrcUrl = srcUrl;
-        const u = cam?.credentials?.user || '';
-        const p = cam?.credentials?.password ?? '';
 
+        // WebSocket wrapper resolution
         if (actualSrcUrl.startsWith('ws://') || actualSrcUrl.startsWith('wss://')) {
-            const credsPart = u ? `${encodeURIComponent(u)}:${encodeURIComponent(p)}@` : '';
             if (actualSrcUrl.includes('rtsp-over-websocket')) {
-                actualSrcUrl = `rtsp://${credsPart}${ip}:554/axis-media/media.amp`;
+                actualSrcUrl = `rtsp://${ip}:554/axis-media/media.amp`;
             } else {
-                const rtspStream = (cam?.streams || []).find(s => (s.url || '').startsWith('rtsp://'));
+                const rtspStream = streams.find(s => (s.url || '').startsWith('rtsp://'));
                 if (rtspStream) actualSrcUrl = rtspStream.url;
             }
         }
 
-        if (actualSrcUrl.startsWith('rtsp://') || actualSrcUrl.startsWith('rtsps://')) {
-            if (u) {
-                const credsPart = `${encodeURIComponent(u)}:${encodeURIComponent(p)}@`;
-                if (actualSrcUrl.includes(':***@')) {
-                    actualSrcUrl = actualSrcUrl.replace(/:[^\/@]+@/, `:${encodeURIComponent(p)}@`);
-                } else {
-                    const hostPart = actualSrcUrl.split('://')[1]?.split('/')[0] || '';
-                    if (!hostPart.includes('@')) {
-                        actualSrcUrl = actualSrcUrl.replace('://', `://${credsPart}`);
-                    }
-                }
-            }
+        // Inject credentials into actual source URL
+        if (u) {
+            actualSrcUrl = window.v2InjectCredentials(actualSrcUrl, u, p);
         }
 
-        const curStream = (cam?.streams || [])[currentIdx] || (cam?.streams || []).find(s => s.url === actualSrcUrl || s.url === srcUrl);
         const isHttpTransport = curStream?.transport === 'http';
-
-        const mainUrl = (actualSrcUrl.startsWith('rtsp://') || actualSrcUrl.startsWith('rtsps://'))
+        const isRtsp = actualSrcUrl.startsWith('rtsp://') || actualSrcUrl.startsWith('rtsps://');
+        const mainUrl = isRtsp
             ? (actualSrcUrl.includes('#') ? actualSrcUrl : `${actualSrcUrl}#transport=tcp#backchannel=0`)
             : actualSrcUrl;
         const ffUrl = `ffmpeg:${actualSrcUrl}#video=copy`;
         const ffHttpUrl = `ffmpeg:${actualSrcUrl}#input=rtsp_http#video=copy`;
 
-        const streamCandidates = (actualSrcUrl.startsWith('rtsp://') || actualSrcUrl.startsWith('rtsps://'))
-            ? (isHttpTransport ? [ffHttpUrl, mainUrl, ffUrl] : [mainUrl, ffUrl, ffHttpUrl])
-            : [actualSrcUrl];
+        let streamCandidates = [actualSrcUrl];
+        if (isRtsp) {
+            streamCandidates = isHttpTransport ? [ffHttpUrl, mainUrl, ffUrl] : [mainUrl, ffUrl, ffHttpUrl];
+        } else if (kind === 'hls') {
+            streamCandidates = [actualSrcUrl, ffUrl];
+        } else if (kind === 'mjpeg') {
+            streamCandidates = [`mjpeg:${actualSrcUrl}`, ffUrl, actualSrcUrl];
+        } else if (kind === 'flv' || kind === 'rtmp') {
+            streamCandidates = [actualSrcUrl, ffUrl];
+        } else {
+            streamCandidates = [actualSrcUrl, ffUrl];
+        }
 
         const regResp = await fetch("/api/go2rtc/streams", {
             method: "POST",
@@ -2252,7 +2516,7 @@ async function v2OpenStreamPlayer(srcUrl, camName, ip, currentIdx = 0) {
         });
 
         if (!regResp.ok) {
-            const err = await regResp.json();
+            const err = await regResp.json().catch(() => ({}));
             throw new Error(err.detail || "Не удалось запустить временный поток в go2rtc");
         }
 
@@ -2265,15 +2529,25 @@ async function v2OpenStreamPlayer(srcUrl, camName, ip, currentIdx = 0) {
                 iframe.style.display = 'block';
             };
             setTimeout(() => {
-                loader.style.display = 'none';
-                iframe.style.display = 'block';
+                if (loader && loader.style.display !== 'none') {
+                    loader.style.display = 'none';
+                    if (iframe) iframe.style.display = 'block';
+                }
             }, 800);
         }
 
     } catch (err) {
         const loader = document.getElementById('v2-modal-loader');
         if (loader) {
-            loader.innerHTML = `<span style="color:#ef4444">⚠️ Ошибка запуска плеера: ${_esc(err.message)}</span>`;
+            loader.innerHTML = `
+                <div style="padding: 1.5rem; text-align: center; color: #ef4444;">
+                    <div style="font-size: 1.1rem; font-weight: 600; margin-bottom: 0.5rem;">⚠️ Ошибка запуска плеера</div>
+                    <div style="font-size: 0.85rem; color: #fca5a5; margin-bottom: 1rem;">${_esc(err.message)}</div>
+                    <div style="font-size: 0.78rem; color: #94a3b8;">
+                        Возможные причины: видеопоток защищен паролем, камера не поддерживает выбранный протокол или порт закрыт брандмауэром.
+                    </div>
+                </div>
+            `;
         }
     }
 }
@@ -2289,8 +2563,8 @@ function v2ApplyCredentialsAndReload(ip, srcUrl, camName, currentIdx) {
             s.credentials = { user: u, password: p };
         });
     }
-    const isHttpSnapshot = srcUrl.startsWith('http://') || srcUrl.startsWith('https://');
-    if (isHttpSnapshot) {
+    const kind = window.v2GetStreamKind(srcUrl);
+    if (kind === 'http_snapshot') {
         const img = document.getElementById('v2-modal-live-img');
         const err = document.getElementById('v2-modal-live-err');
         if (err) err.style.display = 'none';

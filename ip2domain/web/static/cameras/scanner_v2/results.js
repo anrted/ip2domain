@@ -126,26 +126,37 @@ async function v2LoadStoredResults(force = false, append = false) {
 
         if (append) {
             const existingMap = new Map((window.V2State.results || []).map((r, i) => [r.ip, i]));
+            const newItems = [];
             for (const item of incoming) {
                 if (!existingMap.has(item.ip)) {
                     window.V2State.results.push(item);
                     existingMap.set(item.ip, window.V2State.results.length - 1);
+                    newItems.push(item);
                 }
             }
+            window.V2State.visibleCount = (window.V2State.results || []).length;
+            window.V2State.totalMatching = (data.total_matching !== undefined) ? data.total_matching : (window.V2State.results || []).length;
+            window.V2State.totalInDb = (data.total_db !== undefined) ? data.total_db : window.V2State.totalMatching;
+            if (data.stats) {
+                window.V2State.stats = data.stats;
+            }
+            window.V2State.resultsLoaded = true;
+
+            v2UpdateResultsCount();
+            v2RenderResults(true, newItems);
         } else {
             window.V2State.results = incoming;
-        }
+            window.V2State.visibleCount = (window.V2State.results || []).length;
+            window.V2State.totalMatching = (data.total_matching !== undefined) ? data.total_matching : (window.V2State.results || []).length;
+            window.V2State.totalInDb = (data.total_db !== undefined) ? data.total_db : window.V2State.totalMatching;
+            if (data.stats) {
+                window.V2State.stats = data.stats;
+            }
+            window.V2State.resultsLoaded = true;
 
-        window.V2State.visibleCount = (window.V2State.results || []).length;
-        window.V2State.totalMatching = (data.total_matching !== undefined) ? data.total_matching : (window.V2State.results || []).length;
-        window.V2State.totalInDb = (data.total_db !== undefined) ? data.total_db : window.V2State.totalMatching;
-        if (data.stats) {
-            window.V2State.stats = data.stats;
+            v2UpdateResultsCount();
+            v2RenderResults(false);
         }
-        window.V2State.resultsLoaded = true;
-
-        v2UpdateResultsCount();
-        v2RenderResults();
         const card = document.getElementById('v2-results-card');
         if (card) {
             card.classList.add('visible');
@@ -164,19 +175,23 @@ window.v2LoadStoredResults = v2LoadStoredResults;
 
 const _V2_CAMERA_BRAND_PATTERNS = [
     'hikvision', 'hiwatch', 'dahua', 'axis', 'reolink', 'trassir', 'xiongmai', 'flussonic',
-    'streamer', 'dnvrs', 'rvi', 'uniview', 'unv', 'tiandy', 'mobotix', 'generic nvr', 'generic dvr',
+    'streamer', 'dnvrs', 'rvi-', 'rvi cctv', 'rvi group', 'uniview', 'unv', 'tiandy', 'mobotix', 'generic nvr', 'generic dvr',
     'generic ipcam', 'generic webcam', 'generic surveillance', 'generic video server', 'generic rtsp',
-    'unknown camera', 'tp-link', 'ezviz', 'hilook', 'imou', 'lorex', 'foscam', 'amcrest', 'hanwha',
+    'unknown camera', 'ezviz', 'hilook', 'imou', 'lorex', 'foscam', 'amcrest', 'hanwha',
     'wisenet', 'samsung', 'topsvision', 'topsee', 'jovision', 'h264', 'netip', 'netsurveillance',
     'cp plus', 'bosch', 'pelco', 'vivotek', 'grandstream', 'beward', 'activecam', 'polyvision',
-    'novicam', 'ltv', 'milesight', 'tvt', 'sunell', 'avigilon', 'flir', 'ubiquiti unifi', 'tapo',
+    'novicam', 'ltv', 'milesight', 'tvt', 'sunell', 'avigilon', 'flir', 'unifi protect', 'unifi video', 'tapo',
     'tl-sc', 'vstarcam', 'sricam', 'srihome', 'herospeed', 'onvif', 'unimo', 'udrocx', 'ants',
-    'vvtk', 'nd8322p'
+    'vvtk', 'nd8322p', 'devline', 'линия', 'vesta', 'веста', 'si-cam', 'sicam', 'си-кам',
+    'macroscop', 'макроскоп', 'dssl', 'optimus', 'оптимус', 'satvision', 'сатвижн',
+    'tantos', 'тантос', 'raysharp', 'рейшарп', 'smartec', 'смартек', 'ipeye', 'айпиай',
+    'proto-x', 'protox', 'falcon eye', 'falconeye', 'sputnik', 'ростелеком', 'qtech'
 ];
 
 const _V2_CAMERA_PROTOCOLS = [
     'onvif', 'rtsp', 'rtsp_direct', 'dhip', 'sofia', 'hls', 'webrtc', 'isapi',
-    'dahua_cgi', 'hikvision_isapi', 'rtmp'
+    'dahua_cgi', 'hikvision_isapi', 'rtmp', 'vesta', 'devline_vms', 'macroscop_vms', 'trassir_vms',
+    'raysharp', 'tvt_media'
 ];
 
 function _isSpRecord(cam) {
@@ -225,36 +240,39 @@ window._isServerDevice = _isServerDevice;
 function _isCameraDevice(c) {
     if (!c || _isSpRecord(c)) return false;
 
-    // Explicit non-camera check if not also tagged camera
-    const isExplicitNonCam = ['generic_web', 'router', 'server', 'iot', 'industrial', 'device'].includes(c.device_category);
+    const brand = (c.brand || '').toLowerCase();
+    const model = (c.model || '').toLowerCase();
     const hasVideoStream = (c.streams || []).some(s => 
         (s.type !== 'web_panel' && s.stream_type !== 'web_panel') &&
         (s.verified || ['rtsp', 'rtsps', 'mjpeg', 'hls', 'webrtc'].includes(s.type || s.stream_type) || (s.screenshot && String(s.screenshot).trim().length > 0))
     );
+
+    // If pure generic web device or web service and has NO real video stream, never classify as camera
+    if ((brand.includes('generic web device') || brand === 'generic' || model === 'web service') && !hasVideoStream) {
+        return false;
+    }
+
+    // Explicit non-camera check if not also tagged camera
+    const isExplicitNonCam = ['generic_web', 'router', 'server', 'iot', 'industrial', 'device'].includes(c.device_category);
     if (isExplicitNonCam && !hasVideoStream && !_hasCategory(c, 'camera') && !_hasCategory(c, 'intercom')) {
         return false;
     }
 
+    if (hasVideoStream) return true;
     if (_hasCategory(c, 'camera')) return true;
     if (_hasCategory(c, 'intercom')) return true;
 
     // Brand matches known camera brand
-    const brand = (c.brand || '').toLowerCase();
-    if (_V2_CAMERA_BRAND_PATTERNS.some(b => brand.includes(b))) return true;
+    if (_V2_CAMERA_BRAND_PATTERNS.some(b => {
+        if (b === 'rvi') return brand.includes('rvi-') || brand.includes('rvi cctv');
+        return brand.includes(b);
+    })) return true;
 
     // Known camera protocols
     const protos = c.protocols || [];
     if (_V2_CAMERA_PROTOCOLS.some(p => protos.includes(p))) return true;
 
-    // Has video stream
-    if (hasVideoStream) return true;
-
-    // If pure non-camera without video
     if (isExplicitNonCam) return false;
-
-    // Has video streams and is not generic web
-    if ((c.streams || []).some(s => s.type !== 'web_panel' && s.stream_type !== 'web_panel') && !brand.includes('generic web device') && !brand.includes('web service')) return true;
-
     return false;
 }
 window._isCameraDevice = _isCameraDevice;
@@ -495,7 +513,7 @@ function v2GetFilteredResults() {
 }
 window.v2GetFilteredResults = v2GetFilteredResults;
 
-function v2RenderResults() {
+function v2RenderResults(append = false, newItems = null) {
     const grid = document.getElementById('v2-camera-grid');
     if (!grid) return;
 
@@ -515,10 +533,13 @@ function v2RenderResults() {
         return;
     }
 
-    // Default sorting: cameras with preview / screenshot first!
-    items = [...items].sort((a, b) => _cameraScore(b) - _cameraScore(a));
+    if (append && Array.isArray(newItems) && newItems.length > 0) {
+        const newHtml = newItems.map(cam => v2RenderCameraCard(cam)).join('');
+        grid.insertAdjacentHTML('beforeend', newHtml);
+    } else {
+        grid.innerHTML = items.map(cam => v2RenderCameraCard(cam)).join('');
+    }
 
-    grid.innerHTML = items.map(cam => v2RenderCameraCard(cam)).join('');
     initV2LazyLoading();
     const totalMatching = (window.V2State.totalMatching !== undefined) ? window.V2State.totalMatching : items.length;
     v2RenderPagination(items.length, totalMatching);
@@ -597,6 +618,9 @@ window.initV2LazyLoading = initV2LazyLoading;
 
 function _streamScore(s) {
     let score = 0;
+    if (s.type === 'web_panel' || s.stream_type === 'web_panel') {
+        return s.screenshot ? 10 : 0;
+    }
     if (s.screenshot && String(s.screenshot).trim().length > 0) score += 1000;
     if (s.verified) score += 500;
     if (s.width && s.height) score += Math.min(100, Math.floor((s.width * s.height) / 20000));
@@ -732,7 +756,8 @@ function v2RenderCameraCard(cam) {
         `;
     }
 
-    const verified = streams.some(s => s.verified) || Boolean(cam.web_screenshot);
+    const hasVerifiedVideo = streams.some(s => s.verified && s.stream_type !== 'web_panel' && s.type !== 'web_panel');
+    const verified = hasVerifiedVideo;
     const catBadges = [];
     const allCats = Array.isArray(cam.categories) && cam.categories.length > 0
         ? cam.categories
@@ -766,7 +791,7 @@ function v2RenderCameraCard(cam) {
     } else if (allCats.includes('camera') || allCats.includes('intercom')) {
         authBadge = is401
             ? '<span class="v2-auth-badge auth-locked" title="Один или несколько сервисов требуют авторизацию">🔒 Требуется пароль</span>'
-            : (verified
+            : (hasVerifiedVideo
                 ? '<span class="v2-auth-badge auth-open">✓ Видео подтверждено</span>'
                 : '<span class="v2-auth-badge">○ Видео не подтверждено</span>');
     } else {
@@ -784,8 +809,9 @@ function v2RenderCameraCard(cam) {
     const protocols = (cam.protocols || []).slice(0, 5);
     const badges = protocols.map(p => `<span class="v2-proto-badge ${_protoBadgeClass(p)}">${_protoLabel(p)}</span>`).join('');
 
-    // Stream selector dropdown (top 15 streams sorted by quality/preview)
-    const hasMediaStreams = streams.some(s => s.stream_type === 'rtsp' || s.stream_type === 'rtmp' || s.stream_type === 'hls');
+    // Filter real media streams (RTSP, RTMP, HLS, snapshot, MJPEG) excluding web panels
+    const mediaStreams = streams.filter(s => s.stream_type !== 'web_panel' && s.type !== 'web_panel');
+    const hasMediaStreams = mediaStreams.length > 0;
     let streamSelectorHtml = '';
     if (isAudioDevice) {
         const recordCountMatch = (cam.model || '').match(/\(([^)]+)\)/);
@@ -804,8 +830,8 @@ function v2RenderCameraCard(cam) {
                 </div>
             </div>
         `;
-    } else if (isNonCamera && !hasMediaStreams) {
-        const titleText = cam.web_title || (isRouter ? 'Панель управления' : (isWebDevice ? 'Веб-сервис' : 'Сетевой узел'));
+    } else if (!hasMediaStreams) {
+        const titleText = cam.web_title || (isRouter ? 'Панель управления' : (isWebDevice ? 'Веб-сервис' : 'Веб-интерфейс'));
         streamSelectorHtml = `
             <div class="v2-stream-selector-row">
                 <div class="v2-stream-info-header">
@@ -822,8 +848,8 @@ function v2RenderCameraCard(cam) {
                 </div>
             </div>
         `;
-    } else if (totalStreams > 0) {
-        const streamOptions = streams.map((s, idx) => {
+    } else {
+        const streamOptions = mediaStreams.map((s, idx) => {
             const shortPath = _esc(s.url);
             const isSel = s.url === currentStreamUrl ? 'selected' : '';
             let tag = '';
@@ -833,22 +859,19 @@ function v2RenderCameraCard(cam) {
             return `<option value="${_esc(s.url)}" ${isSel}>#${idx + 1} ${shortPath}${tag}</option>`;
         }).join('');
 
-        const moreOption = '';
-
-        const confirmedStreams = streams.filter(s => s.verified).length;
-        const streamCountText = `${confirmedStreams} подтверждено · ${totalStreams} URL`;
+        const confirmedStreams = mediaStreams.filter(s => s.verified).length;
+        const streamCountText = `${confirmedStreams} подтверждено · ${mediaStreams.length} URL`;
 
         streamSelectorHtml = `
             <div class="v2-stream-selector-row">
                 <div class="v2-stream-info-header">
                     <span style="color:rgba(255,255,255,0.45)">Поток:</span>
-                    <span class="v2-stream-count-badge" onclick="v2OpenStreamModal('${_esc(cam.ip)}')" title="Открыть полный список ${totalStreams} потоков">
+                    <span class="v2-stream-count-badge" onclick="v2OpenStreamModal('${_esc(cam.ip)}')" title="Открыть полный список ${mediaStreams.length} потоков">
                         🎥 ${streamCountText}
                     </span>
                 </div>
                 <select class="v2-stream-select" id="v2-select-${safeIp}" onchange="v2OnStreamChange('${_esc(cam.ip)}', this.value)">
                     ${streamOptions}
-                    ${moreOption}
                 </select>
             </div>
         `;
