@@ -186,3 +186,132 @@ def test_dvr_services_are_profiled_by_fingerprint_on_nonstandard_ports():
     scanner.configure_for_stack(["GoAhead DVR Remote Management System"])
     assert "GoAhead DVR Remote Management System" in scanner.adapted_stack
     assert "rtsp-methods" in scanner.nmap_args
+
+
+def test_brute_force_adds_service_brute_scripts_and_wordlists():
+    from ip2domain.modules.vuln_scanner import VulnScanner, BRUTE_SERVICE_SCRIPTS
+
+    scanner = VulnScanner(brute_force=True)
+    # Default nmap_args already carries the brute scripts that match the base service markers.
+    for script in ("smb-brute", "ssh-brute", "ftp-brute", "http-brute"):
+        assert script in scanner.nmap_args
+    assert scanner._brute_user_db and scanner._brute_pass_db
+
+    ports = [
+        {"port": 445, "protocol": "tcp", "service": "netbios-ssn", "version": "Samba smbd 4.6.2"},
+        {"port": 21, "protocol": "tcp", "service": "ftp", "version": "vsftpd 3.0.5"},
+        {"port": 80, "protocol": "tcp", "service": "http", "version": "nginx 1.18.0", "http_detected": True},
+    ]
+    command = " ".join(scanner._build_nmap_command("203.0.113.10", ports))
+
+    for script in BRUTE_SERVICE_SCRIPTS.values():
+        for s in script:
+            assert s in command
+    assert "--script-args" in command
+    assert f"smb-brute.userdb={scanner._brute_user_db}" in command
+    assert f"ssh-brute.passwd={scanner._brute_pass_db}" in command
+
+
+def test_brute_force_off_keeps_default_args_untouched():
+    from ip2domain.modules.vuln_scanner import VulnScanner, BASE_NSE_SCRIPTS
+
+    scanner = VulnScanner()
+    assert scanner.brute_force is False
+    assert all(script in scanner.nmap_args for script in BASE_NSE_SCRIPTS)
+    assert "smb-brute" not in scanner.nmap_args
+    assert scanner._brute_user_db is None and scanner._brute_pass_db is None
+
+
+def test_base_nse_set_covers_tls_audit():
+    from ip2domain.modules.vuln_scanner import VulnScanner, BASE_NSE_SCRIPTS, BASE_NSE_SCRIPTS_STR
+
+    scanner = VulnScanner()
+    assert BASE_NSE_SCRIPTS_STR == ",".join(BASE_NSE_SCRIPTS)
+    for script in ("vuln", "ssl-poodle", "ssl-heartbleed", "ssl-enum-ciphers", "smb-protocols", "ssh-auth-methods"):
+        assert script in scanner.nmap_args
+
+
+def test_osv_severity_mapping():
+    from ip2domain.modules.vuln_scanner import _osv_severity
+
+    assert _osv_severity({"severity": "critical"}) == "critical"
+    assert _osv_severity({"severity": "low"}) == "low"
+    assert _osv_severity({"cvss": {"score": 9.8}}) == "critical"
+    assert _osv_severity({"cvss": {"score": 7.5}}) == "high"
+    assert _osv_severity({"cvss": {"score": 5.0}}) == "medium"
+    assert _osv_severity({"cvss": {"score": 3.0}}) == "low"
+    assert _osv_severity({}) == "medium"
+    assert _osv_severity({"severity": "negligible"}) == "info"
+
+
+def test_osv_stack_query_requires_version():
+    import asyncio
+    from ip2domain.modules.vuln_scanner import VulnScanner
+
+    scanner = VulnScanner()
+    # No version -> no OSV queries, empty result, no network access.
+    assert asyncio.run(scanner.fetch_osv_for_stack(["nginx"])) == []
+    assert asyncio.run(scanner.fetch_osv_cves("nginx", "")) == []
+    assert asyncio.run(scanner.fetch_osv_cves("", "1.18.0")) == []
+
+
+def test_scan_result_shape_includes_osv_and_passive_intel(monkeypatch):
+    import asyncio
+    from ip2domain.modules.vuln_scanner import VulnScanner
+
+    scanner = VulnScanner(passive_intel=True)
+
+    async def fake_nmap(target, progress_callback=None, known_ports=None):
+        return []
+
+    async def fake_nikto(target, progress_callback=None, known_ports=None):
+        return []
+
+    async def fake_passive(target):
+        return {"shodan": ["host.example.com"]}
+
+    monkeypatch.setattr(scanner, "_run_nmap", fake_nmap)
+    monkeypatch.setattr(scanner, "_run_nikto", fake_nikto)
+    monkeypatch.setattr(scanner, "fetch_passive_intel", fake_passive)
+
+    result = asyncio.run(scanner.scan_target_combined("203.0.113.10", tech_stack=["nginx 1.18.0"], use_cache=False))
+
+    assert "osv_cves" in result
+    assert "passive_intel" in result
+    assert result["passive_intel"] == {"shodan": ["host.example.com"]}
+    assert result["options"] == {"brute_force": False, "passive_intel": True}
+
+
+def test_expanded_version_cve_database():
+    from ip2domain.modules.vuln_scanner import VulnScanner
+
+    scanner = VulnScanner()
+    # Test Apache traversal
+    findings_apache = scanner.check_version_cves("1.2.3.4", ["Apache 2.4.49"])
+    assert any("CVE-2021-41773" in f["cves"] for f in findings_apache)
+
+    # Test OpenSSH RegreSSHion
+    findings_ssh = scanner.check_version_cves("1.2.3.4", ["OpenSSH 8.9p1"])
+    assert any("CVE-2024-6387" in f["cves"] for f in findings_ssh)
+
+    # Test Samba EternalRed
+    findings_samba = scanner.check_version_cves("1.2.3.4", ["Samba 4.5.0"])
+    assert any("CVE-2017-7494" in f["cves"] for f in findings_samba)
+
+    # Test PHP CGI RCE
+    findings_php = scanner.check_version_cves("1.2.3.4", ["PHP 8.1.2"])
+    assert any("CVE-2024-4577" in f["cves"] for f in findings_php)
+
+
+def test_nikto_detects_ssl_ports_and_tunnels():
+    from ip2domain.modules.vuln_scanner import VulnScanner
+
+    ports = [
+        {"port": 443, "protocol": "tcp", "service": "https"},
+        {"port": 8443, "protocol": "tcp", "service": "https-alt"},
+        {"port": 9090, "protocol": "tcp", "service": "zeus-admin", "tunnel": "ssl"},
+        {"port": 80, "protocol": "tcp", "service": "http"},
+    ]
+    selected = VulnScanner._select_nikto_ports(ports)
+    assert len(selected) == 4
+

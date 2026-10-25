@@ -473,9 +473,15 @@ async function checkNodeVulnStatus(target) {
 /* ----------------------------------------------------------
    triggerVulnScan — start a new vulnerability scan
    ---------------------------------------------------------- */
-async function triggerVulnScan(target, targetType, openPorts = []) {
+async function triggerVulnScan(target, targetType, openPorts = [], bruteForce = false, passiveIntel = false) {
     const btn       = document.getElementById('btn-vuln-scan');
     const container = document.getElementById('vuln-scan-container');
+    const bruteEl   = document.getElementById('chk-vuln-brute');
+    const passiveEl = document.getElementById('chk-vuln-passive');
+
+    const brute_force = bruteEl ? bruteEl.checked : Boolean(bruteForce);
+    const passive_intel = passiveEl ? passiveEl.checked : Boolean(passiveIntel);
+
     if (btn) {
         btn.disabled = true;
         btn.innerHTML = '<span class="spinner" style="width:14px;height:14px;"></span> Проверка состояния...';
@@ -485,7 +491,13 @@ async function triggerVulnScan(target, targetType, openPorts = []) {
         const res  = await fetch('/api/vuln/scan', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ target, target_type: targetType, open_ports: openPorts }),
+            body:    JSON.stringify({
+                target,
+                target_type: targetType,
+                open_ports: openPorts,
+                brute_force,
+                passive_intel,
+            }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || res.statusText || 'Не удалось запустить проверку');
@@ -494,7 +506,7 @@ async function triggerVulnScan(target, targetType, openPorts = []) {
             alert(`⚠️ ${data.message}`);
             _pollVulnJob(data.job_id, target, container, btn);
         } else if (data.status === 'queued') {
-            if (container) container.innerHTML = _vulnRunningHtml('Инициализация Nmap & Nikto...');
+            if (container) container.innerHTML = _vulnRunningHtml('Инициализация Nmap, Nikto & OSV.dev...');
             _pollVulnJob(data.job_id, target, container, btn);
         }
     } catch (e) {
@@ -544,13 +556,30 @@ function _pollVulnJob(jobId, target, container, btn) {
 }
 
 /* ----------------------------------------------------------
-   renderVulnResults — display nmap + nikto findings
+   renderVulnResults — display nmap + nikto + osv findings
    ---------------------------------------------------------- */
 function renderVulnResults(results, container) {
     let html = `<div style="margin-top:10px;">
         <h5 style="color:var(--accent-orange);font-size:0.95rem;margin-bottom:6px;">
             Подтверждённые и потенциальные риски (${results.actionable_findings || 0}):
         </h5>`;
+
+    if (results.options && (results.options.brute_force || results.options.passive_intel)) {
+        html += `<div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap;">`;
+        if (results.options.brute_force) {
+            html += `<span style="background:rgba(239,68,68,0.18);border:1px solid rgba(239,68,68,0.35);color:#fca5a5;font-size:0.7rem;padding:2px 7px;border-radius:4px;">🔑 Аудит паролей (Brute-force) включен</span>`;
+        }
+        if (results.options.passive_intel) {
+            html += `<span style="background:rgba(16,185,129,0.18);border:1px solid rgba(16,185,129,0.35);color:#6ee7b7;font-size:0.7rem;padding:2px 7px;border-radius:4px;">🌐 Пассивная разведка (Shodan/Censys)</span>`;
+        }
+        html += `</div>`;
+    }
+
+    if (results.device_context && (results.device_context.vendor || results.device_context.device_type)) {
+        html += `<div style="margin-bottom:8px;font-size:0.78rem;background:rgba(168,85,247,0.15);border:1px solid rgba(168,85,247,0.3);padding:5px 9px;border-radius:6px;color:#d8b4fe;">
+            📹 <b>Устройство в инвентаре:</b> ${_esc(results.device_context.vendor || '')} ${_esc(results.device_context.model || '')} (${_esc(results.device_context.device_type || 'устройство')})
+        </div>`;
+    }
 
     if (results.scanned_ports && results.scanned_ports.length) {
         html += `<div class="vuln-scan-meta"><span>Проверенные порты: <b>${results.scanned_ports.map((p) => `${p.port}/${_esc(p.protocol || 'tcp')}`).join(', ')}</b></span><span>Время: <b>${results.scan_duration_sec || 0} сек.</b></span></div>`;
@@ -599,10 +628,11 @@ function renderVulnResults(results, container) {
             const colors = {critical:'#ef4444',high:'#f87171',medium:'#fbbf24',low:'#60a5fa',warning:'#fbbf24',error:'#ef4444',info:'#9ca3af'};
             const c = colors[f.severity] || '#9ca3af';
             const severityNames = {critical:'Критическая',high:'Высокая',medium:'Средняя',low:'Низкая',warning:'Предупреждение',error:'Ошибка',info:'Информация'};
+            const detailsHtml = _esc(f.details || '').replace(/\n/g, '<br>');
             s += `<div class="vuln-finding-item">
                 <span style="color:${c};font-weight:600;">${severityNames[f.severity] || f.severity}</span>
                 <b>${_esc(f.title || '')}</b>
-                <div class="vuln-finding-details">${_esc(f.details || '')}</div>
+                <div class="vuln-finding-details">${detailsHtml}</div>
             </div>`;
             });
             s += `</div></details>`;
@@ -611,12 +641,25 @@ function renderVulnResults(results, container) {
     };
 
     html += renderFindings(results.version_cves,   'CVE Database (По версии компонента):', '#f43f5e');
+    html += renderFindings(results.osv_cves,       'OSV.dev Vulnerabilities (Динамическая база CVE):', '#ec4899');
     html += renderFindings(results.nmap_findings,  'Nmap NSE Findings:',    '#60a5fa');
     html += renderFindings(results.nikto_findings, 'Nikto Web Findings:',   '#a78bfa');
 
+    if (results.passive_intel && Object.keys(results.passive_intel).length > 0) {
+        html += `<details class="vuln-finding-group" open style="margin-top:10px;">
+            <summary><b>Пассивная разведка (Shodan / Censys)</b><span>${Object.keys(results.passive_intel).length} провайдеров</span></summary>
+            <div class="vuln-finding-list" style="padding:8px 10px;font-size:0.75rem;">`;
+        for (const [provider, items] of Object.entries(results.passive_intel)) {
+            const list = Array.isArray(items) ? items : [items];
+            html += `<div style="margin-bottom:5px;"><b>${_esc(provider)}:</b> ${list.map(_esc).join(', ')}</div>`;
+        }
+        html += `</div></details>`;
+    }
+
     if ((!results.nmap_findings || !results.nmap_findings.length) &&
         (!results.nikto_findings || !results.nikto_findings.length) &&
-        (!results.version_cves || !results.version_cves.length)) {
+        (!results.version_cves || !results.version_cves.length) &&
+        (!results.osv_cves || !results.osv_cves.length)) {
         html += `<p style="color:var(--text-muted);font-size:0.85rem;">Уязвимостей не найдено.</p>`;
     }
 

@@ -32,6 +32,8 @@ class VulnScanRequest(BaseModel):
     target_type: str = "ip"
     tech_stack: Optional[List[str]] = None
     open_ports: Optional[List[VulnKnownPort]] = Field(default=None, max_items=100)
+    brute_force: bool = False
+    passive_intel: bool = False
 
 def _merge_nmap_stack(target: str, analysis: Dict[str, any]) -> Dict[str, any]:
     """Merge persisted Nmap -sV fingerprints into an HTTP technology report."""
@@ -56,7 +58,8 @@ def _merge_nmap_stack(target: str, analysis: Dict[str, any]) -> Dict[str, any]:
     return merged
 
 async def _run_vuln_scan_job(vuln_job_id: str, target: str, tech_stack: Optional[List[str]] = None,
-                             open_ports: Optional[List[dict]] = None):
+                             open_ports: Optional[List[dict]] = None,
+                             brute_force: bool = False, passive_intel: bool = False):
     try:
         stage_text = "Выполнение сканирования Nmap NSE и Nikto..."
         if tech_stack:
@@ -68,7 +71,7 @@ async def _run_vuln_scan_job(vuln_job_id: str, target: str, tech_stack: Optional
             stage=stage_text,
         )
 
-        scanner = VulnScanner()
+        scanner = VulnScanner(brute_force=brute_force, passive_intel=passive_intel)
         scan_started = time.monotonic()
         latest_progress = {"pct": 5, "stage": stage_text}
 
@@ -152,6 +155,8 @@ async def start_vuln_scan(req: VulnScanRequest, background_tasks: BackgroundTask
         "target_type": req.target_type,
         "tech_stack": tech_stack,
         "open_ports": open_ports,
+        "brute_force": req.brute_force,
+        "passive_intel": req.passive_intel,
         "status": "queued",
         "progress_pct": 5,
         "stage": "Инициализация сканера уязвимостей...",
@@ -159,8 +164,10 @@ async def start_vuln_scan(req: VulnScanRequest, background_tasks: BackgroundTask
         "error": None,
     })
 
-    background_tasks.add_task(_run_job, vuln_job_id, target_clean, tech_stack, open_ports)
-    return {"status": "queued", "job_id": vuln_job_id, "tech_stack": tech_stack, "open_ports": open_ports}
+    background_tasks.add_task(_run_job, vuln_job_id, target_clean, tech_stack, open_ports,
+                              req.brute_force, req.passive_intel)
+    return {"status": "queued", "job_id": vuln_job_id, "tech_stack": tech_stack,
+             "open_ports": open_ports, "brute_force": req.brute_force, "passive_intel": req.passive_intel}
 
 @router.get("/api/vuln/scan/{job_id}")
 def get_vuln_scan_status(job_id: str):

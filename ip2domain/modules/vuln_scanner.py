@@ -1,27 +1,39 @@
 import asyncio
+import ipaddress
 import logging
+import os
 import re
 import shutil
+import tempfile
 from pathlib import Path
 import time
 import xml.etree.ElementTree as ET
 from typing import Dict, List, Optional, Tuple
 
+import aiohttp
+
 logger = logging.getLogger(__name__)
 
 # CVE/OSVDB severity keywords for Nikto output
-_HIGH_KEYWORDS    = frozenset(["osvdb", "cve", "vulnerability", "sql injection",
-                                "xss", "rce", "rfi", "lfi", "authentication bypass",
-                                "arbitrary", "remote code", "buffer overflow"])
-_MEDIUM_KEYWORDS  = frozenset(["directory listing", "outdated", "deprecated",
-                                "insecure", "sensitive", "information disclosure",
-                                "admin", "login", "phpmyadmin"])
+_HIGH_KEYWORDS = frozenset([
+    "osvdb", "cve", "vulnerability", "sql injection",
+    "xss", "rce", "rfi", "lfi", "authentication bypass",
+    "arbitrary", "remote code", "buffer overflow",
+])
+_MEDIUM_KEYWORDS = frozenset([
+    "directory listing", "outdated", "deprecated",
+    "insecure", "sensitive", "information disclosure",
+    "admin", "login", "phpmyadmin",
+])
 _ALLOWED_NIKTO_TUNING = frozenset("123456789abc")
 
 # In-process dedup cache: {target: (ts, result)}
 _VULN_CACHE: Dict[str, Tuple[float, Dict]] = {}
 _CACHE_TTL = 600  # 10 min
 
+# In-process cache for OSV.dev CVE queries: {cache_key: (ts, findings)}
+_OSV_CACHE: Dict[str, Tuple[float, List[Dict]]] = {}
+_OSV_CACHE_TTL = 3600  # 1 hour
 
 # Technology stack to specific Nmap NSE scripts mapping
 TECH_NSE_SCRIPTS: Dict[str, List[str]] = {
@@ -32,19 +44,32 @@ TECH_NSE_SCRIPTS: Dict[str, List[str]] = {
     "asp.net":        ["http-iis-short-name-brute", "http-vuln-cve2015-1635"],
     "iis":            ["http-iis-short-name-brute", "http-vuln-cve2015-1635", "http-iis-webdav-vuln"],
     "microsoft-iis":  ["http-iis-short-name-brute", "http-vuln-cve2015-1635"],
-    "apache":         ["http-apache-negotiation", "http-apache-server-status"],
+    "apache":         ["http-apache-negotiation", "http-apache-server-status", "http-vuln-cve2017-5638", "http-vuln-cve2021-41773"],
     "nginx":          ["http-enum", "http-methods", "http-security-headers"],
-    "openssh":        ["ssh-auth-methods", "ssh-hostkey"],
+    "openssh":        ["ssh-auth-methods", "ssh2-enum-algos", "ssh-hostkey"],
+    "ssh":            ["ssh-auth-methods", "ssh2-enum-algos", "ssh-hostkey"],
     "samba":          ["smb-os-discovery", "smb-protocols", "smb-security-mode",
                        "smb2-security-mode", "smb-vuln-ms17-010", "smb-vuln-cve-2017-7494"],
+    "smb":            ["smb-os-discovery", "smb-protocols", "smb-security-mode",
+                       "smb2-security-mode", "smb-vuln-ms17-010", "smb-vuln-cve-2017-7494"],
     "vsftpd":         ["ftp-anon", "ftp-syst", "ftp-vsftpd-backdoor"],
+    "proftpd":        ["ftp-anon", "ftp-syst", "ftp-proftpd-backdoor"],
     "bitrix":         ["http-enum", "http-headers", "http-methods"],
     "laravel":        ["http-enum"],
     "django":         ["http-enum"],
+    "tomcat":         ["http-tomcat-enum", "ajp-methods", "ajp-headers"],
+    "mysql":          ["mysql-info", "mysql-enum", "mysql-empty-password", "mysql-vuln-cve2012-2122"],
+    "postgresql":     ["pgsql-databases"],
+    "postgres":       ["pgsql-databases"],
+    "redis":          ["redis-info"],
+    "mongodb":        ["mongodb-info", "mongodb-databases"],
+    "rdp":            ["rdp-enum-encryption", "rdp-vuln-ms12-020"],
+    "ms-wbt-server":  ["rdp-enum-encryption", "rdp-vuln-ms12-020"],
     "goahead":        ["http-auth", "http-auth-finder", "http-default-accounts",
                         "http-enum", "http-methods", "http-robots.txt",
                         "http-security-headers", "http-server-header"],
     "telnetd":        ["banner", "telnet-encryption", "telnet-ntlm-info"],
+    "telnet":         ["banner", "telnet-encryption", "telnet-ntlm-info"],
     "dvr":            ["http-auth", "http-auth-finder", "http-default-accounts",
                         "http-enum", "http-methods", "http-security-headers",
                         "http-server-header", "rtsp-methods", "rtsp-url-brute"],
@@ -63,7 +88,48 @@ TECH_NSE_SCRIPTS: Dict[str, List[str]] = {
     "network camera": ["http-auth", "http-auth-finder", "http-default-accounts",
                         "http-enum", "http-methods", "http-security-headers",
                         "http-server-header", "rtsp-methods", "rtsp-url-brute"],
+    "rtsp":           ["banner", "rtsp-methods", "rtsp-url-brute"],
+    "hikvision":      ["http-auth", "http-auth-finder", "http-default-accounts", "rtsp-methods"],
+    "dahua":          ["http-auth", "http-auth-finder", "http-default-accounts", "rtsp-methods"],
 }
+
+# Broad base NSE set: comprehensive vuln audit + full TLS posture + SMB/SSH/HTTP service checks.
+BASE_NSE_SCRIPTS: List[str] = [
+    "vuln", "vulners",
+    "http-title", "http-headers", "http-enum", "http-methods", "http-security-headers", "http-robots.txt",
+    "ssl-cert", "ssl-enum-ciphers", "ssl-poodle", "ssl-heartbleed",
+    "ssl-dh-params", "ssl-known-key", "sslv2", "sslv2-drown", "ssl-ccs-injection",
+    "tls-alpn", "tls-ticketbleed", "ssl-date",
+    "smb-protocols", "smb-security-mode", "smb-vuln-ms17-010", "smb-os-discovery",
+    "ssh-auth-methods",
+]
+BASE_NSE_SCRIPTS_STR = ",".join(BASE_NSE_SCRIPTS)
+
+# Brute-force NSE scripts keyed by service marker (used when brute_force=True).
+BRUTE_SERVICE_SCRIPTS: Dict[str, List[str]] = {
+    "smb":         ["smb-brute"],
+    "netbios":     ["smb-brute"],
+    "netbios-ssn": ["smb-brute"],
+    "ssh":         ["ssh-brute"],
+    "telnet":      ["telnet-brute"],
+    "ftp":         ["ftp-brute"],
+    "postgresql":  ["pgsql-brute"],
+    "postgres":    ["pgsql-brute"],
+    "mysql":       ["mysql-brute"],
+    "redis":       ["redis-brute"],
+    "mongodb":     ["mongodb-brute"],
+    "oracle":      ["oracle-brute"],
+    "http":        ["http-brute"],
+    "http-proxy":  ["http-proxy-brute"],
+}
+
+# Built-in weak-credential wordlists (safe minimal audit without requiring external files).
+_DEFAULT_USERS: List[str] = [
+    "admin", "administrator", "root", "test", "guest", "user", "support", "operator", "nobody", "oracle",
+]
+_DEFAULT_PASSES: List[str] = [
+    "admin", "password", "root", "test", "123456", "1234", "letmein", "guest", "admin123", "toor",
+]
 
 # Service-driven checks also work when Nmap could not identify a product version.
 SERVICE_NSE_SCRIPTS: Dict[str, List[str]] = {
@@ -90,7 +156,7 @@ TECH_NIKTO_TUNING: Dict[str, str] = {
 }
 
 # Known Version CVE Database for precise version-based vulnerability matching
-# Solves user's issue: generic Nmap/Nikto banner scans miss version-specific CVEs
+# Covers popular web servers, runtime environments, databases, and network daemons
 VERSION_CVE_DATABASE: List[Dict[str, any]] = [
     # Nginx
     {
@@ -101,7 +167,7 @@ VERSION_CVE_DATABASE: List[Dict[str, any]] = [
         "severity": "high",
         "cvss": 7.7,
         "details": "1-byte memory overwrite in ngx_resolver.c via crafted DNS response. Can lead to DoS or remote code execution.",
-        "link": "https://nvd.nist.gov/vuln/detail/CVE-2021-23017"
+        "link": "https://nvd.nist.gov/vuln/detail/CVE-2021-23017",
     },
     {
         "product": "nginx",
@@ -111,7 +177,7 @@ VERSION_CVE_DATABASE: List[Dict[str, any]] = [
         "severity": "high",
         "cvss": 7.8,
         "details": "Memory corruption vulnerability in ngx_http_mp4_module allowing remote worker process crash or code execution.",
-        "link": "https://nvd.nist.gov/vuln/detail/CVE-2022-41741"
+        "link": "https://nvd.nist.gov/vuln/detail/CVE-2022-41741",
     },
     {
         "product": "nginx",
@@ -121,7 +187,17 @@ VERSION_CVE_DATABASE: List[Dict[str, any]] = [
         "severity": "medium",
         "cvss": 7.1,
         "details": "Memory disclosure vulnerability in ngx_http_mp4_module allowing worker process memory leakage.",
-        "link": "https://nvd.nist.gov/vuln/detail/CVE-2022-41742"
+        "link": "https://nvd.nist.gov/vuln/detail/CVE-2022-41742",
+    },
+    {
+        "product": "nginx",
+        "min_ver": "1.25.0", "max_ver": "1.25.2",
+        "cve": "CVE-2023-44487",
+        "title": "HTTP/2 Rapid Reset Denial of Service",
+        "severity": "high",
+        "cvss": 7.5,
+        "details": "HTTP/2 protocol flaw allowing rapid stream resets causing resource exhaustion and DoS.",
+        "link": "https://nvd.nist.gov/vuln/detail/CVE-2023-44487",
     },
 
     # Microsoft IIS
@@ -133,7 +209,7 @@ VERSION_CVE_DATABASE: List[Dict[str, any]] = [
         "severity": "critical",
         "cvss": 10.0,
         "details": "Integer overflow vulnerability in HTTP.sys kernel driver when processing HTTP Range headers. Allows unauthenticated RCE.",
-        "link": "https://nvd.nist.gov/vuln/detail/CVE-2015-1635"
+        "link": "https://nvd.nist.gov/vuln/detail/CVE-2015-1635",
     },
     {
         "product": "iis",
@@ -143,7 +219,7 @@ VERSION_CVE_DATABASE: List[Dict[str, any]] = [
         "severity": "critical",
         "cvss": 9.8,
         "details": "Wormable remote code execution vulnerability in HTTP Protocol Stack (HTTP.sys) parsing malicious packets.",
-        "link": "https://nvd.nist.gov/vuln/detail/CVE-2021-31166"
+        "link": "https://nvd.nist.gov/vuln/detail/CVE-2021-31166",
     },
 
     # PHP
@@ -155,7 +231,7 @@ VERSION_CVE_DATABASE: List[Dict[str, any]] = [
         "severity": "critical",
         "cvss": 9.8,
         "details": "Underflow in env_path_info in php-fpm with Nginx fastcgi_split_path_info leading to RCE.",
-        "link": "https://nvd.nist.gov/vuln/detail/CVE-2019-11043"
+        "link": "https://nvd.nist.gov/vuln/detail/CVE-2019-11043",
     },
     {
         "product": "php",
@@ -165,7 +241,17 @@ VERSION_CVE_DATABASE: List[Dict[str, any]] = [
         "severity": "high",
         "cvss": 7.5,
         "details": "Numeric overflow in PHP-FPM master process memory management leading to crash or privilege escalation.",
-        "link": "https://nvd.nist.gov/vuln/detail/CVE-2021-21703"
+        "link": "https://nvd.nist.gov/vuln/detail/CVE-2021-21703",
+    },
+    {
+        "product": "php",
+        "min_ver": "8.1.0", "max_ver": "8.1.28",
+        "cve": "CVE-2024-4577",
+        "title": "PHP CGI Argument Injection Remote Code Execution",
+        "severity": "critical",
+        "cvss": 9.8,
+        "details": "Best-fit character encoding flaw in Windows PHP CGI wrapper allowing unauthenticated remote code execution.",
+        "link": "https://nvd.nist.gov/vuln/detail/CVE-2024-4577",
     },
 
     # Apache
@@ -177,15 +263,129 @@ VERSION_CVE_DATABASE: List[Dict[str, any]] = [
         "severity": "critical",
         "cvss": 9.8,
         "details": "Path traversal flaw in URL normalization allowing unauthenticated remote command execution when mod_cgi is enabled.",
-        "link": "https://nvd.nist.gov/vuln/detail/CVE-2021-41773"
+        "link": "https://nvd.nist.gov/vuln/detail/CVE-2021-41773",
+    },
+    {
+        "product": "apache",
+        "min_ver": "2.4.51", "max_ver": "2.4.51",
+        "cve": "CVE-2021-42013",
+        "title": "Apache HTTP Server Incomplete Fix for Path Traversal",
+        "severity": "critical",
+        "cvss": 9.8,
+        "details": "Incomplete fix for CVE-2021-41773 allowing remote path traversal and code execution.",
+        "link": "https://nvd.nist.gov/vuln/detail/CVE-2021-42013",
+    },
+    {
+        "product": "apache",
+        "min_ver": "2.4.0", "max_ver": "2.4.53",
+        "cve": "CVE-2022-22720",
+        "title": "Apache HTTP Server HTTP Request Smuggling",
+        "severity": "high",
+        "cvss": 7.5,
+        "details": "Request smuggling flaw via body length limit bypass leading to cache poisoning or request hijacking.",
+        "link": "https://nvd.nist.gov/vuln/detail/CVE-2022-22720",
+    },
+
+    # OpenSSL
+    {
+        "product": "openssl",
+        "min_ver": "1.0.1", "max_ver": "1.0.1f",
+        "cve": "CVE-2014-0160",
+        "title": "OpenSSL Heartbleed TLS Heartbeat Information Disclosure",
+        "severity": "critical",
+        "cvss": 7.5,
+        "details": "Buffer over-read in TLS heartbeat handling leaking up to 64KB of server memory including private keys.",
+        "link": "https://nvd.nist.gov/vuln/detail/CVE-2014-0160",
+    },
+    {
+        "product": "openssl",
+        "min_ver": "3.0.0", "max_ver": "3.0.6",
+        "cve": "CVE-2022-3602",
+        "title": "OpenSSL X.509 Email Address 4-byte Buffer Overflow",
+        "severity": "high",
+        "cvss": 7.5,
+        "details": "Buffer overflow in punycode decoding during X.509 certificate verification.",
+        "link": "https://nvd.nist.gov/vuln/detail/CVE-2022-3602",
+    },
+
+    # OpenSSH
+    {
+        "product": "openssh",
+        "min_ver": "8.5p1", "max_ver": "9.7p1",
+        "cve": "CVE-2024-6387",
+        "title": "OpenSSH RegreSSHion Unauthenticated Remote Code Execution",
+        "severity": "critical",
+        "cvss": 8.1,
+        "details": "Signal handler race condition in sshd on glibc-based Linux systems allows unauthenticated remote root RCE.",
+        "link": "https://nvd.nist.gov/vuln/detail/CVE-2024-6387",
+    },
+
+    # Samba
+    {
+        "product": "samba",
+        "min_ver": "3.5.0", "max_ver": "4.6.4",
+        "cve": "CVE-2017-7494",
+        "title": "Samba EternalRed Remote Code Execution",
+        "severity": "critical",
+        "cvss": 9.8,
+        "details": "Remote code execution from writable share via shared library loading vulnerability in smbd.",
+        "link": "https://nvd.nist.gov/vuln/detail/CVE-2017-7494",
+    },
+
+    # vsftpd
+    {
+        "product": "vsftpd",
+        "min_ver": "2.3.4", "max_ver": "2.3.4",
+        "cve": "CVE-2011-2523",
+        "title": "vsftpd 2.3.4 Backdoor Execution",
+        "severity": "critical",
+        "cvss": 9.8,
+        "details": "Malicious backdoor embedded into source download of vsftpd 2.3.4 opening root shell on port 6200.",
+        "link": "https://nvd.nist.gov/vuln/detail/CVE-2011-2523",
+    },
+
+    # ProFTPD
+    {
+        "product": "proftpd",
+        "min_ver": "1.3.5", "max_ver": "1.3.5",
+        "cve": "CVE-2015-3306",
+        "title": "ProFTPD mod_copy Arbitrary File Copy & RCE",
+        "severity": "critical",
+        "cvss": 9.8,
+        "details": "Unauthenticated file copy command CPFR/CPTO in mod_copy allowing arbitrary PHP backdoor deployment.",
+        "link": "https://nvd.nist.gov/vuln/detail/CVE-2015-3306",
+    },
+
+    # Redis
+    {
+        "product": "redis",
+        "min_ver": "5.0.0", "max_ver": "6.2.6",
+        "cve": "CVE-2022-0543",
+        "title": "Redis Lua Sandbox Escape Remote Code Execution",
+        "severity": "critical",
+        "cvss": 10.0,
+        "details": "Packaging issue in Debian/Ubuntu Redis packages allowing Lua sandbox escape and host command execution.",
+        "link": "https://nvd.nist.gov/vuln/detail/CVE-2022-0543",
+    },
+
+    # Tomcat
+    {
+        "product": "tomcat",
+        "min_ver": "9.0.0", "max_ver": "9.0.30",
+        "cve": "CVE-2020-1938",
+        "title": "Apache Tomcat AJP Connector Ghostcat File Read / Inclusion",
+        "severity": "critical",
+        "cvss": 9.8,
+        "details": "Vulnerability in Tomcat AJP connector (port 8009) allowing unauthorized arbitrary file read and JSP execution.",
+        "link": "https://nvd.nist.gov/vuln/detail/CVE-2020-1938",
     },
 ]
 
 
 class VulnScanner:
     """
-    Asynchronous vulnerability scanner: Nmap NSE + Nikto.
-    Supports dynamic technology stack adaptation for targeted scanning.
+    Asynchronous vulnerability scanner: Nmap NSE + Nikto + OSV.dev CVE + Version CVE DB.
+    Supports dynamic technology stack adaptation, brute-force auditing, and passive intel correlation.
     """
 
     def __init__(
@@ -194,26 +394,67 @@ class VulnScanner:
         nikto_args:    Optional[str] = None,
         nmap_timeout:  int = 210,
         nikto_timeout: int = 120,
+        brute_force:   bool = False,
+        passive_intel: bool = False,
+        osv_base_url:  str = "https://api.osv.dev",
     ):
         self.nmap_bin    = shutil.which("nmap")
         self.nikto_bin   = shutil.which("nikto")
         self.nmap_timeout  = nmap_timeout
         self.nikto_timeout = nikto_timeout
         self.adapted_stack: List[str] = []
+        self.brute_force = brute_force
+        self.passive_intel = passive_intel
+        self.osv_base_url = osv_base_url.rstrip("/")
+        self.brute_users = _DEFAULT_USERS
+        self.brute_passes = _DEFAULT_PASSES
+
         scripts_dir = Path("/usr/share/nmap/scripts")
         self.available_nse_scripts = {
             path.stem for path in scripts_dir.glob("*.nse")
         } if scripts_dir.is_dir() else set()
 
-        # Sane safe defaults — include vulners (Vulners.com CVE database lookup) & top-ports 100
+        # Build initial nmap args
         self.nmap_args = (
             nmap_args
-            or "-sV -T4 --host-timeout 180s --max-retries 1 "
-               "--script=vuln,vulners,http-title,http-headers,ssl-cert,ssl-enum-ciphers "
-               "--top-ports 100"
+            or f"-sV -T4 --host-timeout 180s --max-retries 1 --script={BASE_NSE_SCRIPTS_STR} --top-ports 100"
         )
+        if self.brute_force:
+            brute_scripts = sorted({s for scripts in BRUTE_SERVICE_SCRIPTS.values() for s in scripts})
+            existing_scripts = self._get_script_arg_list(self.nmap_args)
+            combined = existing_scripts + [s for s in brute_scripts if s not in existing_scripts]
+            self.nmap_args = re.sub(r"--script=\S+", f"--script={','.join(combined)}", self.nmap_args)
+
         # Nikto tuning: 1=interesting, 2=misc, 3=auth, 4=default, 8=inject, 9=SQL
         self.nikto_args = nikto_args or "-Tuning 12489 -timeout 10 -maxtime 90"
+
+        # Weak-credential files generated in a temp dir if brute_force=True
+        self._brute_tmp: Optional[str] = None
+        self._brute_user_db: Optional[str] = None
+        self._brute_pass_db: Optional[str] = None
+        if self.brute_force:
+            try:
+                self._brute_tmp = tempfile.mkdtemp(prefix="ip2domain-brute-")
+                self._brute_user_db = os.path.join(self._brute_tmp, "users.txt")
+                self._brute_pass_db = os.path.join(self._brute_tmp, "passwords.txt")
+                Path(self._brute_user_db).write_text("\n".join(self.brute_users) + "\n", encoding="utf-8")
+                Path(self._brute_pass_db).write_text("\n".join(self.brute_passes) + "\n", encoding="utf-8")
+            except Exception as exc:
+                logger.warning("[VulnScanner] Failed to setup brute wordlists: %s", exc)
+
+    def __del__(self):
+        if self._brute_tmp and os.path.exists(self._brute_tmp):
+            try:
+                shutil.rmtree(self._brute_tmp, ignore_errors=True)
+            except Exception:
+                pass
+
+    @staticmethod
+    def _get_script_arg_list(nmap_args_str: str) -> List[str]:
+        m = re.search(r"--script=(\S+)", nmap_args_str)
+        if m:
+            return m.group(1).split(",")
+        return []
 
     def configure_for_stack(self, tech_stack: Optional[List[str]]) -> List[str]:
         """
@@ -229,7 +470,6 @@ class VulnScanner:
 
         for tech in tech_stack:
             tech_low = tech.strip().lower()
-            # Partial or exact match
             for known_tech, scripts in TECH_NSE_SCRIPTS.items():
                 if known_tech in tech_low or tech_low in known_tech:
                     custom_scripts.update(
@@ -242,14 +482,20 @@ class VulnScanner:
                 if known_tech in tech_low or tech_low in known_tech:
                     nikto_tuning_flags.update(tuning)
 
-        base_scripts = "vuln,vulners,http-title,http-headers,ssl-cert,ssl-enum-ciphers"
-        if custom_scripts:
-            all_scripts = base_scripts + "," + ",".join(sorted(custom_scripts))
-        else:
-            all_scripts = base_scripts
+        all_scripts = list(BASE_NSE_SCRIPTS)
+        for s in sorted(custom_scripts):
+            if s not in all_scripts:
+                all_scripts.append(s)
 
+        if self.brute_force:
+            brute_scripts = sorted({s for scripts in BRUTE_SERVICE_SCRIPTS.values() for s in scripts})
+            for s in brute_scripts:
+                if s not in all_scripts:
+                    all_scripts.append(s)
+
+        scripts_str = ",".join(all_scripts)
         self.nmap_args = (
-            f"-sV -T4 --host-timeout 180s --max-retries 1 --script={all_scripts} --top-ports 100"
+            f"-sV -T4 --host-timeout 180s --max-retries 1 --script={scripts_str} --top-ports 100"
         )
 
         if nikto_tuning_flags:
@@ -281,7 +527,7 @@ class VulnScanner:
         """
         Run Nmap NSE + Nikto concurrently with optional technology stack adaptation.
         Returns structured result dict with nmap_findings, nikto_findings,
-        severity_counts, adapted_stack, and scan_duration_sec.
+        version_cves, osv_cves, passive_intel, severity_counts, adapted_stack, and scan_duration_sec.
         """
         if tech_stack:
             self.configure_for_stack(tech_stack)
@@ -328,29 +574,47 @@ class VulnScanner:
 
         detected_stack = self._fingerprint_findings(nikto_res)
 
+        # Version-based CVE Database matching (offline curated high-impact database)
+        merged_stack = list(set((self.adapted_stack or []) + (tech_stack or []) + detected_stack))
+        version_cves = self.check_version_cves(target, merged_stack)
+
+        # Dynamic CVE lookup via OSV.dev (free public JSON API, zero key required)
+        osv_cves = await self.fetch_osv_for_stack(merged_stack)
+
+        # Passive threat-intel (Shodan / Censys) when enabled
+        passive_domains: Dict[str, List[str]] = {}
+        if self.passive_intel:
+            passive_domains = await self.fetch_passive_intel(target)
+
+        # Device inventory correlation
+        device_context = self._correlate_device_inventory(target)
+
         duration = round(time.monotonic() - t0, 1)
 
         if progress_callback:
             progress_callback(100, "Сканирование уязвимостей завершено")
 
-        # Version-based CVE Database matching
-        version_cves = self.check_version_cves(target, self.adapted_stack)
-        severity_counts = _count_severities(nmap_res + nikto_res + version_cves)
+        all_findings = nmap_res + nikto_res + version_cves + osv_cves
+        severity_counts = _count_severities(all_findings)
         actionable_findings = sum(severity_counts.get(level, 0) for level in ("critical", "high", "medium", "low"))
 
         result = {
-            "target":           target,
-            "adapted_stack":    self.adapted_stack,
-            "detected_stack":   detected_stack,
-            "nmap_findings":    nmap_res,
-            "nikto_findings":   nikto_res,
-            "version_cves":     version_cves,
-            "total_findings":   len(nmap_res) + len(nikto_res) + len(version_cves),
+            "target":              target,
+            "adapted_stack":       self.adapted_stack,
+            "detected_stack":      detected_stack,
+            "nmap_findings":       nmap_res,
+            "nikto_findings":      nikto_res,
+            "version_cves":        version_cves,
+            "osv_cves":            osv_cves,
+            "passive_intel":       passive_domains,
+            "device_context":      device_context,
+            "total_findings":      len(nmap_res) + len(nikto_res) + len(version_cves) + len(osv_cves),
             "actionable_findings": actionable_findings,
-            "severity_counts":  severity_counts,
-            "scan_duration_sec": duration,
-            "scanned_ports": known_ports or [],
-            "service_coverage": self._build_service_coverage(known_ports),
+            "severity_counts":     severity_counts,
+            "scan_duration_sec":   duration,
+            "scanned_ports":       known_ports or [],
+            "service_coverage":    self._build_service_coverage(known_ports),
+            "options":             {"brute_force": self.brute_force, "passive_intel": self.passive_intel},
         }
 
         _VULN_CACHE[key] = (time.monotonic(), result)
@@ -366,8 +630,6 @@ class VulnScanner:
         detected = set()
         for endpoint_findings in by_endpoint.values():
             evidence = "\n".join(str(item.get("details", "")) for item in endpoint_findings).lower()
-            # Cockpit sets a cookie literally named "cockpit". Paths and daemon names
-            # are additional strong indicators; port 9090 alone is deliberately ignored.
             if (re.search(r"\bcookie\s+cockpit\b", evidence) or
                     re.search(r"set-cookie[^\n]*\bcockpit=", evidence) or
                     any(marker in evidence for marker in ("cockpit-ws", "/cockpit/", "cockpit.socket"))):
@@ -400,11 +662,137 @@ class VulnScanner:
                 checks.append("Targeted NSE")
             if version or cpe or targeted:
                 coverage.append({
-                "port": port.get("port"), "protocol": port.get("protocol", "tcp"),
-                "service": port.get("service", ""), "version": version, "cpe": cpe,
-                "checks": checks, "targeted_scripts": targeted,
+                    "port": port.get("port"), "protocol": port.get("protocol", "tcp"),
+                    "service": port.get("service", ""), "version": version, "cpe": cpe,
+                    "checks": checks, "targeted_scripts": targeted,
                 })
         return coverage
+
+    async def fetch_osv_cves(self, product: str, version: str) -> List[Dict[str, any]]:
+        """
+        Query OSV.dev for vulnerabilities in a specific product version.
+        OSV is a free JSON API, zero API key required.
+        """
+        if not product or not version:
+            return []
+
+        cache_key = f"{product.lower().strip()}:{version.strip()}"
+        if cache_key in _OSV_CACHE:
+            ts, cached = _OSV_CACHE[cache_key]
+            if time.monotonic() - ts < _OSV_CACHE_TTL:
+                return cached
+
+        payload = {"package": {"name": product.lower()}, "version": version}
+        findings: List[Dict[str, any]] = []
+        try:
+            timeout = aiohttp.ClientTimeout(total=15)
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{self.osv_base_url}/v1/query",
+                    json=payload,
+                    timeout=timeout,
+                ) as resp:
+                    if resp.status != 200:
+                        logger.warning("[OSV] query for %s %s -> HTTP %s", product, version, resp.status)
+                        return []
+                    data = await resp.json(content_type=None)
+        except Exception as exc:
+            logger.warning("[OSV] query for %s %s failed: %s", product, version, exc)
+            return []
+
+        seen_cves = set()
+        for vuln in (data.get("vulns", []) if isinstance(data, dict) else []):
+            vuln_id = str(vuln.get("id", "OSV"))
+            aliases = vuln.get("aliases", []) or []
+            cve_id = next((a for a in aliases if a.upper().startswith("CVE-")), vuln_id)
+
+            if cve_id in seen_cves:
+                continue
+            seen_cves.add(cve_id)
+
+            severity = _osv_severity(vuln)
+            summary = vuln.get("summary") or vuln.get("details", "")[:120]
+            link = f"https://osv.dev/vulnerability/{vuln_id}"
+
+            findings.append({
+                "tool":     "OSV",
+                "title":    f"[{cve_id}] {product} {version}: {summary[:80]}",
+                "severity": severity,
+                "details":  f"ID: {vuln_id}\n{summary}\nСсылка: {link}",
+                "cves":     [cve_id] + [a for a in aliases if a != cve_id],
+                "link":     link,
+            })
+
+        _OSV_CACHE[cache_key] = (time.monotonic(), findings)
+        return findings
+
+    async def fetch_osv_for_stack(self, tech_stack: Optional[List[str]]) -> List[Dict[str, any]]:
+        """Run OSV queries for every product+version found in the tech stack."""
+        if not tech_stack:
+            return []
+
+        tasks = []
+        seen_queries = set()
+        for item in tech_stack:
+            item_low = item.lower()
+            ver_match = re.search(r"(\d+(?:\.\d+)+)", item_low)
+            if not ver_match:
+                continue
+            version_str = ver_match.group(1)
+            # Extract product identifier
+            product = item_low.split()[0] if " " in item_low else item_low.split("-")[0]
+            product = product.split("/")[0]  # handles "nginx/1.18.0"
+            q_key = (product, version_str)
+            if q_key in seen_queries:
+                continue
+            seen_queries.add(q_key)
+            tasks.append(self.fetch_osv_cves(product, version_str))
+
+        if not tasks:
+            return []
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        findings: List[Dict[str, any]] = []
+        for r in results:
+            if isinstance(r, list):
+                findings.extend(r)
+        return findings
+
+    async def fetch_passive_intel(self, target: str) -> Dict[str, List[str]]:
+        """
+        Query passive threat-intel providers (Shodan, Censys) for domains and host tags.
+        """
+        try:
+            from ip2domain.providers.manager import ProviderManager
+            provider_manager = ProviderManager(
+                selected_providers=["shodan", "censys"],
+                api_keys={},
+            )
+            if not provider_manager.providers:
+                return {}
+            timeout = aiohttp.ClientTimeout(total=20)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                return await provider_manager.lookup_ip(target, session)
+        except Exception as exc:
+            logger.warning("[PassiveIntel] lookup failed for %s: %s", target, exc)
+            return {}
+
+    def _correlate_device_inventory(self, target: str) -> Dict[str, any]:
+        """Correlate target IP with local storage/inventory if available."""
+        try:
+            from ip2domain.web.routers.common import storage
+            if hasattr(storage, "get_global_scan_results"):
+                for item in storage.get_global_scan_results():
+                    if item.get("ip") == target:
+                        return {
+                            "hostname": item.get("hostname", ""),
+                            "device_type": item.get("device_type", ""),
+                            "vendor": item.get("vendor", ""),
+                            "model": item.get("model", ""),
+                        }
+        except Exception:
+            pass
+        return {}
 
     def check_version_cves(self, target: str, tech_stack: List[str]) -> List[Dict[str, any]]:
         """
@@ -415,7 +803,6 @@ class VulnScanner:
         if not tech_stack:
             return cve_findings
 
-        # Parse products & versions from tech_stack strings
         for item in tech_stack:
             item_low = item.lower()
             ver_match = re.search(r"(\d+\.\d+(?:\.\d+)?)", item_low)
@@ -435,7 +822,6 @@ class VulnScanner:
                                 "cves": [entry["cve"]],
                             })
                     else:
-                        # Version unknown, add as potential vulnerability advisory
                         cve_findings.append({
                             "tool": "CVE DB",
                             "title": f"[{entry['cve']}] Рекомендация CVE для {prod.title()}",
@@ -457,7 +843,7 @@ class VulnScanner:
     def invalidate_cache(self, target: Optional[str] = None) -> None:
         if target:
             prefix = target.strip().lower() + ":"
-            for key in [key for key in _VULN_CACHE if key.startswith(prefix)]:
+            for key in [k for k in _VULN_CACHE if k.startswith(prefix)]:
                 _VULN_CACHE.pop(key, None)
         else:
             _VULN_CACHE.clear()
@@ -545,18 +931,46 @@ class VulnScanner:
                         existing = arg.split("=", 1)[1].split(",")
                         args[index] = "--script=" + ",".join(dict.fromkeys(existing + service_scripts))
                         break
-            # Replace broad top-port discovery with the ports already confirmed open.
+
+            # Brute-force: add service-matched brute scripts and pass temporary wordlist paths
+            if self.brute_force and self._brute_user_db:
+                matched_brute = set()
+                for port in known_ports:
+                    text = f"{port.get('service', '')} {port.get('version', '')}".lower()
+                    for marker, scripts in BRUTE_SERVICE_SCRIPTS.items():
+                        if marker in text:
+                            matched_brute.update(scripts)
+                    if port.get("http_detected"):
+                        matched_brute.update(BRUTE_SERVICE_SCRIPTS["http"])
+                for script in sorted(matched_brute):
+                    for index, arg in enumerate(args):
+                        if arg.startswith("--script="):
+                            existing = arg.split("=", 1)[1].split(",")
+                            if script not in existing:
+                                args[index] = "--script=" + ",".join(dict.fromkeys(existing + [script]))
+                            break
+                args += ["--script-args",
+                         f"smb-brute.userdb={self._brute_user_db} smb-brute.passwd={self._brute_pass_db} "
+                         f"ssh-brute.userdb={self._brute_user_db} ssh-brute.passwd={self._brute_pass_db} "
+                         f"ftp-brute.userdb={self._brute_user_db} ftp-brute.passwd={self._brute_pass_db} "
+                         f"http-brute.userdb={self._brute_user_db} http-brute.passwd={self._brute_pass_db} "
+                         f"pgsql-brute.userdb={self._brute_user_db} pgsql-brute.passwd={self._brute_pass_db}"]
+
+            # Replace broad top-port discovery with the confirmed ports
             if "--top-ports" in args:
                 index = args.index("--top-ports")
                 del args[index:index + 2]
             tcp_ports = sorted({int(p["port"]) for p in known_ports if p.get("protocol", "tcp") == "tcp"})
             udp_ports = sorted({int(p["port"]) for p in known_ports if p.get("protocol") == "udp"})
             specs = []
-            if tcp_ports: specs.append("T:" + ",".join(map(str, tcp_ports)))
+            if tcp_ports:
+                specs.append("T:" + ",".join(map(str, tcp_ports)))
             if udp_ports:
                 specs.append("U:" + ",".join(map(str, udp_ports)))
-                if "-sU" not in args: args.append("-sU")
-            if specs: args += ["-p", ",".join(specs)]
+                if "-sU" not in args:
+                    args.append("-sU")
+            if specs:
+                args += ["-p", ",".join(specs)]
         if "--stats-every" not in args:
             args += ["--stats-every", "2s"]
         return [self.nmap_bin, "-oX", "-"] + args + [target]
@@ -580,9 +994,11 @@ class VulnScanner:
                              "Nikto не найден в PATH. Установите: apt install nikto")]
 
         web_ports = self._select_nikto_ports(known_ports)
-        targets = web_ports or [None]
+        # Scan up to 64 discovered web ports
+        targets = web_ports[:64] if web_ports else [None]
         nikto_semaphore = asyncio.Semaphore(3)
         completed = 0
+        total_targets = len(targets)
 
         if progress_callback:
             labels = [str(port["port"]) for port in targets if port]
@@ -594,14 +1010,14 @@ class VulnScanner:
             async with nikto_semaphore:
                 if progress_callback:
                     label = f"порт {port_info['port']}" if port_info else "веб-порт"
-                    progress_callback(completed / len(targets[:16]) * 100,
-                                      f"проверяется {label}, готово {completed}/{len(targets[:16])}")
+                    progress_callback(completed / total_targets * 100,
+                                      f"проверяется {label}, готово {completed}/{total_targets}")
                 cmd = [self.nikto_bin, "-h", target] + self.nikto_args.split()
                 if port_info:
                     cmd += ["-p", str(port_info["port"])]
                     service = str(port_info.get("service", "")).lower()
-                    if (int(port_info["port"]) in {443, 8443} or "https" in service or
-                            "ssl" in service or port_info.get("tunnel") == "ssl"):
+                    if (int(port_info["port"]) in {443, 8443, 9443, 4433, 10443} or
+                            "https" in service or "ssl" in service or port_info.get("tunnel") == "ssl"):
                         cmd.append("-ssl")
                 proc = await asyncio.create_subprocess_exec(
                     *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
@@ -612,22 +1028,22 @@ class VulnScanner:
                     await _kill_proc(proc)
                     completed += 1
                     if progress_callback:
-                        progress_callback(completed / len(targets[:16]) * 100,
-                                          f"готово {completed}/{len(targets[:16])} целей")
+                        progress_callback(completed / total_targets * 100,
+                                          f"готово {completed}/{total_targets} целей")
                     label = f" на порту {port_info['port']}" if port_info else ""
                     return [_finding("Nikto", "Nikto Timeout", "warning",
                                      f"Nikto превысил лимит {self.nikto_timeout}s{label}.")]
                 completed += 1
                 if progress_callback:
-                    progress_callback(completed / len(targets[:16]) * 100,
-                                      f"готово {completed}/{len(targets[:16])} целей")
+                    progress_callback(completed / total_targets * 100,
+                                      f"готово {completed}/{total_targets} целей")
                 return self._parse_nikto_text(
                     stdout.decode("utf-8", errors="ignore"),
                     port_info=port_info,
                     target=target,
                 )
 
-        gathered = await asyncio.gather(*[_scan_port(port) for port in targets[:16]])
+        gathered = await asyncio.gather(*[_scan_port(port) for port in targets])
         findings = [finding for group in gathered for finding in group]
 
         if progress_callback:
@@ -643,11 +1059,11 @@ class VulnScanner:
 
     @staticmethod
     def _select_nikto_ports(known_ports: Optional[List[Dict[str, any]]]) -> List[Dict[str, any]]:
-        web_names = ("http", "https", "ssl", "web", "http-proxy")
+        web_names = ("http", "https", "ssl", "web", "http-proxy", "alt-http")
         return [
             port for port in (known_ports or [])
             if port.get("protocol", "tcp") == "tcp" and (
-                int(port.get("port", 0)) in {80, 443, 8000, 8080, 8443, 8888}
+                int(port.get("port", 0)) in {80, 443, 8000, 8080, 8443, 8888, 9090, 9443, 8081, 8088, 3000, 5000, 5005}
                 or port.get("http_detected")
                 or port.get("tunnel") == "ssl"
                 or any(name in str(port.get("service", "")).lower() for name in web_names)
@@ -669,7 +1085,7 @@ class VulnScanner:
             return findings
 
         for host in root.findall("host"):
-            # Host-level scripts (e.g. broadcast-* or smb-vuln-*)
+            # Host-level scripts
             host_script_elem = host.find("hostscript")
             if host_script_elem is not None:
                 for script in host_script_elem.findall("script"):
@@ -752,7 +1168,7 @@ class VulnScanner:
             severity = "high"
         elif "WARNING" in output_up or "WEAK" in output_up:
             severity = "medium"
-        elif script_id in ("ssl-cert", "http-title", "http-headers"):
+        elif script_id in ("ssl-cert", "http-title", "http-headers", "ssl-date"):
             severity = "info"
         else:
             severity = "low"
@@ -774,8 +1190,7 @@ class VulnScanner:
                           target: str = "") -> List[Dict[str, any]]:
         """
         Parse Nikto plaintext output into structured findings.
-        Uses word boundaries for severity matching to prevent false positives (e.g. 'rce' matching 'force').
-        Filters out non-finding status lines.
+        Uses word boundaries for severity matching to prevent false positives.
         """
         findings = []
         skip_phrases = (
@@ -794,9 +1209,8 @@ class VulnScanner:
             if any(skip in low for skip in skip_phrases):
                 continue
 
-            # Determine severity using word boundaries to avoid false positives like 'rce' in 'force'
+            # Determine severity using word boundaries to avoid false positives
             severity = "info"
-            # Reporting a defensive header is informational, not an XSS finding.
             if "uncommon header" in low:
                 severity = "info"
             elif any(re.search(rf"\b{re.escape(kw)}\b", low) for kw in _HIGH_KEYWORDS):
@@ -812,17 +1226,17 @@ class VulnScanner:
             service = str((port_info or {}).get("service", ""))
             endpoint = f"{target}:{port}" if target and port else target
             findings.append({
-                "tool":     "Nikto",
-                "target":   target,
-                "endpoint": endpoint,
-                "port":     f"{port}/{protocol}" if port else "автоопределение",
+                "tool":        "Nikto",
+                "target":      target,
+                "endpoint":    endpoint,
+                "port":        f"{port}/{protocol}" if port else "автоопределение",
                 "port_number": port,
-                "protocol": protocol,
-                "service":  service,
-                "title":    title,
-                "severity": severity,
-                "details":  text,
-                "cves":     cves,
+                "protocol":    protocol,
+                "service":     service,
+                "title":       title,
+                "severity":    severity,
+                "details":     text,
+                "cves":        cves,
             })
 
         return findings
@@ -834,6 +1248,42 @@ class VulnScanner:
 
 def _finding(tool: str, title: str, severity: str, details: str) -> Dict[str, any]:
     return {"tool": tool, "title": title, "severity": severity, "details": details, "cves": []}
+
+
+def _osv_severity(vuln: Dict) -> str:
+    """Map an OSV vulnerability entry to a normalized severity level."""
+    # Check database_specific.severity e.g. "HIGH", "CRITICAL"
+    db_spec = vuln.get("database_specific") or {}
+    if isinstance(db_spec, dict):
+        db_sev = str(db_spec.get("severity", "")).lower()
+        if db_sev in ("critical", "high", "medium", "low"):
+            return db_sev
+
+    sev = str(vuln.get("severity", "")).lower()
+    if sev in ("critical", "high", "medium", "low", "info"):
+        return sev
+
+    cvss = vuln.get("cvss", {}).get("score") if isinstance(vuln.get("cvss"), dict) else None
+    if cvss is None:
+        cvss_obj = vuln.get("cvss")
+        if isinstance(cvss_obj, dict):
+            cvss = cvss_obj.get("score")
+    try:
+        score = float(cvss) if cvss is not None else 0.0
+    except (TypeError, ValueError):
+        score = 0.0
+
+    if score >= 9.0:
+        return "critical"
+    if score >= 7.0:
+        return "high"
+    if score >= 4.0:
+        return "medium"
+    if score > 0.0:
+        return "low"
+    if sev in ("negligible", "unknown"):
+        return "info"
+    return "medium"
 
 
 def _count_severities(findings: List[Dict]) -> Dict[str, int]:
@@ -857,16 +1307,13 @@ def _extract_nikto_title(text: str) -> str:
         return "Перенаправление главной страницы"
     if "hostname" in low and "certificate" in low:
         return "Несоответствие имени TLS-сертификата"
-    # Check for path-like fragments e.g. /admin/login.php
     path_match = re.search(r"(?:^|\s)(/[\w/.\-?=&%]{3,60})", text)
     if path_match:
         path = path_match.group(1)[:50]
         return f"Web Path: {path}"
-    # OSVDB / CVE reference
     ref_match = re.search(r"(OSVDB-\d+|CVE-\d{4}-\d+)", text, re.IGNORECASE)
     if ref_match:
         return f"Finding: {ref_match.group(1)}"
-    # Fall back to first 80 chars
     return text[:80].rstrip(". ")
 
 

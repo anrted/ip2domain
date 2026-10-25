@@ -235,12 +235,20 @@ function showNodeDetails(node) {
         <div style="font-size:0.85rem;color:var(--text-muted);">⏳ Анализ HTTP Security Headers &amp; Стек технологий...</div>
     </div>`;
 
-    // Vuln scan button
+    // Vuln scan button & options
     html += `<div style="margin-top:1.5rem;padding-top:1rem;border-top:1px solid rgba(255,255,255,0.1);">
         <button id="btn-vuln-scan" class="btn" style="width:100%;justify-content:center;"
             onclick="triggerVulnScan('${_esc(node.label)}','${node.group}',window.selectedVulnPorts)">
-            🛡️ Поиск уязвимостей (Nmap &amp; Nikto)
+            🛡️ Поиск уязвимостей (Nmap &amp; Nikto &amp; OSV)
         </button>
+        <div style="display:flex;justify-content:space-between;margin-top:8px;padding:4px 8px;border-radius:6px;background:rgba(255,255,255,0.03);font-size:0.75rem;color:var(--text-muted);">
+            <label style="display:flex;align-items:center;gap:4px;cursor:pointer;" title="Опциональный безопасный подбор слабых паролей по дефолтным учетным записям">
+                <input type="checkbox" id="chk-vuln-brute" /> 🔑 Аудит паролей
+            </label>
+            <label style="display:flex;align-items:center;gap:4px;cursor:pointer;" title="Запрос пассивных баз угроз Shodan и Censys">
+                <input type="checkbox" id="chk-vuln-passive" /> 🌐 Пассивный рекон
+            </label>
+        </div>
         <p class="vuln-scan-hint">${window.selectedVulnPorts.length
             ? `Будут проверены уже найденные порты: ${window.selectedVulnPorts.map((p) => `${p.port}/${p.protocol}`).join(', ')}`
             : 'Открытые порты ещё не известны — будет выполнен базовый поиск по популярным портам.'}</p>
