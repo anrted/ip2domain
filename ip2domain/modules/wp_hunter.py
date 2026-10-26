@@ -8,11 +8,14 @@ import asyncio
 import ipaddress
 import logging
 import re
+import ssl
 import time
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from urllib.parse import urlparse
 
 import aiohttp
+from cryptography import x509
+from cryptography.x509.oid import NameOID, ExtensionOID
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +140,70 @@ def check_wp_cves(
     }
 
 
+_SSL_RESOLVER_CTX = ssl.create_default_context()
+_SSL_RESOLVER_CTX.check_hostname = False
+_SSL_RESOLVER_CTX.verify_mode = ssl.CERT_NONE
+_SSL_RESOLVER_CTX.options |= ssl.OP_NO_SSLv2 | ssl.OP_NO_SSLv3
+
+
+def normalize_discovered_domain(domain_str: str) -> Optional[str]:
+    """Validate and clean discovered domain string from SSL cert or reverse DNS."""
+    if not domain_str:
+        return None
+    d = str(domain_str).strip().lower()
+    if d.startswith("*."):
+        d = d[2:]
+    d = d.split(":")[0].strip()
+    if not d or len(d) > 253 or " " in d or d.endswith("."):
+        return None
+    # Reject raw IP addresses
+    if re.fullmatch(r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}", d):
+        return None
+    # Reject local/internal dummy domains
+    if d in ("localhost", "local", "internal", "domain", "example.com", "example.org"):
+        return None
+    if "." not in d:
+        return None
+    return d
+
+
+async def extract_domains_from_ssl(ip: str, port: int = 443, timeout: float = 2.0) -> List[str]:
+    """Connect to IP:port via TLS, fetch certificate, and extract CN & SAN domains."""
+    domains: Set[str] = set()
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(ip, port, ssl=_SSL_RESOLVER_CTX, server_hostname=None),
+            timeout=timeout,
+        )
+        try:
+            sslobj = writer.get_extra_info("ssl_object")
+            if sslobj:
+                der = sslobj.getpeercert(binary_form=True)
+                if der:
+                    cert = x509.load_der_x509_certificate(der)
+                    for attr in cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME):
+                        norm = normalize_discovered_domain(str(attr.value))
+                        if norm:
+                            domains.add(norm)
+                    try:
+                        ext = cert.extensions.get_extension_for_oid(ExtensionOID.SUBJECT_ALTERNATIVE_NAME)
+                        for name in ext.value.get_values_for_type(x509.DNSName):
+                            norm = normalize_discovered_domain(str(name))
+                            if norm:
+                                domains.add(norm)
+                    except Exception:
+                        pass
+        finally:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return sorted(domains)
+
+
 class WPHunter:
     """High-speed asynchronous scanner for bulk WordPress detection and version analysis."""
 
@@ -182,6 +249,256 @@ class WPHunter:
             total_ips += 1
 
         return raw_count, total_ips * effective_ports
+
+    @classmethod
+    def partition_targets(
+        cls, raw_targets: List[str], ports: Optional[List[int]] = None
+    ) -> Tuple[List[Dict[str, Any]], List[Tuple[str, bool]], int]:
+        """
+        Partition raw targets into:
+        1. direct_targets: already formatted domain or URL target dicts
+        2. ip_specs: list of (spec, is_cidr) for Phase 1 domain resolution
+        3. total_ips: total count of IP addresses represented
+        """
+        effective_ports = ports or [80, 443]
+        direct_targets: List[Dict[str, Any]] = []
+        ip_specs: List[Tuple[str, bool]] = []
+        total_ips = 0
+
+        for line in raw_targets:
+            s = str(line).strip()
+            if not s or s.startswith("#"):
+                continue
+
+            # Check if line is URL
+            if s.startswith(("http://", "https://")):
+                parsed = urlparse(s)
+                host = parsed.hostname
+                if not host:
+                    continue
+                scheme = parsed.scheme.lower()
+                port = parsed.port or (443 if scheme == "https" else 80)
+                direct_targets.append({
+                    "target": host,
+                    "source_ip": None,
+                    "source_type": "user_input",
+                    "port": port,
+                    "scheme": scheme,
+                })
+                continue
+
+            # Check if pure IP or CIDR block
+            ip_or_cidr = s.split(":")[0].strip()
+            if "/" in ip_or_cidr:
+                try:
+                    net = ipaddress.ip_network(ip_or_cidr, strict=False)
+                    ip_specs.append((ip_or_cidr, True))
+                    total_ips += net.num_addresses
+                    continue
+                except ValueError:
+                    pass
+
+            try:
+                ipaddress.ip_address(ip_or_cidr)
+                ip_specs.append((s, False))
+                total_ips += 1
+                continue
+            except ValueError:
+                pass
+
+            # Otherwise line is a domain (e.g. 'eshdesign.ru' or 'domain.com:8443')
+            port = None
+            if ":" in s:
+                parts = s.split(":")
+                host = parts[0].strip()
+                try:
+                    port = int(parts[1])
+                except ValueError:
+                    port = None
+            else:
+                host = s
+
+            if port:
+                scheme = "https" if port == 443 else "http"
+                direct_targets.append({
+                    "target": host,
+                    "source_ip": None,
+                    "source_type": "user_input",
+                    "port": port,
+                    "scheme": scheme,
+                })
+            else:
+                for p in effective_ports:
+                    scheme = "https" if p == 443 else "http"
+                    direct_targets.append({
+                        "target": host,
+                        "source_ip": None,
+                        "source_type": "user_input",
+                        "port": p,
+                        "scheme": scheme,
+                    })
+
+        return direct_targets, ip_specs, total_ips
+
+    @classmethod
+    def iter_ips_from_specs(cls, ip_specs: List[Tuple[str, bool]]):
+        """Streaming generator of string IPs from specs without allocating memory."""
+        seen: Set[str] = set()
+        for spec, is_cidr in ip_specs:
+            if is_cidr:
+                try:
+                    net = ipaddress.ip_network(spec, strict=False)
+                    if net.prefixlen >= 31:
+                        hosts = list(net)
+                    else:
+                        hosts = net.hosts()
+                    for host in hosts:
+                        h_str = str(host)
+                        if h_str not in seen:
+                            if len(seen) > 200000:
+                                seen.clear()
+                            seen.add(h_str)
+                            yield h_str
+                except Exception:
+                    continue
+            else:
+                h_str = spec.split(":")[0].strip()
+                if h_str not in seen:
+                    if len(seen) > 200000:
+                        seen.clear()
+                    seen.add(h_str)
+                    yield h_str
+
+    async def discover_domains_phase(
+        self,
+        ip_stream: Any,
+        ports: List[int],
+        total_ips: int,
+        on_batch_found: Callable[[List[Dict[str, Any]]], None],
+        progress_callback: Optional[Callable[[int, int, int], None]] = None,
+        stop_check: Optional[Callable[[], bool]] = None,
+    ) -> int:
+        """
+        Phase 1: Stream IPs, probe SSL port 443, extract domains from SSL SAN/CN.
+        Intermediate results are dispatched to on_batch_found in chunks of 50 to store in SQLite.
+        RAM usage stays virtually zero.
+        """
+        worker_count = min(self.concurrency, 200)
+        queue: asyncio.Queue = asyncio.Queue(maxsize=worker_count * 2)
+        total_discovered = 0
+        completed_ips = 0
+        batch_to_save: List[Dict[str, Any]] = []
+
+        async def producer():
+            try:
+                for ip in ip_stream:
+                    if stop_check and stop_check():
+                        break
+                    await queue.put(ip)
+            finally:
+                for _ in range(worker_count):
+                    await queue.put(None)
+
+        async def worker():
+            nonlocal total_discovered, completed_ips
+            while True:
+                if stop_check and stop_check():
+                    break
+                ip = await queue.get()
+                if ip is None:
+                    queue.task_done()
+                    break
+
+                try:
+                    # Fast TCP precheck on 443
+                    has_443 = False
+                    try:
+                        _, writer = await asyncio.wait_for(
+                            asyncio.open_connection(ip, 443),
+                            timeout=1.2,
+                        )
+                        writer.close()
+                        try:
+                            await writer.wait_closed()
+                        except Exception:
+                            pass
+                        has_443 = True
+                    except Exception:
+                        has_443 = False
+
+                    discovered_domains: List[str] = []
+                    if has_443:
+                        discovered_domains = await extract_domains_from_ssl(ip, port=443, timeout=2.0)
+
+                    items_for_ip: List[Dict[str, Any]] = []
+                    if discovered_domains:
+                        for dom in discovered_domains:
+                            for p in ports:
+                                scheme = "https" if p == 443 else "http"
+                                items_for_ip.append({
+                                    "target": dom,
+                                    "source_ip": ip,
+                                    "source_type": "ssl_san",
+                                    "port": p,
+                                    "scheme": scheme,
+                                })
+                    else:
+                        # Fallback: if port 80 or 443 was open, keep the IP target itself
+                        has_web = has_443
+                        if not has_web and 80 in ports:
+                            try:
+                                _, writer80 = await asyncio.wait_for(
+                                    asyncio.open_connection(ip, 80),
+                                    timeout=1.2,
+                                )
+                                writer80.close()
+                                try:
+                                    await writer80.wait_closed()
+                                except Exception:
+                                    pass
+                                has_web = True
+                            except Exception:
+                                has_web = False
+
+                        if has_web:
+                            for p in ports:
+                                scheme = "https" if p == 443 else "http"
+                                items_for_ip.append({
+                                    "target": ip,
+                                    "source_ip": ip,
+                                    "source_type": "ip_fallback",
+                                    "port": p,
+                                    "scheme": scheme,
+                                })
+
+                    if items_for_ip:
+                        total_discovered += len(items_for_ip)
+                        batch_to_save.extend(items_for_ip)
+                        if len(batch_to_save) >= 50:
+                            chunk = list(batch_to_save)
+                            batch_to_save.clear()
+                            on_batch_found(chunk)
+
+                finally:
+                    completed_ips += 1
+                    if progress_callback:
+                        progress_callback(completed_ips, total_ips, total_discovered)
+                    queue.task_done()
+
+        producer_task = asyncio.create_task(producer())
+        worker_tasks = [asyncio.create_task(worker()) for _ in range(worker_count)]
+
+        await producer_task
+        await queue.join()
+        for w in worker_tasks:
+            w.cancel()
+        await asyncio.gather(*worker_tasks, return_exceptions=True)
+
+        if batch_to_save:
+            on_batch_found(batch_to_save)
+            batch_to_save.clear()
+
+        return total_discovered
 
     @staticmethod
     def iter_targets(

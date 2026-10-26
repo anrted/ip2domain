@@ -46,9 +46,92 @@ class WordPressStorageMixin:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS wp_job_targets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_id TEXT NOT NULL,
+                    target TEXT NOT NULL,
+                    source_ip TEXT,
+                    source_type TEXT DEFAULT 'user_input',
+                    port INTEGER DEFAULT 80,
+                    scheme TEXT DEFAULT 'http',
+                    status TEXT DEFAULT 'pending',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_wp_results_job ON wp_scan_results(job_id);")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_wp_results_wp ON wp_scan_results(is_wordpress);")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_wp_results_host ON wp_scan_results(host);")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_wp_job_targets_status ON wp_job_targets(job_id, status);")
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_wp_job_targets_uniq ON wp_job_targets(job_id, target, port, scheme);")
+            conn.commit()
+
+    def save_wp_job_targets_batch(self, job_id: str, targets: List[Dict[str, Any]]) -> int:
+        """Batch save intermediate discovered targets to disk without keeping in RAM."""
+        if not targets:
+            return 0
+        self._init_wordpress_tables()
+        tuples = [
+            (
+                job_id,
+                t["target"],
+                t.get("source_ip"),
+                t.get("source_type", "user_input"),
+                t.get("port", 80),
+                t.get("scheme", "http"),
+            )
+            for t in targets
+            if t.get("target")
+        ]
+        with self._get_connection() as conn:
+            cur = conn.executemany("""
+                INSERT OR IGNORE INTO wp_job_targets (job_id, target, source_ip, source_type, port, scheme)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, tuples)
+            conn.commit()
+            return cur.rowcount
+
+    def count_wp_job_targets(self, job_id: str, status: Optional[str] = None) -> int:
+        """Count discovered targets in database for a job."""
+        self._init_wordpress_tables()
+        query = "SELECT COUNT(*) as cnt FROM wp_job_targets WHERE job_id = ?"
+        params: List[Any] = [job_id]
+        if status:
+            query += " AND status = ?"
+            params.append(status)
+        with self._get_connection() as conn:
+            return conn.execute(query, params).fetchone()["cnt"]
+
+    def get_pending_wp_job_targets(self, job_id: str, limit: int = 200) -> List[Dict[str, Any]]:
+        """Fetch a chunk of targets from disk for streaming scan without RAM bloat."""
+        self._init_wordpress_tables()
+        with self._get_connection() as conn:
+            rows = conn.execute("""
+                SELECT id, target as host, source_ip, source_type, port, scheme
+                FROM wp_job_targets
+                WHERE job_id = ? AND status = 'pending'
+                ORDER BY id ASC
+                LIMIT ?
+            """, (job_id, limit)).fetchall()
+            return [dict(r) for r in rows]
+
+    def mark_wp_job_targets_scanned(self, ids: List[int]) -> None:
+        """Mark scanned target IDs in database."""
+        if not ids:
+            return
+        self._init_wordpress_tables()
+        placeholders = ",".join("?" for _ in ids)
+        with self._get_connection() as conn:
+            conn.execute(f"UPDATE wp_job_targets SET status = 'scanned' WHERE id IN ({placeholders})", ids)
+            conn.commit()
+
+    def clear_wp_job_targets(self, job_id: Optional[str] = None) -> None:
+        self._init_wordpress_tables()
+        with self._get_connection() as conn:
+            if job_id:
+                conn.execute("DELETE FROM wp_job_targets WHERE job_id = ?", (job_id,))
+            else:
+                conn.execute("DELETE FROM wp_job_targets")
             conn.commit()
 
     def create_wp_job(self, job_id: str, target_input: str, ports: List[int], total_targets: int) -> Dict[str, Any]:

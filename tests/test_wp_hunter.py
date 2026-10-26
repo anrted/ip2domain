@@ -211,3 +211,61 @@ def test_wp_cve_checks():
     res_702 = check_wp_cves("7.0.2")
     assert len(res_702["cves"]) == 0
 
+
+def test_two_phase_targets_and_storage():
+    import os
+    import tempfile
+    from ip2domain.core.storage import StorageManager
+    from ip2domain.modules.wp_hunter import WPHunter, normalize_discovered_domain
+
+    assert normalize_discovered_domain("*.mycompany.com") == "mycompany.com"
+    assert normalize_discovered_domain("eshdesign.ru:443") == "eshdesign.ru"
+    assert normalize_discovered_domain("192.168.1.1") is None
+    assert normalize_discovered_domain("localhost") is None
+
+    # Test partition_targets
+    raw = [
+        "eshdesign.ru",
+        "https://test.com/blog",
+        "192.168.1.0/30",
+        "8.8.8.8",
+    ]
+    direct, ip_specs, total_ips = WPHunter.partition_targets(raw, ports=[80, 443])
+    # direct has eshdesign.ru (ports 80 and 443) + https://test.com/blog
+    assert any(d["target"] == "eshdesign.ru" for d in direct)
+    assert any(d["target"] == "test.com" for d in direct)
+    # ip_specs has 192.168.1.0/30 (4 addresses) + 8.8.8.8 (1 address) = 5 total
+    assert total_ips == 5
+
+    # Test storage methods for wp_job_targets
+    tmp = tempfile.mktemp(suffix=".db")
+    try:
+        storage = StorageManager(db_path=tmp)
+        job_id = "test_phase_job"
+
+        # Batch save
+        targets_batch = [
+            {"target": "site1.com", "source_ip": "1.2.3.4", "source_type": "ssl_san", "port": 443, "scheme": "https"},
+            {"target": "site2.com", "source_ip": "1.2.3.4", "source_type": "ssl_san", "port": 80, "scheme": "http"},
+            {"target": "site1.com", "source_ip": "1.2.3.4", "source_type": "ssl_san", "port": 443, "scheme": "https"}, # duplicate
+        ]
+        saved = storage.save_wp_job_targets_batch(job_id, targets_batch)
+        assert storage.count_wp_job_targets(job_id, status="pending") == 2
+
+        # Fetch pending
+        pending = storage.get_pending_wp_job_targets(job_id, limit=10)
+        assert len(pending) == 2
+        p_ids = [p["id"] for p in pending]
+
+        # Mark scanned
+        storage.mark_wp_job_targets_scanned(p_ids)
+        assert storage.count_wp_job_targets(job_id, status="pending") == 0
+        assert storage.count_wp_job_targets(job_id, status="scanned") == 2
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except Exception:
+                pass
+
+
