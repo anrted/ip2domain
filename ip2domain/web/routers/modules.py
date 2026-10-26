@@ -136,17 +136,41 @@ async def start_vuln_scan(req: VulnScanRequest, background_tasks: BackgroundTask
             }
 
     tech_stack = req.tech_stack
+    db_http = storage.get_http_analysis(target_clean) or HTTP_CACHE.get(target_clean)
     if not tech_stack:
-        if target_clean in HTTP_CACHE and HTTP_CACHE[target_clean].get("tech_stack"):
-            tech_stack = HTTP_CACHE[target_clean]["tech_stack"]
-        else:
-            db_http = storage.get_http_analysis(target_clean)
-            if db_http and db_http.get("tech_stack"):
-                tech_stack = db_http["tech_stack"]
+        if db_http and db_http.get("tech_stack"):
+            tech_stack = list(db_http["tech_stack"])
 
     merged_analysis = _merge_nmap_stack(target_clean, {"tech_stack": tech_stack or []})
     tech_stack = merged_analysis["tech_stack"]
+
+    # Append server banner (e.g. "nginx-reuseport/1.21.1") to guarantee version-based CVE matching
+    if db_http and db_http.get("server"):
+        server_banner = str(db_http["server"]).strip()
+        if server_banner and server_banner not in tech_stack:
+            tech_stack.append(server_banner)
+
     open_ports = [port.dict() for port in (req.open_ports or [])]
+    if not open_ports and hasattr(storage, "get_global_scan_results"):
+        try:
+            for item in storage.get_global_scan_results():
+                item_ip = str(item.get("ip", "")).strip().lower()
+                item_domains = [str(d).strip().lower() for d in item.get("domains", [])]
+                if target_clean in item_domains or target_clean == item_ip:
+                    for p in item.get("ports", []):
+                        if isinstance(p, dict) and p.get("port"):
+                            open_ports.append({
+                                "port": int(p["port"]),
+                                "protocol": p.get("protocol", "tcp"),
+                                "service": p.get("service", ""),
+                                "version": p.get("version", ""),
+                            })
+                        elif isinstance(p, int):
+                            open_ports.append({"port": p, "protocol": "tcp"})
+                    if open_ports:
+                        break
+        except Exception as exc:
+            logger.debug(f"Could not populate open_ports from global scans for {target_clean}: {exc}")
 
     vuln_job_id = str(uuid.uuid4())[:8]
     VULN_JOBS.create(vuln_job_id, {

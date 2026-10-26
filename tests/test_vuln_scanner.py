@@ -315,3 +315,40 @@ def test_nikto_detects_ssl_ports_and_tunnels():
     selected = VulnScanner._select_nikto_ports(ports)
     assert len(selected) == 4
 
+
+def test_nikto_defaults_to_80_and_443_when_ports_unknown():
+    from ip2domain.modules.vuln_scanner import VulnScanner
+
+    selected = VulnScanner._select_nikto_ports(None)
+    assert [p["port"] for p in selected] == [80, 443]
+    assert any(p.get("tunnel") == "ssl" for p in selected if p["port"] == 443)
+
+    # When only 80 is given, 443 is automatically added
+    selected_80 = VulnScanner._select_nikto_ports([{"port": 80, "protocol": "tcp", "service": "http"}])
+    assert [p["port"] for p in selected_80] == [80, 443]
+
+
+def test_version_cve_dedup_and_confirmed_severity_for_nginx_reuseport():
+    from ip2domain.modules.vuln_scanner import VulnScanner, _normalize_product_name
+
+    assert _normalize_product_name("nginx-reuseport") == "nginx"
+
+    scanner = VulnScanner()
+    stack = ["Nginx", "PHP", "WordPress", "nginx-reuseport/1.21.1"]
+    findings = scanner.check_version_cves("eshdesign.ru", stack)
+
+    # Must contain confirmed CVEs for nginx 1.21.1 with high/medium severities
+    cve_map = {f["cves"][0]: f for f in findings}
+    assert "CVE-2022-41741" in cve_map
+    assert cve_map["CVE-2022-41741"]["severity"] == "high"
+    assert "CVE-2022-41742" in cve_map
+    assert cve_map["CVE-2022-41742"]["severity"] == "medium"
+
+    # Confirmed product (nginx) must not have duplicate generic info recommendations
+    nginx_info_recs = [
+        f for f in findings
+        if f.get("severity") == "info" and "nginx" in f.get("title", "").lower()
+    ]
+    assert len(nginx_info_recs) == 0
+
+

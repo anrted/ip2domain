@@ -382,6 +382,32 @@ VERSION_CVE_DATABASE: List[Dict[str, any]] = [
 ]
 
 
+def _normalize_product_name(product: str) -> str:
+    """Normalize server banner tokens and product aliases to standard OSV / CVE package names."""
+    p = product.lower().strip()
+    if "nginx" in p:
+        return "nginx"
+    if "apache" in p or p == "httpd":
+        return "apache"
+    if "php" in p:
+        return "php"
+    if "wordpress" in p:
+        return "wordpress"
+    if "mysql" in p:
+        return "mysql"
+    if "postgres" in p or "pgsql" in p:
+        return "postgresql"
+    if "redis" in p:
+        return "redis"
+    if "proftpd" in p:
+        return "proftpd"
+    if "vsftpd" in p:
+        return "vsftpd"
+    if "openssh" in p or p == "ssh":
+        return "openssh"
+    return p
+
+
 class VulnScanner:
     """
     Asynchronous vulnerability scanner: Nmap NSE + Nikto + OSV.dev CVE + Version CVE DB.
@@ -629,14 +655,44 @@ class VulnScanner:
 
         detected = set()
         for endpoint_findings in by_endpoint.values():
-            evidence = "\n".join(str(item.get("details", "")) for item in endpoint_findings).lower()
-            if (re.search(r"\bcookie\s+cockpit\b", evidence) or
-                    re.search(r"set-cookie[^\n]*\bcockpit=", evidence) or
-                    any(marker in evidence for marker in ("cockpit-ws", "/cockpit/", "cockpit.socket"))):
+            evidence = "\n".join(str(item.get("details", "")) for item in endpoint_findings)
+            evidence_low = evidence.lower()
+
+            if (re.search(r"\bcookie\s+cockpit\b", evidence_low) or
+                    re.search(r"set-cookie[^\n]*\bcockpit=", evidence_low) or
+                    any(marker in evidence_low for marker in ("cockpit-ws", "/cockpit/", "cockpit.socket"))):
                 detected.add("Cockpit")
                 for item in endpoint_findings:
                     item["technology"] = "Cockpit"
                     item["service"] = "Cockpit Web Console"
+
+            # Extract Server header: e.g. "Server: nginx-reuseport/1.21.1" or "Server: Apache/2.4.49"
+            server_m = re.search(r"server:\s*([a-zA-Z0-9_\-\.]+)(?:/([0-9\.]+))?", evidence, re.IGNORECASE)
+            if server_m:
+                prod = server_m.group(1).strip()
+                ver = server_m.group(2)
+                if ver:
+                    detected.add(f"{prod} {ver}")
+                    if "nginx" in prod.lower():
+                        detected.add(f"nginx {ver}")
+                    elif "apache" in prod.lower():
+                        detected.add(f"apache {ver}")
+                else:
+                    detected.add(prod)
+
+            # Extract X-Powered-By: e.g. "x-powered-by header: PHP/8.2.35"
+            pby_m = re.search(r"x-powered-by[^\n:]*:\s*([a-zA-Z0-9_\-\.]+)(?:/([0-9\.]+))?", evidence, re.IGNORECASE)
+            if pby_m:
+                prod = pby_m.group(1).strip()
+                ver = pby_m.group(2)
+                if ver:
+                    detected.add(f"{prod} {ver}")
+                else:
+                    detected.add(prod)
+
+            if "wordpress" in evidence_low:
+                detected.add("WordPress")
+
         return sorted(detected)
 
     def _build_service_coverage(self, known_ports: Optional[List[Dict[str, any]]]) -> List[Dict[str, any]]:
@@ -704,7 +760,13 @@ class VulnScanner:
         for vuln in (data.get("vulns", []) if isinstance(data, dict) else []):
             vuln_id = str(vuln.get("id", "OSV"))
             aliases = vuln.get("aliases", []) or []
-            cve_id = next((a for a in aliases if a.upper().startswith("CVE-")), vuln_id)
+            cve_id = next((a for a in aliases if a.upper().startswith("CVE-")), None)
+            if not cve_id:
+                if "CVE-" in vuln_id.upper():
+                    cve_match = re.search(r"CVE-\d+-\d+", vuln_id.upper())
+                    cve_id = cve_match.group(0) if cve_match else vuln_id
+                else:
+                    cve_id = vuln_id
 
             if cve_id in seen_cves:
                 continue
@@ -723,6 +785,10 @@ class VulnScanner:
                 "link":     link,
             })
 
+        _sev_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+        findings.sort(key=lambda x: _sev_order.get(x.get("severity", "medium"), 2))
+        findings = findings[:30]
+
         _OSV_CACHE[cache_key] = (time.monotonic(), findings)
         return findings
 
@@ -740,8 +806,9 @@ class VulnScanner:
                 continue
             version_str = ver_match.group(1)
             # Extract product identifier
-            product = item_low.split()[0] if " " in item_low else item_low.split("-")[0]
-            product = product.split("/")[0]  # handles "nginx/1.18.0"
+            product_raw = item_low.split()[0] if " " in item_low else item_low.split("-")[0]
+            product_raw = product_raw.split("/")[0]  # handles "nginx/1.18.0"
+            product = _normalize_product_name(product_raw)
             q_key = (product, version_str)
             if q_key in seen_queries:
                 continue
@@ -803,25 +870,52 @@ class VulnScanner:
         if not tech_stack:
             return cve_findings
 
-        for item in tech_stack:
-            item_low = item.lower()
+        # Sort so versioned items come first
+        sorted_stack = sorted(
+            tech_stack,
+            key=lambda x: (bool(re.search(r"\d+\.\d+", str(x))), len(str(x))),
+            reverse=True,
+        )
+
+        seen_cves = set()
+        matched_products_with_ver = set()
+
+        # Pass 1: Confirmed version matches with real CVE severity
+        for item in sorted_stack:
+            item_low = str(item).lower()
             ver_match = re.search(r"(\d+\.\d+(?:\.\d+)?)", item_low)
-            version_str = ver_match.group(1) if ver_match else None
+            if not ver_match:
+                continue
+            version_str = ver_match.group(1)
 
             for entry in VERSION_CVE_DATABASE:
                 prod = entry["product"]
-                if prod in item_low:
-                    if version_str:
-                        if _is_version_in_range(version_str, entry["min_ver"], entry["max_ver"]):
+                if prod in item_low or (prod == "nginx" and "nginx" in item_low):
+                    if _is_version_in_range(version_str, entry["min_ver"], entry["max_ver"]):
+                        if entry["cve"] not in seen_cves:
+                            seen_cves.add(entry["cve"])
+                            matched_products_with_ver.add(prod)
                             cve_findings.append({
                                 "tool": "CVE DB",
                                 "title": f"[{entry['cve']}] {entry['title']}",
                                 "severity": entry["severity"],
                                 "cvss": entry["cvss"],
-                                "details": f"Обнаружена версия: {item}\nCVSS {entry['cvss']}\n{entry['details']}\nСсылка: {entry['link']}",
+                                "details": f"Обнаружена уязвимая версия: {item}\nCVSS {entry['cvss']}\n{entry['details']}\nСсылка: {entry['link']}",
                                 "cves": [entry["cve"]],
                             })
-                    else:
+
+        # Pass 2: Recommendations for products where no version could be confirmed
+        for item in sorted_stack:
+            item_low = str(item).lower()
+            ver_match = re.search(r"(\d+\.\d+(?:\.\d+)?)", item_low)
+            if ver_match:
+                continue
+
+            for entry in VERSION_CVE_DATABASE:
+                prod = entry["product"]
+                if (prod in item_low or (prod == "nginx" and "nginx" in item_low)) and prod not in matched_products_with_ver:
+                    if entry["cve"] not in seen_cves:
+                        seen_cves.add(entry["cve"])
                         cve_findings.append({
                             "tool": "CVE DB",
                             "title": f"[{entry['cve']}] Рекомендация CVE для {prod.title()}",
@@ -830,6 +924,7 @@ class VulnScanner:
                             "details": f"Проверьте версию {item}.\n{entry['title']}: {entry['details']}\nСсылка: {entry['link']}",
                             "cves": [entry["cve"]],
                         })
+
         return cve_findings
 
     async def scan_target_nmap_vuln(self, target: str) -> List[Dict[str, any]]:
@@ -1060,8 +1155,13 @@ class VulnScanner:
     @staticmethod
     def _select_nikto_ports(known_ports: Optional[List[Dict[str, any]]]) -> List[Dict[str, any]]:
         web_names = ("http", "https", "ssl", "web", "http-proxy", "alt-http")
-        return [
-            port for port in (known_ports or [])
+        if not known_ports:
+            return [
+                {"port": 80, "service": "http", "protocol": "tcp"},
+                {"port": 443, "service": "https", "protocol": "tcp", "tunnel": "ssl"},
+            ]
+        selected = [
+            port for port in known_ports
             if port.get("protocol", "tcp") == "tcp" and (
                 int(port.get("port", 0)) in {80, 443, 8000, 8080, 8443, 8888, 9090, 9443, 8081, 8088, 3000, 5000, 5005}
                 or port.get("http_detected")
@@ -1069,6 +1169,15 @@ class VulnScanner:
                 or any(name in str(port.get("service", "")).lower() for name in web_names)
             )
         ]
+        if not selected:
+            return [
+                {"port": 80, "service": "http", "protocol": "tcp"},
+                {"port": 443, "service": "https", "protocol": "tcp", "tunnel": "ssl"},
+            ]
+        ports_set = {int(p.get("port", 0)) for p in selected}
+        if 80 in ports_set and 443 not in ports_set:
+            selected.append({"port": 443, "service": "https", "protocol": "tcp", "tunnel": "ssl"})
+        return selected
 
     # ------------------------------------------------------------------
     # Parsers
@@ -1258,10 +1367,40 @@ def _osv_severity(vuln: Dict) -> str:
         db_sev = str(db_spec.get("severity", "")).lower()
         if db_sev in ("critical", "high", "medium", "low"):
             return db_sev
+        if db_sev in ("negligible", "none"):
+            return "info"
 
-    sev = str(vuln.get("severity", "")).lower()
-    if sev in ("critical", "high", "medium", "low", "info"):
-        return sev
+    sev_field = vuln.get("severity")
+    if isinstance(sev_field, str):
+        sev_low = sev_field.lower()
+        if sev_low in ("critical", "high", "medium", "low", "info"):
+            return sev_low
+        if sev_low in ("negligible", "none", "unknown"):
+            return "info"
+    elif isinstance(sev_field, list):
+        for s_item in sev_field:
+            if isinstance(s_item, dict):
+                score_val = s_item.get("score")
+                if isinstance(score_val, (int, float)):
+                    if score_val >= 9.0: return "critical"
+                    if score_val >= 7.0: return "high"
+                    if score_val >= 4.0: return "medium"
+                    if score_val > 0.0: return "low"
+                elif isinstance(score_val, str):
+                    try:
+                        f_score = float(score_val)
+                        if f_score >= 9.0: return "critical"
+                        if f_score >= 7.0: return "high"
+                        if f_score >= 4.0: return "medium"
+                        if f_score > 0.0: return "low"
+                    except ValueError:
+                        vec = score_val.upper()
+                        if "AV:N" in vec and ("C:H/I:H" in vec or "C:H/I:H/A:H" in vec or "S:C" in vec or "VC:H" in vec):
+                            return "critical"
+                        if "C:H" in vec or "I:H" in vec or "A:H" in vec or "VC:H" in vec or "VI:H" in vec or "VA:H" in vec:
+                            return "high"
+                        if "C:L" in vec or "I:L" in vec or "A:L" in vec or "VC:L" in vec:
+                            return "medium"
 
     cvss = vuln.get("cvss", {}).get("score") if isinstance(vuln.get("cvss"), dict) else None
     if cvss is None:
@@ -1281,8 +1420,6 @@ def _osv_severity(vuln: Dict) -> str:
         return "medium"
     if score > 0.0:
         return "low"
-    if sev in ("negligible", "unknown"):
-        return "info"
     return "medium"
 
 
