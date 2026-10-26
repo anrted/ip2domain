@@ -59,9 +59,30 @@ class WordPressStorageMixin:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            # Ensure columns ports_json and updated_at exist in wp_scan_results
+            try:
+                conn.execute("ALTER TABLE wp_scan_results ADD COLUMN ports_json TEXT DEFAULT '[]';")
+            except Exception:
+                pass
+            try:
+                conn.execute("ALTER TABLE wp_scan_results ADD COLUMN updated_at TIMESTAMP;")
+            except Exception:
+                pass
+
+            # Deduplicate any past duplicate rows by host (keeping the latest record)
+            try:
+                conn.execute("""
+                    DELETE FROM wp_scan_results 
+                    WHERE id NOT IN (
+                        SELECT MAX(id) FROM wp_scan_results GROUP BY LOWER(TRIM(host))
+                    )
+                """)
+            except Exception:
+                pass
+
             conn.execute("CREATE INDEX IF NOT EXISTS idx_wp_results_job ON wp_scan_results(job_id);")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_wp_results_wp ON wp_scan_results(is_wordpress);")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_wp_results_host ON wp_scan_results(host);")
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_wp_results_host_unique ON wp_scan_results(host);")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_wp_job_targets_status ON wp_job_targets(job_id, status);")
             conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_wp_job_targets_uniq ON wp_job_targets(job_id, target, port, scheme);")
             conn.commit()
@@ -218,38 +239,159 @@ class WordPressStorageMixin:
             return jobs
 
     def save_wp_results_batch(self, job_id: str, results: List[Dict[str, Any]]):
+        """
+        Save or merge WordPress scan results into a single consolidated card per website.
+        If a host was already scanned (e.g. port 80 and 443, or repeated scan),
+        merges ports, plugins, and security findings into the existing record.
+        """
         self._init_wordpress_tables()
         if not results:
             return
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        tuples = []
-        for r in results:
-            tuples.append((
-                job_id,
-                r.get("url", ""),
-                r.get("host", ""),
-                r.get("port", 80),
-                r.get("scheme", "http"),
-                r.get("status_code"),
-                1 if r.get("is_wordpress") else 0,
-                r.get("version"),
-                r.get("version_source"),
-                r.get("title", "")[:250],
-                r.get("server", "")[:100],
-                r.get("theme", "")[:100],
-                json.dumps(r.get("plugins") or [], ensure_ascii=False),
-                json.dumps(r.get("security") or {}, ensure_ascii=False),
-                r.get("latency_ms", 0.0),
-                now_str,
-            ))
+
         with self._get_connection() as conn:
-            conn.executemany("""
-                INSERT INTO wp_scan_results (
-                    job_id, url, host, port, scheme, status_code, is_wordpress,
-                    version, version_source, title, server, theme,
-                    plugins_json, security_json, latency_ms, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, tuples)
+            for r in results:
+                host = str(r.get("host") or "").strip().lower()
+                if not host:
+                    continue
+
+                existing_row = conn.execute(
+                    "SELECT * FROM wp_scan_results WHERE LOWER(TRIM(host)) = ?", (host,)
+                ).fetchone()
+
+                new_port = r.get("port") or 80
+                new_scheme = r.get("scheme") or "http"
+                new_is_wp = 1 if r.get("is_wordpress") else 0
+                new_status = r.get("status_code")
+                new_ver = r.get("version")
+                new_ver_src = r.get("version_source")
+                new_title = r.get("title") or ""
+                new_server = r.get("server") or ""
+                new_theme = r.get("theme") or ""
+                new_plugins = set(r.get("plugins") or [])
+                new_sec = r.get("security") or {}
+                new_lat = r.get("latency_ms") or 0.0
+
+                if existing_row:
+                    row_dict = dict(existing_row)
+
+                    # 1. Ports consolidation
+                    try:
+                        old_ports = set(json.loads(row_dict.get("ports_json") or "[]"))
+                    except Exception:
+                        old_ports = set()
+                    if row_dict.get("port"):
+                        old_ports.add(row_dict.get("port"))
+                    old_ports.add(new_port)
+                    merged_ports = sorted(list(old_ports))
+
+                    # 2. Scheme & primary port (prefer https:443 or HTTP 200)
+                    has_https = (new_scheme == "https") or (row_dict.get("scheme") == "https") or (443 in merged_ports)
+                    primary_scheme = "https" if has_https else "http"
+                    if 443 in merged_ports and primary_scheme == "https":
+                        primary_port = 443
+                    elif new_status == 200:
+                        primary_port = new_port
+                    elif row_dict.get("status_code") == 200:
+                        primary_port = row_dict.get("port", 80)
+                    else:
+                        primary_port = new_port or row_dict.get("port", 80)
+
+                    if (primary_scheme == "http" and primary_port == 80) or (primary_scheme == "https" and primary_port == 443):
+                        canonical_url = f"{primary_scheme}://{host}"
+                    else:
+                        canonical_url = f"{primary_scheme}://{host}:{primary_port}"
+
+                    # 3. Status code
+                    if new_status == 200 or row_dict.get("status_code") == 200:
+                        status_code = 200
+                    else:
+                        status_code = new_status or row_dict.get("status_code")
+
+                    # 4. is_wordpress
+                    is_wp = 1 if (new_is_wp or row_dict.get("is_wordpress")) else 0
+
+                    # 5. Version
+                    version = new_ver or row_dict.get("version")
+                    version_src = new_ver_src if new_ver else row_dict.get("version_source")
+
+                    # 6. Title, server, theme
+                    title = new_title if new_title else (row_dict.get("title") or "")
+                    server = new_server if new_server else (row_dict.get("server") or "")
+                    theme = new_theme if new_theme else (row_dict.get("theme") or "")
+
+                    # 7. Plugins
+                    try:
+                        old_plugs = set(json.loads(row_dict.get("plugins_json") or "[]"))
+                    except Exception:
+                        old_plugs = set()
+                    merged_plugins = sorted(list(old_plugs | new_plugins))
+
+                    # 8. Security
+                    try:
+                        old_sec = json.loads(row_dict.get("security_json") or "{}")
+                    except Exception:
+                        old_sec = {}
+                    merged_sec = dict(old_sec)
+                    merged_sec.update(new_sec)
+                    merged_sec["xmlrpc_open"] = bool(old_sec.get("xmlrpc_open") or new_sec.get("xmlrpc_open"))
+                    merged_sec["registration_open"] = bool(old_sec.get("registration_open") or new_sec.get("registration_open"))
+
+                    old_users = set(old_sec.get("users_exposed") or [])
+                    new_users = set(new_sec.get("users_exposed") or [])
+                    merged_sec["users_exposed"] = sorted(list(old_users | new_users))[:15]
+
+                    cve_map = {}
+                    for c in (old_sec.get("cves") or []):
+                        if isinstance(c, dict) and c.get("cve"):
+                            cve_map[c["cve"]] = c
+                    for c in (new_sec.get("cves") or []):
+                        if isinstance(c, dict) and c.get("cve"):
+                            cve_map[c["cve"]] = c
+                    merged_sec["cves"] = list(cve_map.values())
+                    merged_sec["wp2shell_vulnerable"] = bool(old_sec.get("wp2shell_vulnerable") or new_sec.get("wp2shell_vulnerable"))
+                    merged_sec["has_critical_cve"] = any(c.get("severity") == "CRITICAL" for c in merged_sec["cves"])
+
+                    # 9. Latency
+                    old_lat = row_dict.get("latency_ms") or 0.0
+                    lat = min(new_lat, old_lat) if (new_lat > 0 and old_lat > 0) else max(new_lat, old_lat)
+
+                    conn.execute("""
+                        UPDATE wp_scan_results SET
+                            job_id = ?, url = ?, port = ?, scheme = ?, status_code = ?,
+                            is_wordpress = ?, version = ?, version_source = ?, title = ?,
+                            server = ?, theme = ?, plugins_json = ?, security_json = ?,
+                            ports_json = ?, latency_ms = ?, updated_at = ?
+                        WHERE id = ?
+                    """, (
+                        job_id, canonical_url, primary_port, primary_scheme, status_code,
+                        is_wp, version, version_src, title[:250],
+                        server[:100], theme[:100],
+                        json.dumps(merged_plugins, ensure_ascii=False),
+                        json.dumps(merged_sec, ensure_ascii=False),
+                        json.dumps(merged_ports, ensure_ascii=False),
+                        lat, now_str, row_dict["id"]
+                    ))
+
+                else:
+                    # Insert new consolidated record
+                    ports_list = [new_port]
+                    url = r.get("url") or f"{new_scheme}://{host}"
+                    conn.execute("""
+                        INSERT INTO wp_scan_results (
+                            job_id, url, host, port, scheme, status_code, is_wordpress,
+                            version, version_source, title, server, theme,
+                            plugins_json, security_json, ports_json, latency_ms, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        job_id, url, host, new_port, new_scheme, new_status, new_is_wp,
+                        new_ver, new_ver_src, new_title[:250], new_server[:100], new_theme[:100],
+                        json.dumps(sorted(list(new_plugins)), ensure_ascii=False),
+                        json.dumps(new_sec, ensure_ascii=False),
+                        json.dumps(ports_list, ensure_ascii=False),
+                        new_lat, now_str, now_str
+                    ))
+
             conn.commit()
 
     def get_wp_results(
@@ -311,6 +453,12 @@ class WordPressStorageMixin:
                     row_dict["security"] = json.loads(row_dict.get("security_json") or "{}")
                 except Exception:
                     row_dict["security"] = {}
+                try:
+                    row_dict["ports"] = json.loads(row_dict.get("ports_json") or "[]")
+                except Exception:
+                    row_dict["ports"] = []
+                if not row_dict["ports"] and row_dict.get("port"):
+                    row_dict["ports"] = [row_dict.get("port")]
                 items.append(row_dict)
 
         return {"total": total_count, "items": items, "limit": limit, "offset": offset}

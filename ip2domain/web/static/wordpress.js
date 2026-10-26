@@ -356,14 +356,19 @@
                 const theme = item.theme ? `<span class="wp-badge wp-badge-theme">🎨 ${this.escapeHtml(item.theme)}</span>` : '<span style="color:#64748b;">—</span>';
                 const statusBadge = item.status_code ? `<span class="wp-badge ${item.status_code === 200 ? 'wp-badge-green' : 'wp-badge-gray'}">${item.status_code}</span>` : '';
 
+                const portsList = (item.ports && item.ports.length > 0) ? item.ports : [item.port || 80];
+                const portsBadges = portsList.map(p => 
+                    `<span class="wp-badge wp-badge-gray" style="font-size:0.7rem;padding:1px 5px;letter-spacing:0.3px;" title="Открытый веб-порт">:${p}</span>`
+                ).join(' ');
+
                 return `
                     <tr>
                         <td>
-                            <div style="font-weight:600;display:flex;align-items:center;gap:6px;">
+                            <div style="font-weight:600;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
                                 <a href="${this.escapeHtml(item.url)}" target="_blank" rel="noopener" style="color:#60a5fa;text-decoration:none;" class="wp-host-link">
                                     ${this.escapeHtml(item.host)}
                                 </a>
-                                <span style="font-size:0.75rem;color:#64748b;">:${item.port}</span>
+                                ${portsBadges}
                             </div>
                             ${item.title ? `<div style="font-size:0.75rem;color:#94a3b8;max-width:260px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${this.escapeHtml(item.title)}</div>` : ''}
                         </td>
@@ -516,9 +521,10 @@
             const modal = document.getElementById('wp-detail-modal');
             if (!modal) return;
 
+            const portsList = (item.ports && item.ports.length > 0) ? item.ports : [item.port || 80];
             document.getElementById('wp-modal-url').textContent = item.url || '';
             document.getElementById('wp-modal-url').href = item.url || '#';
-            document.getElementById('wp-modal-ip').textContent = `${item.host}:${item.port}`;
+            document.getElementById('wp-modal-ip').textContent = `${item.host} (порты: ${portsList.map(p => ':' + p).join(', ')})`;
             document.getElementById('wp-modal-server').textContent = item.server || 'Не указан';
             document.getElementById('wp-modal-powered').textContent = item.powered_by || 'Не указан';
             document.getElementById('wp-modal-version').textContent = item.version ? `${item.version} (источник: ${item.version_source})` : 'Не определена';

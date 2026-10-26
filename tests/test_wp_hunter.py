@@ -91,22 +91,32 @@ def test_storage_mixin_wp_methods():
     try:
         storage = StorageManager(db_path=tmp)
         job_id = "test_wp_1"
-        job = storage.create_wp_job(job_id, "eshdesign.ru", [80, 443], 2)
+        job = storage.create_wp_job(job_id, "site.com", [80, 443], 2)
         assert job["id"] == job_id
         assert job["status"] == "running"
 
-        # Batch save
+        # Batch save with port 80 and port 443 for site.com
         mock_results = [
             {
-                "url": "https://eshdesign.ru",
-                "host": "eshdesign.ru",
+                "url": "http://site.com",
+                "host": "site.com",
+                "port": 80,
+                "scheme": "http",
+                "status_code": 301,
+                "is_wordpress": True,
+                "version": None,
+                "latency_ms": 15.0,
+            },
+            {
+                "url": "https://site.com",
+                "host": "site.com",
                 "port": 443,
                 "scheme": "https",
                 "status_code": 200,
                 "is_wordpress": True,
                 "version": "6.5.2",
                 "version_source": "meta_generator",
-                "title": "Esh Design Studio",
+                "title": "My Studio",
                 "server": "nginx",
                 "theme": "woodmart",
                 "plugins": ["elementor", "woocommerce"],
@@ -114,8 +124,8 @@ def test_storage_mixin_wp_methods():
                 "latency_ms": 12.5,
             },
             {
-                "url": "http://other.com",
-                "host": "other.com",
+                "url": "http://other.org",
+                "host": "other.org",
                 "port": 80,
                 "scheme": "http",
                 "status_code": 200,
@@ -126,13 +136,30 @@ def test_storage_mixin_wp_methods():
         storage.save_wp_results_batch(job_id, mock_results)
         storage.update_wp_job(job_id, status="completed", completed_targets=2, found_wp=1, finished=True)
 
-        # Query
+        # Query - site.com must be exactly 1 card with merged ports [80, 443]
         res_wp = storage.get_wp_results(job_id=job_id, only_wp=True)
         assert res_wp["total"] == 1
-        assert res_wp["items"][0]["host"] == "eshdesign.ru"
+        assert res_wp["items"][0]["host"] == "site.com"
         assert res_wp["items"][0]["version"] == "6.5.2"
+        assert 80 in res_wp["items"][0]["ports"]
+        assert 443 in res_wp["items"][0]["ports"]
         assert "elementor" in res_wp["items"][0]["plugins"]
         assert res_wp["items"][0]["security"]["users_exposed"] == ["admin"]
+
+        # Rescan site.com (should update the existing card, NOT create duplicate)
+        storage.save_wp_results_batch("test_wp_2", [{
+            "url": "https://site.com",
+            "host": "site.com",
+            "port": 443,
+            "scheme": "https",
+            "status_code": 200,
+            "is_wordpress": True,
+            "plugins": ["elementor", "yoast"],
+        }])
+        res_after = storage.get_wp_results(only_wp=True)
+        assert res_after["total"] == 1  # Still 1 site card!
+        assert "yoast" in res_after["items"][0]["plugins"]
+        assert "woocommerce" in res_after["items"][0]["plugins"]  # Preserved earlier plugins!
 
         # Stats
         stats = storage.get_wp_stats()

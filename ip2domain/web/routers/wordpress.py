@@ -107,7 +107,7 @@ async def _run_wp_hunter_job(job_id: str, raw_targets: List[str], ports: List[in
             f"Фаза 2/2: Сканирование WordPress на {total_targets_to_scan:,} доменах...".replace(",", " ")
         )
 
-        found_wp_count = 0
+        found_wp_hosts: Set[str] = set()
         batch_results: List[Dict[str, Any]] = []
         completed_sites = 0
 
@@ -124,30 +124,31 @@ async def _run_wp_hunter_job(job_id: str, raw_targets: List[str], ports: List[in
                     yield item
 
         def _on_scan_progress(completed: int, total: int, res: Dict[str, Any]):
-            nonlocal found_wp_count, completed_sites
+            nonlocal completed_sites
             if STOP_FLAGS.get(job_id):
                 return
             completed_sites = completed
             if res.get("is_wordpress"):
-                found_wp_count += 1
+                found_wp_hosts.add(str(res.get("host") or "").strip().lower())
                 batch_results.append(res)
 
+            found_count = len(found_wp_hosts)
             # Phase 2 maps to 50% - 100%
             pct = 50 + int((completed / total) * 50) if total else 50
             stage_text = (
-                f"Фаза 2/2: Сканирование WordPress... Проверено {completed:,}/{total:,} · Найдено WordPress: {found_wp_count}"
+                f"Фаза 2/2: Сканирование WordPress... Проверено {completed:,}/{total:,} · Найдено сайтов: {found_count}"
             ).replace(",", " ")
             WP_JOBS[job_id].update(
                 progress_pct=min(100, pct),
                 completed_targets=completed,
-                found_wp=found_wp_count,
+                found_wp=found_count,
                 stage=stage_text,
             )
             if len(batch_results) >= 20:
                 to_save = list(batch_results)
                 batch_results.clear()
                 storage.save_wp_results_batch(job_id, to_save)
-                storage.update_wp_job(job_id, completed_targets=completed, found_wp=found_wp_count)
+                storage.update_wp_job(job_id, completed_targets=completed, found_wp=found_count)
 
         await hunter.scan_targets(
             targets=pending_targets_stream(),
@@ -163,13 +164,14 @@ async def _run_wp_hunter_job(job_id: str, raw_targets: List[str], ports: List[in
         is_stopped = STOP_FLAGS.get(job_id, False)
         final_status = "stopped" if is_stopped else "completed"
         final_completed = completed_sites or total_targets_to_scan
+        final_found_count = len(found_wp_hosts)
 
         WP_JOBS[job_id].update(
             status=final_status,
             progress_pct=100 if final_status == "completed" else WP_JOBS[job_id].get("progress_pct", 0),
             completed_targets=final_completed,
-            found_wp=found_wp_count,
-            stage=f"Завершено. Проверено {final_completed:,} сайтов · Найдено WordPress: {found_wp_count}".replace(",", " ")
+            found_wp=final_found_count,
+            stage=f"Завершено. Проверено {final_completed:,} сайтов · Найдено WordPress: {final_found_count}".replace(",", " ")
             if final_status == "completed"
             else "Остановлено пользователем",
         )
@@ -177,7 +179,7 @@ async def _run_wp_hunter_job(job_id: str, raw_targets: List[str], ports: List[in
             job_id,
             status=final_status,
             completed_targets=final_completed,
-            found_wp=found_wp_count,
+            found_wp=final_found_count,
             finished=True,
         )
 
