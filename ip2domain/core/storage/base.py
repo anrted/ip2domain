@@ -20,6 +20,9 @@ class BaseStorage:
         conn = sqlite3.connect(self.db_path, timeout=10.0)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA busy_timeout=5000;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
+        conn.execute("PRAGMA cache_size=-64000;")
+        conn.execute("PRAGMA temp_store=MEMORY;")
         def natural_key(value):
             return [int(part) if part.isdigit() else part.casefold()
                     for part in re.split(r"(\d+)", str(value or "").strip())]

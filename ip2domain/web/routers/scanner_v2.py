@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .common import storage
@@ -237,38 +237,10 @@ async def get_results(
     search: str = Query(default=""),
 ):
     """Return stored v2 results from DB with server-side pagination and filters."""
-    results = storage.get_v2_results(
-        limit=limit,
-        offset=offset,
-        brand=brand,
-        protocol=protocol,
-        has_preview=has_preview,
-        verified_only=verified_only,
-        auth_status=auth_status,
-        category=category,
-        geo=geo,
-        search=search,
-    )
-    results = [_sanitize_v2_result(r) for r in results]
-
-    stats = storage.get_v2_stats()
-    total_db = stats.get("total", 0)
-
-    has_filters = bool(
-        (brand and brand != "all")
-        or (protocol and protocol != "all")
-        or has_preview
-        or verified_only
-        or (auth_status and auth_status != "all")
-        or (category and category != "all")
-        or (geo and geo != "all")
-        or (search and search.strip())
-    )
-
-    if not has_filters:
-        total_matching = total_db
-    else:
-        total_matching = storage.get_v2_results_count(
+    def _fetch():
+        results = storage.get_v2_results(
+            limit=limit,
+            offset=offset,
             brand=brand,
             protocol=protocol,
             has_preview=has_preview,
@@ -278,6 +250,39 @@ async def get_results(
             geo=geo,
             search=search,
         )
+        results = [_sanitize_v2_result(r) for r in results]
+
+        stats = storage.get_v2_stats()
+        total_db = stats.get("total", 0)
+
+        has_filters = bool(
+            (brand and brand != "all")
+            or (protocol and protocol != "all")
+            or has_preview
+            or verified_only
+            or (auth_status and auth_status != "all")
+            or (category and category != "all")
+            or (geo and geo != "all")
+            or (search and search.strip())
+        )
+
+        if not has_filters:
+            total_matching = total_db
+        else:
+            total_matching = storage.get_v2_results_count(
+                brand=brand,
+                protocol=protocol,
+                has_preview=has_preview,
+                verified_only=verified_only,
+                auth_status=auth_status,
+                category=category,
+                geo=geo,
+                search=search,
+            )
+
+        return results, stats, total_matching, total_db
+
+    results, stats, total_matching, total_db = await asyncio.to_thread(_fetch)
 
     return JSONResponse(content={
         "results": results,
@@ -293,35 +298,31 @@ async def get_results(
 @router.get("/export/401")
 @router.get("/results/export-401")
 async def export_401_cameras(format: str = Query(default="txt")):
-    """Export list of cameras requiring authentication (401 Unauthorized)."""
-    cameras_401 = storage.get_v2_results(limit=100000, auth_status="401")
+    """Export list of cameras requiring authentication (401 Unauthorized) via fast memory-efficient streaming."""
     if format.lower() == "csv":
-        lines = ["ip,port,brand,model,city"]
-        for c in cameras_401:
-            ip = c.get("ip", "")
-            port = c.get("rtsp_port") or 554
-            brand = (c.get("brand") or "").replace(",", " ")
-            model = (c.get("model") or "").replace(",", " ")
-            city = (c.get("city") or "").replace(",", " ")
-            lines.append(f"{ip},{port},{brand},{model},{city}")
-        content = "\n".join(lines)
-        return Response(
-            content=content,
+        def csv_generator():
+            yield "ip,port,brand,model,city\n"
+            for c in storage.stream_v2_export_401():
+                ip = c["ip"]
+                if not ip:
+                    continue
+                yield f"{ip},{c['port']},{c['brand']},{c['model']},{c['city']}\n"
+
+        return StreamingResponse(
+            csv_generator(),
             media_type="text/csv",
             headers={"Content-Disposition": 'attachment; filename="targets_rtsp_401.csv"'},
         )
     else:
-        # Default txt format (one ip:port per line, compatible with rtspBrute.py)
-        lines = []
-        for c in cameras_401:
-            ip = c.get("ip", "").strip()
-            if not ip:
-                continue
-            port = c.get("rtsp_port") or 554
-            lines.append(f"{ip}:{port}")
-        content = "\n".join(lines)
-        return Response(
-            content=content,
+        def txt_generator():
+            for c in storage.stream_v2_export_401():
+                ip = c["ip"]
+                if not ip:
+                    continue
+                yield f"{ip}:{c['port']}\n"
+
+        return StreamingResponse(
+            txt_generator(),
             media_type="text/plain",
             headers={"Content-Disposition": 'attachment; filename="targets_rtsp_401.txt"'},
         )
@@ -396,7 +397,7 @@ async def clear_results():
 
 @router.get("/stats")
 async def get_stats():
-    stats = storage.get_v2_stats()
+    stats = await asyncio.to_thread(storage.get_v2_stats)
     return JSONResponse(content=stats)
 
 
@@ -613,28 +614,9 @@ async def get_stream_preview(
 @router.post("/resolve_geo")
 @router.post("/results/resolve-geo")
 async def resolve_all_cameras_geo():
-    """Retroactively resolve cities and regions for all stored camera results."""
-    from ip2domain.data.geo_city_db import geo_city_db, camera_geo_fields
-    import asyncio
-
-    def resolve():
-        results = storage.get_v2_results(limit=0)
-        updated_count = 0
-        counts = {"city": 0, "region": 0, "country": 0, "unknown": 0}
-        for cam in results:
-            ip = str(cam.get("ip", "")).strip()
-            if not ip:
-                continue
-            geo = geo_city_db.find_by_ip(ip)
-            fields = camera_geo_fields(geo or {})
-            if storage.update_v2_geo(ip, fields):
-                updated_count += 1
-            cam.update(fields)
-            counts[fields["geo_precision"]] += 1
-        return {"success": True, "total_cameras": len(results),
-                "updated_count": updated_count, "precision_counts": counts, "results": results}
-
-    return JSONResponse(content=await asyncio.to_thread(resolve))
+    """Retroactively resolve cities and regions for stored camera results via batch chunking."""
+    res = await asyncio.to_thread(storage.batch_resolve_v2_geo)
+    return JSONResponse(content=res)
 
 
 class BulkCaptureRequest(BaseModel):

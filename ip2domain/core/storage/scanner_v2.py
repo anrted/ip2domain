@@ -226,6 +226,64 @@ class ScannerV2StorageMixin:
                 except Exception:
                     pass
 
+            if "has_verified" not in res_cols:
+                try:
+                    conn.execute("ALTER TABLE v2_results ADD COLUMN has_verified INTEGER DEFAULT 0")
+                    conn.execute("""
+                        UPDATE v2_results SET has_verified = 
+                        CASE 
+                            WHEN streams_json LIKE '%"verified": true%' THEN 1 
+                            ELSE 0 
+                        END
+                    """)
+                except Exception:
+                    pass
+
+            if "city" not in res_cols:
+                try:
+                    conn.execute("ALTER TABLE v2_results ADD COLUMN city TEXT DEFAULT ''")
+                    conn.execute("ALTER TABLE v2_results ADD COLUMN region TEXT DEFAULT ''")
+                    conn.execute("ALTER TABLE v2_results ADD COLUMN country_code TEXT DEFAULT ''")
+                    conn.execute("""
+                        UPDATE v2_results SET 
+                            city = COALESCE(json_extract(result_json, '$.city'), ''),
+                            region = COALESCE(json_extract(result_json, '$.region'), ''),
+                            country_code = COALESCE(json_extract(result_json, '$.country_code'), '')
+                    """)
+                except Exception:
+                    pass
+
+            if "auth_required" not in res_cols:
+                try:
+                    conn.execute("ALTER TABLE v2_results ADD COLUMN auth_required INTEGER DEFAULT NULL")
+                    conn.execute("""
+                        UPDATE v2_results SET auth_required = 
+                        CASE 
+                            WHEN result_json LIKE '%"auth_required": true%' THEN 1
+                            WHEN result_json LIKE '%"auth_required": false%' THEN 0
+                            ELSE NULL
+                        END
+                    """)
+                except Exception:
+                    pass
+
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_v2_results_feed
+                ON v2_results(is_garbage, has_verified DESC, has_preview DESC, updated_at DESC)
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_v2_results_city
+                ON v2_results(is_garbage, city)
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_v2_results_country
+                ON v2_results(is_garbage, country_code)
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_v2_results_auth
+                ON v2_results(is_garbage, auth_required)
+            """)
+
             cols = [r[1] for r in conn.execute("PRAGMA table_info(v2_jobs)").fetchall()]
             if "current_index" not in cols:
                 try:
@@ -320,10 +378,22 @@ class ScannerV2StorageMixin:
                 or bool(result.get("web_screenshot"))
             ) else 0
 
+            has_ver = 1 if (
+                any(bool(s.get("verified")) and s.get("type") != "web_panel" for s in result.get("streams", []))
+                or ('"verified": true' in json.dumps(result.get("streams", [])))
+            ) else 0
+
+            auth_req = 1 if result.get("auth_required") is True else (0 if result.get("auth_required") is False else None)
+            c_code = str(result.get("country_code") or "")
+            c_city = str(result.get("city") or "")
+            c_region = str(result.get("region") or "")
+
             conn.execute(
                 """
-                INSERT INTO v2_results (ip, brand, model, serial, protocols, streams_json, result_json, device_category, has_preview, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                INSERT INTO v2_results (ip, brand, model, serial, protocols, streams_json, result_json,
+                                        device_category, has_preview, has_verified, country_code, city, region,
+                                        auth_required, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(ip) DO UPDATE SET
                     brand = excluded.brand,
                     model = excluded.model,
@@ -333,6 +403,11 @@ class ScannerV2StorageMixin:
                     result_json = excluded.result_json,
                     device_category = excluded.device_category,
                     has_preview = excluded.has_preview,
+                    has_verified = excluded.has_verified,
+                    country_code = CASE WHEN excluded.country_code != '' THEN excluded.country_code ELSE country_code END,
+                    city = CASE WHEN excluded.city != '' THEN excluded.city ELSE city END,
+                    region = CASE WHEN excluded.region != '' THEN excluded.region ELSE region END,
+                    auth_required = COALESCE(excluded.auth_required, auth_required),
                     updated_at = CURRENT_TIMESTAMP
                 """,
                 (
@@ -345,6 +420,11 @@ class ScannerV2StorageMixin:
                     json.dumps(result, ensure_ascii=False),
                     cat,
                     has_prev,
+                    has_ver,
+                    c_code,
+                    c_city,
+                    c_region,
+                    auth_req,
                 ),
             )
 
@@ -366,8 +446,11 @@ class ScannerV2StorageMixin:
                 any(bool(s.get("screenshot")) for s in result.get("streams", []))
                 or bool(result.get("web_screenshot"))
             ) else 0
-            conn.execute("UPDATE v2_results SET result_json = ?, streams_json = ?, has_preview = ? WHERE ip = ?",
-                         (json.dumps(result, ensure_ascii=False), json.dumps(result.get("streams", []), ensure_ascii=False), has_prev, ip))
+            has_ver = 1 if (
+                any(bool(s.get("verified")) and s.get("type") != "web_panel" for s in result.get("streams", []))
+            ) else 0
+            conn.execute("UPDATE v2_results SET result_json = ?, streams_json = ?, has_preview = ?, has_verified = ? WHERE ip = ?",
+                         (json.dumps(result, ensure_ascii=False), json.dumps(result.get("streams", []), ensure_ascii=False), has_prev, has_ver, ip))
 
     def update_v2_geo(self, ip: str, geo: Dict) -> bool:
         """Update only geolocation, preserving concurrently captured frames."""
@@ -382,8 +465,16 @@ class ScannerV2StorageMixin:
             changed = any(result.get(key) != value for key, value in geo.items() if key in keys)
             if changed:
                 result.update({key: value for key, value in geo.items() if key in keys})
-                conn.execute("UPDATE v2_results SET result_json = ? WHERE ip = ?",
-                             (json.dumps(result, ensure_ascii=False), ip))
+                conn.execute(
+                    "UPDATE v2_results SET result_json = ?, city = ?, region = ?, country_code = ? WHERE ip = ?",
+                    (
+                        json.dumps(result, ensure_ascii=False),
+                        str(geo.get("city") or ""),
+                        str(geo.get("region") or ""),
+                        str(geo.get("country_code") or ""),
+                        ip
+                    )
+                )
             return changed
 
     def _build_v2_where_clause(
@@ -412,26 +503,26 @@ class ScannerV2StorageMixin:
         if has_preview:
             where += " AND has_preview = 1"
         elif verified_only:
-            where += " AND (has_preview = 1 OR streams_json LIKE '%\"verified\": true%')"
+            where += " AND (has_preview = 1 OR has_verified = 1)"
         if auth_status in ("401", "locked", "auth_required"):
-            where += " AND result_json LIKE '%\"auth_required\": true%'"
+            where += " AND (auth_required = 1 OR result_json LIKE '%\"auth_required\": true%')"
         elif auth_status in ("open", "unauthenticated", "no_auth"):
-            where += " AND (streams_json LIKE '%\"verified\": true%' OR (result_json LIKE '%\"auth_required\": false%' AND streams_json LIKE '%\"url\"%'))"
+            where += " AND (has_verified = 1 OR auth_required = 0 OR (result_json LIKE '%\"auth_required\": false%' AND streams_json LIKE '%\"url\"%'))"
         if geo and geo != "all":
             if geo == "__no_geo__":
-                where += " AND (result_json NOT LIKE '%\"city\"%' OR result_json LIKE '%\"city\": \"\"%')"
+                where += " AND (city = '' OR city IS NULL)"
             elif geo.startswith("country:"):
                 code = geo.replace("country:", "").upper()
-                where += " AND json_extract(result_json, '$.country_code') = ?"
-                params.append(code)
+                where += " AND (country_code = ? OR json_extract(result_json, '$.country_code') = ?)"
+                params.extend([code, code])
             elif geo.startswith("region:"):
                 reg = geo.replace("region:", "")
-                where += " AND json_extract(result_json, '$.region') = ?"
-                params.append(reg)
+                where += " AND (region = ? OR json_extract(result_json, '$.region') = ?)"
+                params.extend([reg, reg])
             elif geo.startswith("city:"):
                 cit = geo.replace("city:", "")
-                where += " AND json_extract(result_json, '$.city') = ?"
-                params.append(cit)
+                where += " AND (city = ? OR json_extract(result_json, '$.city') = ?)"
+                params.extend([cit, cit])
         if search:
             s = search.strip()
             where += " AND (ip LIKE ? OR brand LIKE ? OR model LIKE ? OR result_json LIKE ?)"
@@ -464,7 +555,7 @@ class ScannerV2StorageMixin:
         )
         with self._get_connection() as conn:
             query = f"SELECT result_json, in_go2rtc FROM v2_results{where_clause}"
-            query += " ORDER BY (streams_json LIKE '%\"verified\": true%') DESC, has_preview DESC, updated_at DESC, ip ASC"
+            query += " ORDER BY has_verified DESC, has_preview DESC, updated_at DESC, ip ASC"
             if limit and limit > 0:
                 query += " LIMIT ?"
                 params.append(limit)
@@ -594,11 +685,11 @@ class ScannerV2StorageMixin:
                 (1 if is_garbage else 0, ip),
             )
 
-    def get_v2_stats(self) -> Dict:
-        """Return protocol, brand, category and global geo statistics for v2 results with TTL cache."""
+    def get_v2_stats(self, force_refresh: bool = False) -> Dict:
+        """Return protocol, brand, category and global geo statistics for v2 results with fast indexed queries and TTL cache."""
         now = time.time()
         cached = getattr(self, "_v2_stats_cache", None)
-        if cached and (now - cached.get("ts", 0) < 120):
+        if not force_refresh and cached and (now - cached.get("ts", 0) < 300):
             return cached["data"]
 
         with self._get_connection() as conn:
@@ -618,25 +709,25 @@ class ScannerV2StorageMixin:
 
             by_country = {}
             for row in conn.execute(
-                "SELECT json_extract(result_json, '$.country_code') as cc, COUNT(*) as cnt "
-                "FROM v2_results WHERE is_garbage=0 AND json_extract(result_json, '$.country_code') IS NOT NULL "
-                "AND json_extract(result_json, '$.country_code') != '' GROUP BY cc ORDER BY cnt DESC LIMIT 30"
+                "SELECT country_code as cc, COUNT(*) as cnt "
+                "FROM v2_results WHERE is_garbage=0 AND country_code IS NOT NULL AND country_code != '' "
+                "GROUP BY country_code ORDER BY cnt DESC LIMIT 30"
             ).fetchall():
                 by_country[row["cc"]] = row["cnt"]
 
             by_city = {}
             for row in conn.execute(
-                "SELECT json_extract(result_json, '$.city') as c, COUNT(*) as cnt "
-                "FROM v2_results WHERE is_garbage=0 AND json_extract(result_json, '$.city') IS NOT NULL "
-                "AND json_extract(result_json, '$.city') != '' GROUP BY c ORDER BY cnt DESC LIMIT 200"
+                "SELECT city as c, COUNT(*) as cnt "
+                "FROM v2_results WHERE is_garbage=0 AND city IS NOT NULL AND city != '' "
+                "GROUP BY city ORDER BY cnt DESC LIMIT 200"
             ).fetchall():
                 by_city[row["c"]] = row["cnt"]
 
             by_region = {}
             for row in conn.execute(
-                "SELECT json_extract(result_json, '$.region') as r, COUNT(*) as cnt "
-                "FROM v2_results WHERE is_garbage=0 AND json_extract(result_json, '$.region') IS NOT NULL "
-                "AND json_extract(result_json, '$.region') != '' GROUP BY r ORDER BY cnt DESC LIMIT 100"
+                "SELECT region as r, COUNT(*) as cnt "
+                "FROM v2_results WHERE is_garbage=0 AND region IS NOT NULL AND region != '' "
+                "GROUP BY region ORDER BY cnt DESC LIMIT 100"
             ).fetchall():
                 by_region[row["r"]] = row["cnt"]
 
@@ -650,6 +741,93 @@ class ScannerV2StorageMixin:
             }
             self._v2_stats_cache = {"ts": now, "data": data}
             return data
+
+    def stream_v2_export_401(self):
+        """Streaming generator of 401 camera targets without massive memory allocation or sorting."""
+        with self._get_connection() as conn:
+            query = """
+                SELECT ip, brand, model,
+                       COALESCE(json_extract(result_json, '$.rtsp_port'), 554) as port,
+                       COALESCE(city, json_extract(result_json, '$.city'), '') as city
+                FROM v2_results
+                WHERE is_garbage = 0 AND (auth_required = 1 OR result_json LIKE '%"auth_required": true%')
+            """
+            cursor = conn.execute(query)
+            for row in cursor:
+                yield {
+                    "ip": (row["ip"] or "").strip(),
+                    "port": int(row["port"] or 554),
+                    "brand": (row["brand"] or "").replace(",", " "),
+                    "model": (row["model"] or "").replace(",", " "),
+                    "city": (row["city"] or "").replace(",", " "),
+                }
+
+    def batch_resolve_v2_geo(self, batch_size: int = 2000) -> Dict:
+        """Batch-resolve missing cities/regions using chunked transactions."""
+        from ip2domain.data.geo_city_db import geo_city_db, camera_geo_fields
+
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT ip, result_json FROM v2_results
+                WHERE is_garbage = 0 AND (city = '' OR city IS NULL OR region = '' OR region IS NULL)
+                """
+            ).fetchall()
+
+            total_needed = len(rows)
+            updated_count = 0
+            counts = {"city": 0, "region": 0, "country": 0, "unknown": 0}
+
+            batch = []
+            for row in rows:
+                ip = str(row["ip"] or "").strip()
+                if not ip:
+                    continue
+                try:
+                    res = json.loads(row["result_json"])
+                except Exception:
+                    res = {"ip": ip}
+
+                geo = geo_city_db.find_by_ip(ip)
+                fields = camera_geo_fields(geo or {})
+                res.update(fields)
+                precision = fields.get("geo_precision", "unknown")
+                counts[precision] = counts.get(precision, 0) + 1
+
+                batch.append((
+                    json.dumps(res, ensure_ascii=False),
+                    str(fields.get("city") or ""),
+                    str(fields.get("region") or ""),
+                    str(fields.get("country_code") or ""),
+                    ip,
+                ))
+
+                if len(batch) >= batch_size:
+                    with conn:
+                        conn.executemany(
+                            "UPDATE v2_results SET result_json = ?, city = ?, region = ?, country_code = ? WHERE ip = ?",
+                            batch,
+                        )
+                    updated_count += len(batch)
+                    batch.clear()
+
+            if batch:
+                with conn:
+                    conn.executemany(
+                        "UPDATE v2_results SET result_json = ?, city = ?, region = ?, country_code = ? WHERE ip = ?",
+                        batch,
+                    )
+                updated_count += len(batch)
+                batch.clear()
+
+            self._v2_stats_cache = None
+
+            return {
+                "success": True,
+                "total_checked": total_needed,
+                "updated_count": updated_count,
+                "precision_counts": counts,
+            }
 
     # ── Job Persistence & Auto-Resume ─────────────────────────────────────────
 
