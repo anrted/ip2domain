@@ -252,7 +252,6 @@
             document.getElementById('wp-job-counter-text').textContent = `WordPress: ${found} · Готово: ${completed}/${total}`;
             document.getElementById('wp-job-progress-bar').style.width = `${pct}%`;
 
-            const stopBtn = document.getElementById('wp-stop-btn');
             if (stopBtn) stopBtn.style.display = isRunning ? 'inline-flex' : 'none';
         },
 
@@ -265,9 +264,19 @@
                 limit: this.pageSize,
                 offset: offset
             });
-            if (this.currentFilter.version) params.append('version', this.currentFilter.version);
+            if (this.currentFilter.version) {
+                if (this.currentFilter.version === 'cve') {
+                    params.append('search', 'CVE-2026');
+                } else if (this.currentFilter.version === 'wp2shell') {
+                    params.append('search', 'wp2shell');
+                } else {
+                    params.append('version', this.currentFilter.version);
+                }
+            }
             if (this.currentFilter.plugin) params.append('plugin', this.currentFilter.plugin);
-            if (this.currentFilter.search) params.append('search', this.currentFilter.search);
+            if (this.currentFilter.search && this.currentFilter.version !== 'cve' && this.currentFilter.version !== 'wp2shell') {
+                params.append('search', this.currentFilter.search);
+            }
 
             try {
                 const res = await fetch(`/api/wp/results?${params.toString()}`);
@@ -296,7 +305,8 @@
                 return;
             }
 
-            tbody.innerHTML = items.map(item => {
+            this.currentItems = items || [];
+            tbody.innerHTML = items.map((item, idx) => {
                 const isWp = item.is_wordpress;
                 const ver = item.version;
                 let verBadge = '<span class="wp-badge wp-badge-gray">Не определена</span>';
@@ -316,14 +326,25 @@
                 // Plugins pills
                 const plugins = item.plugins || [];
                 const pluginsHtml = plugins.slice(0, 3).map(p => 
-                    `<span class="wp-badge wp-badge-plugin">${p}</span>`
+                    `<span class="wp-badge wp-badge-plugin">${this.escapeHtml(p)}</span>`
                 ).join(' ') + (plugins.length > 3 ? ` <span class="wp-badge wp-badge-gray">+${plugins.length - 3}</span>` : '');
 
-                // Security posture
+                // Security posture & CVEs
                 const sec = item.security || {};
                 const secBadges = [];
+
+                if (sec.wp2shell_vulnerable) {
+                    secBadges.push(`<span class="wp-badge wp-badge-red" style="background:#b91c1c;color:#fff;font-weight:700;" title="🚨 КРИТИЧЕСКАЯ УЯЗВИМОСТЬ: цепочка wp2shell (CVE-2026-63030 + CVE-2026-60137)! Неаутентифицированный RCE">🚨 WP2SHELL RCE</span>`);
+                }
+                if (sec.cves && sec.cves.length) {
+                    for (const c of sec.cves) {
+                        const isCrit = c.severity === 'CRITICAL';
+                        secBadges.push(`<span class="wp-badge ${isCrit ? 'wp-badge-red' : 'wp-badge-yellow'}" title="${this.escapeHtml((c.name || '') + ': ' + (c.description || ''))}">${this.escapeHtml(c.cve)}</span>`);
+                    }
+                }
+
                 if (sec.users_exposed && sec.users_exposed.length) {
-                    secBadges.push(`<span class="wp-badge wp-badge-red" title="Логины: ${sec.users_exposed.join(', ')}">👤 ${sec.users_exposed[0]}</span>`);
+                    secBadges.push(`<span class="wp-badge wp-badge-red" title="Логины: ${sec.users_exposed.join(', ')}">👤 ${this.escapeHtml(sec.users_exposed[0])}</span>`);
                 }
                 if (sec.xmlrpc_open) {
                     secBadges.push('<span class="wp-badge wp-badge-yellow" title="XML-RPC открыт для внешних запросов">XML-RPC</span>');
@@ -332,15 +353,15 @@
                     secBadges.push('<span class="wp-badge wp-badge-red" title="Регистрация пользователей открыта">Регистрация</span>');
                 }
 
-                const theme = item.theme ? `<span class="wp-badge wp-badge-theme">🎨 ${item.theme}</span>` : '<span style="color:#64748b;">—</span>';
+                const theme = item.theme ? `<span class="wp-badge wp-badge-theme">🎨 ${this.escapeHtml(item.theme)}</span>` : '<span style="color:#64748b;">—</span>';
                 const statusBadge = item.status_code ? `<span class="wp-badge ${item.status_code === 200 ? 'wp-badge-green' : 'wp-badge-gray'}">${item.status_code}</span>` : '';
 
                 return `
                     <tr>
                         <td>
                             <div style="font-weight:600;display:flex;align-items:center;gap:6px;">
-                                <a href="${item.url}" target="_blank" rel="noopener" style="color:#60a5fa;text-decoration:none;" class="wp-host-link">
-                                    ${item.host}
+                                <a href="${this.escapeHtml(item.url)}" target="_blank" rel="noopener" style="color:#60a5fa;text-decoration:none;" class="wp-host-link">
+                                    ${this.escapeHtml(item.host)}
                                 </a>
                                 <span style="font-size:0.75rem;color:#64748b;">:${item.port}</span>
                             </div>
@@ -352,7 +373,7 @@
                         <td>${pluginsHtml || '<span style="color:#64748b;">—</span>'}</td>
                         <td>${secBadges.join(' ') || '<span class="wp-badge wp-badge-gray">Норма</span>'}</td>
                         <td style="text-align:right;">
-                            <button class="v2-btn-small" onclick='WPHunterApp.showModal(${JSON.stringify(item)})' style="padding:3px 10px;font-size:0.75rem;">🔍 Детали</button>
+                            <button class="v2-btn-small" onclick="WPHunterApp.showModalByIndex(${idx})" style="padding:3px 10px;font-size:0.75rem;">🔍 Детали</button>
                         </td>
                     </tr>
                 `;
@@ -486,6 +507,11 @@
             this.loadResults();
         },
 
+        showModalByIndex(idx) {
+            const item = (this.currentItems || [])[idx];
+            if (item) this.showModal(item);
+        },
+
         showModal(item) {
             const modal = document.getElementById('wp-detail-modal');
             if (!modal) return;
@@ -503,7 +529,7 @@
             // Plugins
             const plugins = item.plugins || [];
             document.getElementById('wp-modal-plugins').innerHTML = plugins.length 
-                ? plugins.map(p => `<span class="wp-badge wp-badge-plugin">${p}</span>`).join(' ')
+                ? plugins.map(p => `<span class="wp-badge wp-badge-plugin">${this.escapeHtml(p)}</span>`).join(' ')
                 : '<span style="color:#64748b;">Плагины в HTML не обнаружены</span>';
 
             // Security details
@@ -517,10 +543,49 @@
             if (sec.users_exposed && sec.users_exposed.length) {
                 secHtml += `
                     <div style="margin-top:8px;font-size:0.8rem;background:rgba(239,68,68,0.1);padding:6px 10px;border-radius:6px;border:1px solid rgba(239,68,68,0.25);">
-                        ⚠️ <strong>Раскрыты логины через REST API:</strong> ${sec.users_exposed.map(u => `<code>${u}</code>`).join(', ')}
+                        ⚠️ <strong>Раскрыты логины через REST API:</strong> ${sec.users_exposed.map(u => `<code>${this.escapeHtml(u)}</code>`).join(', ')}
                     </div>
                 `;
             }
+
+            // CVE Vulnerability Cards
+            if (sec.cves && sec.cves.length) {
+                let cveHtml = `
+                    <div style="margin-top:12px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.3);border-radius:8px;padding:12px;">
+                        <div style="font-weight:700;color:#f87171;display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+                            <span>⚠️</span> <span>Обнаружены уязвимости безопасности WordPress (${sec.cves.length}):</span>
+                        </div>
+                `;
+                if (sec.wp2shell_vulnerable) {
+                    cveHtml += `
+                        <div style="background:#7f1d1d;color:#fecaca;padding:8px 12px;border-radius:6px;font-size:0.8rem;margin-bottom:10px;font-weight:600;border:1px solid #ef4444;">
+                            🚨 <strong>ВНИМАНИЕ:</strong> Сайт уязвим к цепочке <strong>wp2shell (CVE-2026-63030 + CVE-2026-60137)</strong>! Неаутентифицированный злоумышленник может объединить спуфинг REST Batch и SQLi для выполнения произвольного кода (RCE) на сервере.
+                        </div>
+                    `;
+                }
+                for (const cve of sec.cves) {
+                    const isCrit = cve.severity === 'CRITICAL';
+                    cveHtml += `
+                        <div style="margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid rgba(239,68,68,0.2);">
+                            <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap;">
+                                <span class="wp-badge ${isCrit ? 'wp-badge-red' : 'wp-badge-yellow'}" style="font-weight:700;font-size:0.8rem;">${this.escapeHtml(cve.cve)}</span>
+                                <span style="font-weight:600;color:#e2e8f0;font-size:0.85rem;">${this.escapeHtml(cve.name)}</span>
+                                <span style="font-size:0.75rem;color:${isCrit ? '#ef4444' : '#eab308'};font-weight:700;background:rgba(0,0,0,0.3);padding:2px 6px;border-radius:4px;">CVSS ${cve.cvss} (${cve.severity})</span>
+                            </div>
+                            <div style="font-size:0.8rem;color:#cbd5e1;line-height:1.4;margin-bottom:4px;">${this.escapeHtml(cve.description)}</div>
+                            <div style="font-size:0.75rem;color:#94a3b8;">
+                                <strong>Уязвимые версии:</strong> ${this.escapeHtml(cve.affected_versions || '—')}
+                            </div>
+                            <div style="font-size:0.75rem;color:#38bdf8;margin-top:2px;">
+                                <strong>Рекомендация:</strong> ${this.escapeHtml(cve.remediation || '—')}
+                            </div>
+                        </div>
+                    `;
+                }
+                cveHtml += `</div>`;
+                secHtml += cveHtml;
+            }
+
             document.getElementById('wp-modal-security').innerHTML = secHtml;
 
             modal.style.display = 'flex';

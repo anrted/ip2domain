@@ -199,9 +199,9 @@ class WordPressStorageMixin:
             params.append(f"%{plugin}%")
 
         if search:
-            where_clauses.append("(host LIKE ? OR url LIKE ? OR title LIKE ? OR theme LIKE ?)")
+            where_clauses.append("(host LIKE ? OR url LIKE ? OR title LIKE ? OR theme LIKE ? OR plugins_json LIKE ? OR security_json LIKE ?)")
             s_param = f"%{search}%"
-            params.extend([s_param, s_param, s_param, s_param])
+            params.extend([s_param, s_param, s_param, s_param, s_param, s_param])
 
         where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 

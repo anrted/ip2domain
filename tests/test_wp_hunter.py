@@ -171,3 +171,43 @@ def test_api_wp_endpoints():
     r_imp = client.post("/api/wp/import_topology")
     assert r_imp.status_code == 200
     assert "targets" in r_imp.json()
+
+
+def test_wp_cve_checks():
+    from ip2domain.modules.wp_hunter import parse_wp_version, check_wp_cves
+
+    # Version parsing
+    assert parse_wp_version("6.9.2") == (6, 9, 2)
+    assert parse_wp_version("6.8") == (6, 8, 0)
+    assert parse_wp_version("7.0.1") == (7, 0, 1)
+    assert parse_wp_version("invalid") is None
+
+    # Test 6.9.2: vulnerable to both CVE-2026-63030 and CVE-2026-60137 -> wp2shell!
+    res_692 = check_wp_cves("6.9.2", batch_api_status=400, batch_api_open=True)
+    cve_ids = [c["cve"] for c in res_692["cves"]]
+    assert "CVE-2026-63030" in cve_ids
+    assert "CVE-2026-60137" in cve_ids
+    assert res_692["wp2shell_vulnerable"] is True
+    assert res_692["has_critical_cve"] is True
+
+    # Test 6.8.3: vulnerable to CVE-2026-60137 only
+    res_683 = check_wp_cves("6.8.3")
+    cve_ids_683 = [c["cve"] for c in res_683["cves"]]
+    assert "CVE-2026-60137" in cve_ids_683
+    assert "CVE-2026-63030" not in cve_ids_683
+    assert res_683["wp2shell_vulnerable"] is False
+
+    # Test 6.9.5: Patched against both
+    res_695 = check_wp_cves("6.9.5")
+    assert len(res_695["cves"]) == 0
+    assert res_695["wp2shell_vulnerable"] is False
+
+    # Test 7.0.1: Vulnerable to both -> wp2shell
+    res_701 = check_wp_cves("7.0.1")
+    assert res_701["wp2shell_vulnerable"] is True
+    assert len(res_701["cves"]) == 2
+
+    # Test 7.0.2: Patched
+    res_702 = check_wp_cves("7.0.2")
+    assert len(res_702["cves"]) == 0
+

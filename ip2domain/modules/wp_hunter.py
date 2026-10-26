@@ -51,6 +51,92 @@ _WP_INDICATORS = (
 )
 
 
+def parse_wp_version(ver_str: Optional[str]) -> Optional[Tuple[int, int, int]]:
+    """Parse version string into (major, minor, patch) integer tuple."""
+    if not ver_str:
+        return None
+    matches = re.findall(r"\d+", str(ver_str))
+    if not matches:
+        return None
+    major = int(matches[0])
+    minor = int(matches[1]) if len(matches) > 1 else 0
+    patch = int(matches[2]) if len(matches) > 2 else 0
+    return (major, minor, patch)
+
+
+def check_wp_cves(
+    version: Optional[str],
+    batch_api_status: Optional[int] = None,
+    batch_api_open: Optional[bool] = None,
+) -> Dict[str, Any]:
+    """
+    Check for known WordPress core vulnerabilities:
+    - CVE-2026-63030: REST API Batch Route Confusion (CVSS 9.8 Critical)
+    - CVE-2026-60137: WP_Query author__not_in SQL Injection (CVSS 5.9 / 9.8 in chain)
+    - wp2shell full unauthenticated RCE chain detection
+    """
+    v = parse_wp_version(version)
+    cves: List[Dict[str, Any]] = []
+
+    cve_60137_vuln = False
+    cve_63030_vuln = False
+
+    if v is not None:
+        # CVE-2026-60137: WordPress Core WP_Query author__not_in SQL Injection
+        # Affected versions: 6.8.0-6.8.5 (fixed 6.8.6), 6.9.0-6.9.4 (fixed 6.9.5), 7.0.0-7.0.1 (fixed 7.0.2)
+        if (6, 8, 0) <= v < (6, 8, 6):
+            cve_60137_vuln = True
+        elif (6, 9, 0) <= v < (6, 9, 5):
+            cve_60137_vuln = True
+        elif (7, 0, 0) <= v < (7, 0, 2):
+            cve_60137_vuln = True
+
+        # CVE-2026-63030: WordPress REST API Batch Route Confusion
+        # Affected versions: 6.9.0-6.9.4 (fixed 6.9.5), 7.0.0-7.0.1 (fixed 7.0.2)
+        if (6, 9, 0) <= v < (6, 9, 5):
+            cve_63030_vuln = True
+        elif (7, 0, 0) <= v < (7, 0, 2):
+            cve_63030_vuln = True
+
+    if cve_60137_vuln:
+        cves.append({
+            "cve": "CVE-2026-60137",
+            "name": "WP_Query author__not_in SQL Injection",
+            "cvss": 5.9,
+            "severity": "HIGH",
+            "affected_versions": "WordPress 6.8.0-6.8.5, 6.9.0-6.9.4, 7.0.0-7.0.1",
+            "detected_version": version,
+            "description": "Недостаточная фильтрация аргумента author__not_in в запросах WP_Query ядра WordPress, приводящая к SQL-инъекции. Компонент RCE цепочки wp2shell.",
+            "remediation": "Обновите WordPress до версии 6.8.6, 6.9.5 или 7.0.2+",
+        })
+
+    if cve_63030_vuln:
+        batch_note = ""
+        if batch_api_status is not None:
+            batch_note = f" (эндпоинт /wp-json/batch/v1 ответил кодом HTTP {batch_api_status})"
+        cves.append({
+            "cve": "CVE-2026-63030",
+            "name": "REST API Batch Route Confusion",
+            "cvss": 9.8,
+            "severity": "CRITICAL",
+            "affected_versions": "WordPress 6.9.0-6.9.4, 7.0.0-7.0.1",
+            "detected_version": version,
+            "batch_endpoint_open": batch_api_open,
+            "batch_api_status": batch_api_status,
+            "description": f"Спуфинг маршрутизации REST API в /wp-json/batch/v1, позволяющий обойти границы аутентификации{batch_note}.",
+            "remediation": "Срочно обновите WordPress до 6.9.5 или 7.0.2+, либо заблокируйте доступ к /wp-json/batch/v1 на уровне веб-сервера.",
+        })
+
+    is_wp2shell = cve_60137_vuln and cve_63030_vuln
+
+    return {
+        "cves": cves,
+        "wp2shell_vulnerable": is_wp2shell,
+        "has_critical_cve": any(c["severity"] == "CRITICAL" for c in cves),
+        "total_cves": len(cves),
+    }
+
+
 class WPHunter:
     """High-speed asynchronous scanner for bulk WordPress detection and version analysis."""
 
@@ -306,6 +392,17 @@ class WPHunter:
                 except Exception as exc:
                     logger.debug(f"[WPHunter] Deep probe failed for {base_url}: {exc}")
 
+            # Ensure CVE assessment (CVE-2026-63030, CVE-2026-60137) is always evaluated
+            if result["is_wordpress"]:
+                sec = result.setdefault("security", {})
+                if "cves" not in sec:
+                    cve_assessment = check_wp_cves(
+                        version=result.get("version"),
+                        batch_api_status=sec.get("batch_api_status"),
+                        batch_api_open=sec.get("batch_api_open"),
+                    )
+                    sec.update(cve_assessment)
+
             return result
 
     async def _deep_probe(
@@ -316,13 +413,15 @@ class WPHunter:
         timeout: aiohttp.ClientTimeout,
         result: Dict[str, Any],
     ) -> None:
-        """Auxiliary queries: feed generator, readme, xmlrpc, users API, registration."""
+        """Auxiliary queries: feed generator, readme, xmlrpc, users API, batch API, registration."""
         sec: Dict[str, Any] = {
             "xmlrpc_open": False,
             "xmlrpc_status": None,
             "users_api_status": None,
             "users_exposed": [],
             "registration_open": False,
+            "batch_api_status": None,
+            "batch_api_open": False,
         }
 
         # If version not found, check RSS Feed
@@ -378,6 +477,17 @@ class WPHunter:
         except Exception:
             pass
 
+        # Check REST API Batch Endpoint (CVE-2026-63030 route confusion indicator)
+        try:
+            batch_url = f"{base_url.rstrip('/')}/wp-json/batch/v1"
+            async with session.get(batch_url, headers=headers, timeout=timeout, allow_redirects=True) as resp:
+                sec["batch_api_status"] = resp.status
+                # 200, 400 (rest_batch_empty), 401, 403, 405 mean batch controller route is active/mounted
+                sec["batch_api_open"] = resp.status in (200, 400, 401, 403, 405)
+        except Exception:
+            sec["batch_api_status"] = None
+            sec["batch_api_open"] = False
+
         # Check Open Registration
         try:
             reg_url = f"{base_url.rstrip('/')}/wp-login.php?action=register"
@@ -390,6 +500,13 @@ class WPHunter:
         except Exception:
             sec["registration_open"] = False
 
+        # Evaluate CVEs
+        cve_assessment = check_wp_cves(
+            version=result.get("version"),
+            batch_api_status=sec.get("batch_api_status"),
+            batch_api_open=sec.get("batch_api_open"),
+        )
+        sec.update(cve_assessment)
         result["security"] = sec
 
     async def scan_targets(
