@@ -36,19 +36,18 @@ class WPScanRequest(BaseModel):
 async def _run_wp_hunter_job(job_id: str, raw_targets: List[str], ports: List[int], concurrency: int, deep_scan: bool):
     try:
         hunter = WPHunter(concurrency=concurrency, deep_scan=deep_scan)
-        parsed_targets = hunter.parse_targets(raw_targets, ports=ports)
-        total_targets = len(parsed_targets)
+        raw_count, total_checks = hunter.count_targets(raw_targets, ports=ports)
 
-        if total_targets == 0:
+        if total_checks == 0:
             WP_JOBS[job_id]["status"] = "completed"
             WP_JOBS[job_id]["progress_pct"] = 100
             WP_JOBS[job_id]["stage"] = "Нет доступных целей для сканирования"
             storage.update_wp_job(job_id, status="completed", completed_targets=0, found_wp=0, finished=True)
             return
 
-        WP_JOBS[job_id]["total_targets"] = total_targets
+        WP_JOBS[job_id]["total_targets"] = total_checks
         WP_JOBS[job_id]["status"] = "running"
-        WP_JOBS[job_id]["stage"] = f"Сканирование {total_targets} целей..."
+        WP_JOBS[job_id]["stage"] = f"Сканирование {total_checks:,} целей...".replace(",", " ")
         storage.update_wp_job(job_id, status="running", completed_targets=0)
 
         found_wp_count = 0
@@ -61,40 +60,53 @@ async def _run_wp_hunter_job(job_id: str, raw_targets: List[str], ports: List[in
             if res.get("is_wordpress"):
                 found_wp_count += 1
                 batch_results.append(res)
-            pct = int((completed / total) * 100)
+            pct = int((completed / total) * 100) if total else 0
             WP_JOBS[job_id].update(
-                progress_pct=pct,
+                progress_pct=min(100, pct),
                 completed_targets=completed,
                 found_wp=found_wp_count,
-                stage=f"Проверено {completed}/{total} · Найдено WordPress: {found_wp_count}",
+                stage=f"Проверено {completed:,}/{total:,} · Найдено WordPress: {found_wp_count}".replace(",", " "),
             )
-            # Periodic flush to SQLite every 25 findings
-            if len(batch_results) >= 25:
+            # Periodic flush to SQLite every 20 findings
+            if len(batch_results) >= 20:
                 to_save = list(batch_results)
                 batch_results.clear()
                 storage.save_wp_results_batch(job_id, to_save)
                 storage.update_wp_job(job_id, completed_targets=completed, found_wp=found_wp_count)
 
-        # Execute scan
-        results = await hunter.scan_targets(parsed_targets, progress_callback=_on_progress)
+        # Stream targets through bounded worker pool (constant memory consumption)
+        targets_generator = hunter.iter_targets(raw_targets, ports=ports)
+        results = await hunter.scan_targets(
+            targets=targets_generator,
+            total_count=total_checks,
+            progress_callback=_on_progress,
+            stop_check=lambda: STOP_FLAGS.get(job_id, False),
+        )
 
         if batch_results:
             storage.save_wp_results_batch(job_id, batch_results)
             batch_results.clear()
 
-        # If any findings weren't captured in the stream batch, flush all
-        all_wp = [r for r in results if r.get("is_wordpress")]
-        found_wp_count = len(all_wp)
+        # Update final status
+        is_stopped = STOP_FLAGS.get(job_id, False)
+        final_status = "stopped" if is_stopped else "completed"
+        final_completed = WP_JOBS[job_id].get("completed_targets", len(results))
 
         WP_JOBS[job_id].update(
-            status="completed",
-            progress_pct=100,
-            completed_targets=len(results),
+            status=final_status,
+            progress_pct=100 if final_status == "completed" else WP_JOBS[job_id].get("progress_pct", 0),
+            completed_targets=final_completed,
             found_wp=found_wp_count,
-            stage=f"Завершено. Проверено {len(results)} · Найдено WordPress: {found_wp_count}",
+            stage=f"Завершено. Проверено {final_completed:,} · Найдено WordPress: {found_wp_count}".replace(",", " ")
+            if final_status == "completed"
+            else "Остановлено пользователем",
         )
         storage.update_wp_job(
-            job_id, status="completed", completed_targets=len(results), found_wp=found_wp_count, finished=True
+            job_id,
+            status=final_status,
+            completed_targets=final_completed,
+            found_wp=found_wp_count,
+            finished=True,
         )
 
     except Exception as exc:

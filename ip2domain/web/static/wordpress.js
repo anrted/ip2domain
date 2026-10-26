@@ -24,6 +24,9 @@
             const targetsTextarea = document.getElementById('wp-input-targets');
             if (targetsTextarea) {
                 targetsTextarea.addEventListener('input', () => this.updateTargetCounter());
+                document.querySelectorAll('.wp-port-cb').forEach(cb => {
+                    cb.addEventListener('change', () => this.updateTargetCounter());
+                });
                 this.updateTargetCounter();
             }
         },
@@ -97,7 +100,17 @@
                 return;
             }
 
-            const targets = rawTargets.split(/[\r\n,]+/).map(t => t.trim()).filter(Boolean);
+            const stats = this.calculateTargetStats(rawTargets);
+            if (stats.totalIps > 50000) {
+                const confirmed = confirm(
+                    `⚠️ Внимание: в списке указано ${stats.totalIps.toLocaleString()} IP адресов (около ${stats.totalChecks.toLocaleString()} проверок портов).\n\n` +
+                    `Сканирование такого огромного диапазона выполняется в фоновом режиме через асинхронный пул и может занять длительное время.\n\n` +
+                    `Запустить сканирование?`
+                );
+                if (!confirmed) return;
+            }
+
+            const targets = rawTargets.split(/[\r\n]+/).map(t => t.trim()).filter(Boolean);
             const ports = [];
             document.querySelectorAll('.wp-port-cb:checked').forEach(cb => {
                 ports.push(parseInt(cb.value, 10));
@@ -352,13 +365,43 @@
             this.updateTargetCounter();
         },
 
+        calculateTargetStats(rawText) {
+            const lines = (rawText || '').split(/[\r\n]+/).map(t => t.trim()).filter(Boolean);
+            let totalIps = 0;
+            let subnetCount = 0;
+            for (const line of lines) {
+                if (line.startsWith('#')) continue;
+                const m = line.match(/\/(\d{1,2})/);
+                if (m) {
+                    subnetCount++;
+                    const mask = parseInt(m[1], 10);
+                    if (mask >= 0 && mask <= 32) {
+                        totalIps += Math.pow(2, 32 - mask);
+                    } else {
+                        totalIps += 1;
+                    }
+                } else {
+                    totalIps += 1;
+                }
+            }
+            const portsCount = document.querySelectorAll('.wp-port-cb:checked').length || 2;
+            const totalChecks = totalIps * portsCount;
+            return { linesCount: lines.length, subnetCount, totalIps, totalChecks };
+        },
+
         updateTargetCounter() {
             const textarea = document.getElementById('wp-input-targets');
             const counter = document.getElementById('wp-targets-counter');
             if (!textarea || !counter) return;
-            const lines = textarea.value.split(/[\r\n,]+/).map(t => t.trim()).filter(Boolean);
+            const stats = this.calculateTargetStats(textarea.value);
             const strong = counter.querySelector('strong');
-            if (strong) strong.textContent = lines.length;
+            if (strong) {
+                if (stats.subnetCount > 0) {
+                    strong.innerHTML = `${stats.linesCount} строк <span style="color:#38bdf8;font-weight:600;">(~${stats.totalIps.toLocaleString()} IP)</span> <span style="color:#94a3b8;font-size:0.75rem;">· ~${stats.totalChecks.toLocaleString()} проверок</span>`;
+                } else {
+                    strong.textContent = stats.linesCount;
+                }
+            }
         },
 
         exportResults(format) {
