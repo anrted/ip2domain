@@ -9,6 +9,7 @@ from ip2domain.core.storage.strix import StrixStorageMixin
 from ip2domain.core.storage.remote_desktop import RemoteDesktopStorageMixin
 from ip2domain.core.storage.go2rtc import Go2rtcStorageMixin
 from ip2domain.core.storage.scanner_v2 import ScannerV2StorageMixin
+from ip2domain.core.storage.wordpress import WordPressStorageMixin
 
 class StorageManager(
     BaseStorage,
@@ -21,6 +22,7 @@ class StorageManager(
     RemoteDesktopStorageMixin,
     Go2rtcStorageMixin,
     ScannerV2StorageMixin,
+    WordPressStorageMixin,
 ):
     """
     Unified SQLite persistence manager assembling all domain-specific mixins.

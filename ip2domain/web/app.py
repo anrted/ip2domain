@@ -26,6 +26,7 @@ from ip2domain.web.routers import (
     strix_router,
     scanner_v2_router,
     city_ip_router,
+    wordpress_router,
 )
 
 logger = logging.getLogger(__name__)
@@ -77,6 +78,7 @@ async def require_authentication(request: Request, call_next):
         or request.url.path.startswith("/api/v2/resolve_geo")
         or request.url.path.startswith("/api/v2/results/resolve-geo")
         or request.url.path.startswith("/api/geo/")
+        or request.url.path.startswith("/api/wp/")
         or request.url.path in public_paths
     ):
         return await call_next(request)
@@ -115,6 +117,7 @@ app.include_router(go2rtc_router)
 app.include_router(strix_router)
 app.include_router(scanner_v2_router)
 app.include_router(city_ip_router)
+app.include_router(wordpress_router)
 
 # Universal service inventory is opt-in and preserves the camera /api/v2 routes.
 from ip2domain.web.routers.inventory_scanner import router as inventory_router, shutdown_scans

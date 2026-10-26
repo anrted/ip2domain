@@ -51,6 +51,10 @@
                     title="IP по городам (РФ / РБ)">
                     <span class="nav-icon">📍</span><span>IP по городам</span>
                 </button>
+                <button class="nav-item" data-view="wordpress-view" onclick="switchView('wordpress-view', this)"
+                    title="WordPress Hunter">
+                    <span class="nav-icon">ⓦ</span><span>WordPress Hunter</span>
+                </button>
             </nav>
 
             <div class="sidebar-spacer"></div>
@@ -1444,6 +1448,211 @@
 
                 </section>
 
+                <!-- WordPress Hunter View -->
+                <section class="app-view" id="wordpress-view">
+                    <!-- Stat Cards -->
+                    <div class="wp-stats-grid">
+                        <div class="wp-stat-card">
+                            <div class="wp-stat-icon">🌐</div>
+                            <div class="wp-stat-meta">
+                                <span class="wp-stat-val" id="wp-stat-scanned">0</span>
+                                <span class="wp-stat-lbl">Всего проверено хостов</span>
+                            </div>
+                        </div>
+                        <div class="wp-stat-card">
+                            <div class="wp-stat-icon">⚡</div>
+                            <div class="wp-stat-meta">
+                                <span class="wp-stat-val" id="wp-stat-total-wp" style="color:#38bdf8;">0</span>
+                                <span class="wp-stat-lbl">Сайтов на WordPress</span>
+                            </div>
+                        </div>
+                        <div class="wp-stat-card">
+                            <div class="wp-stat-icon">🏷️</div>
+                            <div class="wp-stat-meta">
+                                <span class="wp-stat-val" id="wp-stat-versions" style="color:#34d399;">0</span>
+                                <span class="wp-stat-lbl">Определено версий ядра</span>
+                            </div>
+                        </div>
+                        <div class="wp-stat-card">
+                            <div class="wp-stat-icon">⚠️</div>
+                            <div class="wp-stat-meta">
+                                <span class="wp-stat-val" id="wp-stat-outdated" style="color:#f87171;">0</span>
+                                <span class="wp-stat-lbl">Устаревшие версии (&lt; 6.0)</span>
+                            </div>
+                        </div>
+                        <div class="wp-stat-card" style="grid-column: span 1;">
+                            <div class="wp-stat-icon">🧩</div>
+                            <div class="wp-stat-meta" style="width:100%;">
+                                <span class="wp-stat-lbl" style="margin-bottom:6px;">Топ плагинов</span>
+                                <div id="wp-top-plugins-tags" style="display:flex;flex-wrap:wrap;gap:4px;">
+                                    <span style="color:#64748b;font-size:0.75rem;">Загрузка...</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Scanner Controls Box -->
+                    <div class="wp-scanner-box">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                            <div style="display:flex;align-items:center;gap:10px;">
+                                <h3 style="margin:0;font-size:1.1rem;font-weight:700;color:#f1f5f9;">🎯 Массовое сканирование целей</h3>
+                                <span style="font-size:0.75rem;color:#94a3b8;background:rgba(255,255,255,0.06);padding:2px 8px;border-radius:6px;">CIDR / IP / Домены</span>
+                            </div>
+                            <button type="button" class="btn btn-secondary" id="wp-import-topology-btn" onclick="WPHunterApp.importFromTopology()" style="padding:5px 12px;font-size:0.8rem;">
+                                📋 Импорт из топологии
+                            </button>
+                        </div>
+
+                        <textarea id="wp-input-targets" class="wp-textarea" placeholder="Введите цели по одной в строке:&#10;193.168.47.0/24 (CIDR)&#10;eshdesign.ru&#10;87.236.16.69&#10;https://example.com:8443"></textarea>
+
+                        <div class="wp-controls-row">
+                            <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
+                                <div style="display:flex;align-items:center;gap:8px;">
+                                    <span style="font-size:0.8rem;color:#94a3b8;font-weight:600;">Порты:</span>
+                                    <label class="wp-port-pill"><input type="checkbox" class="wp-port-cb" value="80" checked> 80 (HTTP)</label>
+                                    <label class="wp-port-pill"><input type="checkbox" class="wp-port-cb" value="443" checked> 443 (HTTPS)</label>
+                                    <label class="wp-port-pill"><input type="checkbox" class="wp-port-cb" value="8080"> 8080</label>
+                                    <label class="wp-port-pill"><input type="checkbox" class="wp-port-cb" value="8443"> 8443</label>
+                                </div>
+
+                                <div style="display:flex;align-items:center;gap:8px;">
+                                    <span style="font-size:0.8rem;color:#94a3b8;font-weight:600;">Потоки:</span>
+                                    <select id="wp-concurrency-input" class="wp-filter-select" style="padding:4px 8px;">
+                                        <option value="50">50 потоков</option>
+                                        <option value="100">100 потоков</option>
+                                        <option value="150" selected>150 потоков (Быстро)</option>
+                                        <option value="300">300 потоков (Турбо)</option>
+                                    </select>
+                                </div>
+
+                                <label class="wp-port-pill" style="cursor:pointer;" title="Проверять XML-RPC, утечку пользователей через REST API и форму регистрации">
+                                    <input type="checkbox" id="wp-deep-scan-toggle" checked>
+                                    <span>Глубокий аудит (Users, XML-RPC, Reg)</span>
+                                </label>
+                            </div>
+
+                            <div style="display:flex;align-items:center;gap:10px;">
+                                <button type="button" class="btn btn-primary" id="wp-start-btn" onclick="WPHunterApp.startScan()" style="padding:8px 20px;font-weight:700;">
+                                    🚀 Запустить сканирование
+                                </button>
+                                <button type="button" class="btn btn-danger" id="wp-stop-btn" onclick="WPHunterApp.stopScan()" style="display:none;padding:8px 14px;">
+                                    ⏹ Стоп
+                                </button>
+                                <button type="button" class="btn btn-secondary" onclick="WPHunterApp.clearResults()" title="Очистить историю результатов" style="padding:8px 12px;">
+                                    🗑️
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Active Job Progress Banner -->
+                    <div id="wp-active-job-banner" class="wp-active-job-banner">
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                            <div id="wp-job-status-text">
+                                <span style="font-weight:600;color:#e2e8f0;">Выполняется сканирование...</span>
+                            </div>
+                            <div id="wp-job-counter-text" style="font-size:0.85rem;color:#38bdf8;font-weight:600;font-family:'JetBrains Mono',monospace;">
+                                WordPress: 0 · Готово: 0/0
+                            </div>
+                        </div>
+                        <div class="wp-progress-bar-bg">
+                            <div id="wp-job-progress-bar" class="wp-progress-bar-fill"></div>
+                        </div>
+                    </div>
+
+                    <!-- Filter & Action Toolbar -->
+                    <div class="wp-filter-bar">
+                        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex:1;">
+                            <input type="text" id="wp-search-input" class="wp-filter-input" placeholder="🔍 Поиск по домену, IP, заголовку, теме..." style="min-width:240px;" oninput="WPHunterApp.applySearch(this.value)">
+                            
+                            <select id="wp-filter-version" class="wp-filter-select" onchange="WPHunterApp.setFilterVersion(this.value)">
+                                <option value="">Все версии</option>
+                                <option value="6.">Только ветка 6.x</option>
+                                <option value="5.">Только ветка 5.x</option>
+                                <option value="4.">Ветка 4.x и старше</option>
+                            </select>
+
+                            <select id="wp-filter-plugin" class="wp-filter-select" onchange="WPHunterApp.setFilterPlugin(this.value)">
+                                <option value="">Все плагины</option>
+                            </select>
+
+                            <label class="wp-port-pill" style="margin:0;">
+                                <input type="checkbox" id="wp-only-wp-toggle" checked onchange="WPHunterApp.toggleOnlyWp(this.checked)">
+                                <span>Только подтверждённый WordPress</span>
+                            </label>
+                        </div>
+
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            <span id="wp-results-count" style="font-size:0.8rem;color:#94a3b8;font-weight:600;margin-right:6px;">Найдено: 0</span>
+                            <button type="button" class="btn btn-secondary" onclick="WPHunterApp.exportResults('csv')" style="padding:5px 10px;font-size:0.75rem;">📥 CSV</button>
+                            <button type="button" class="btn btn-secondary" onclick="WPHunterApp.exportResults('json')" style="padding:5px 10px;font-size:0.75rem;">📥 JSON</button>
+                        </div>
+                    </div>
+
+                    <!-- Results Table -->
+                    <div class="wp-table-wrapper">
+                        <table class="wp-table">
+                            <thead>
+                                <tr>
+                                    <th>Хост / Сайт</th>
+                                    <th>Статус</th>
+                                    <th>Версия WordPress</th>
+                                    <th>Активная тема</th>
+                                    <th>Плагины</th>
+                                    <th>Безопасность</th>
+                                    <th style="text-align:right;">Действия</th>
+                                </tr>
+                            </thead>
+                            <tbody id="wp-results-tbody">
+                                <tr>
+                                    <td colspan="7" style="text-align:center;padding:36px;color:#94a3b8;">
+                                        <div style="font-size:2rem;margin-bottom:8px;">🌐</div>
+                                        <div>Результатов сканирования пока нет. Введите цели и запустите поиск.</div>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <!-- WordPress Site Detail Modal -->
+                <div id="wp-detail-modal" class="wp-modal" onclick="if(event.target===this) WPHunterApp.closeModal()">
+                    <div class="wp-modal-card">
+                        <div class="wp-modal-header">
+                            <div>
+                                <h3 style="margin:0;font-size:1.15rem;color:#f8fafc;">Детали сайта WordPress</h3>
+                                <a id="wp-modal-url" href="#" target="_blank" rel="noopener" style="font-size:0.8rem;color:#60a5fa;text-decoration:none;"></a>
+                            </div>
+                            <button type="button" class="icon-button" onclick="WPHunterApp.closeModal()" style="font-size:1.2rem;color:#94a3b8;">✕</button>
+                        </div>
+                        <div class="wp-modal-body">
+                            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:0.85rem;margin-bottom:14px;background:rgba(255,255,255,0.03);padding:12px;border-radius:8px;">
+                                <div><span style="color:#94a3b8;">Хост / Порт:</span> <strong id="wp-modal-ip" style="color:#e2e8f0;"></strong></div>
+                                <div><span style="color:#94a3b8;">Задержка ответа:</span> <strong id="wp-modal-latency" style="color:#e2e8f0;"></strong></div>
+                                <div><span style="color:#94a3b8;">Веб-сервер:</span> <strong id="wp-modal-server" style="color:#e2e8f0;"></strong></div>
+                                <div><span style="color:#94a3b8;">X-Powered-By:</span> <strong id="wp-modal-powered" style="color:#e2e8f0;"></strong></div>
+                                <div><span style="color:#94a3b8;">Версия WordPress:</span> <strong id="wp-modal-version" style="color:#38bdf8;"></strong></div>
+                                <div><span style="color:#94a3b8;">Тема оформления:</span> <strong id="wp-modal-theme" style="color:#f472b6;"></strong></div>
+                            </div>
+
+                            <div style="margin-bottom:12px;">
+                                <span style="font-size:0.75rem;color:#94a3b8;font-weight:600;text-transform:uppercase;">Заголовок страницы:</span>
+                                <div id="wp-modal-title" style="font-size:0.85rem;color:#cbd5e1;margin-top:2px;font-weight:500;"></div>
+                            </div>
+
+                            <div style="margin-bottom:14px;">
+                                <span style="font-size:0.75rem;color:#94a3b8;font-weight:600;text-transform:uppercase;">Обнаруженные плагины:</span>
+                                <div id="wp-modal-plugins" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;"></div>
+                            </div>
+
+                            <div>
+                                <span style="font-size:0.75rem;color:#94a3b8;font-weight:600;text-transform:uppercase;">Статус безопасности:</span>
+                                <div id="wp-modal-security"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <section class="app-view" id="settings-view">
                     <section class="settings-grid">
                         <div class="glass-card settings-card">
@@ -1489,6 +1698,7 @@
             'remote-desktop-view': ['RDP / VNC', 'Удалённые рабочие столы и снимки VNC'],
             'cameras-view': ['Camera Scanner v2', 'Максимальное покрытие: ONVIF · Hikvision · Dahua · Axis · RTSP · роутеры и веб-устройства'],
             'city-ip-view': ['IP по городам (РФ / РБ)', 'База подсетей, поиск и генерация IP по городам России и Беларуси'],
+            'wordpress-view': ['WordPress Hunter', 'Массовый поиск сайтов на WordPress, версий ядра, плагинов и тем'],
             'settings-view': ['Настройки', 'Профиль и безопасность аккаунта'],
         };
 
@@ -1518,6 +1728,9 @@
             }
             if (viewId === 'city-ip-view' && window.CityIpFinder) {
                 window.CityIpFinder.init();
+            }
+            if (viewId === 'wordpress-view' && window.WPHunterApp) {
+                window.WPHunterApp.init();
             }
             if (viewId === 'graph-view' && network) setTimeout(() => network.redraw(), 50);
         }
@@ -1667,6 +1880,7 @@
     <script src="/static/cameras/strix.js?v=20261011-lazy-init"></script>
     <script src="/static/cameras/scanner_v2.js?v=20261013-pagination-fix"></script>
     <script src="/static/city_ip.js?v=20261011-lazy-init"></script>
+    <script src="/static/wordpress.js?v=20261026-wp-hunter"></script>
 </body>
 
 </html>
