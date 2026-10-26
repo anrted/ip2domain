@@ -20,6 +20,12 @@
             this.loadStats();
             this.loadJobs();
             this.loadResults();
+
+            const targetsTextarea = document.getElementById('wp-input-targets');
+            if (targetsTextarea) {
+                targetsTextarea.addEventListener('input', () => this.updateTargetCounter());
+                this.updateTargetCounter();
+            }
         },
 
         async loadStats() {
@@ -324,6 +330,7 @@
 
                 const textarea = document.getElementById('wp-input-targets');
                 textarea.value = data.targets.join('\n');
+                this.updateTargetCounter();
                 alert(`Успешно импортировано ${data.targets.length} хостов из текущей топологии!`);
             } catch (err) {
                 alert('Ошибка импорта: ' + err.message);
@@ -331,6 +338,27 @@
                 btn.disabled = false;
                 btn.innerHTML = '📋 Импорт из топологии';
             }
+        },
+
+        insertSampleTargets() {
+            const textarea = document.getElementById('wp-input-targets');
+            if (!textarea) return;
+            textarea.value = [
+                'eshdesign.ru',
+                '193.168.47.0/24',
+                '87.236.16.69',
+                'https://wordpress.org'
+            ].join('\n');
+            this.updateTargetCounter();
+        },
+
+        updateTargetCounter() {
+            const textarea = document.getElementById('wp-input-targets');
+            const counter = document.getElementById('wp-targets-counter');
+            if (!textarea || !counter) return;
+            const lines = textarea.value.split(/[\r\n,]+/).map(t => t.trim()).filter(Boolean);
+            const strong = counter.querySelector('strong');
+            if (strong) strong.textContent = lines.length;
         },
 
         exportResults(format) {
@@ -364,7 +392,17 @@
 
         applySearch(query) {
             this.currentFilter.search = query.trim();
+            const clearBtn = document.getElementById('wp-search-clear-btn');
+            if (clearBtn) clearBtn.style.display = query.trim() ? 'block' : 'none';
             this.loadResults();
+        },
+
+        clearSearch() {
+            const searchInput = document.getElementById('wp-search-input');
+            const clearBtn = document.getElementById('wp-search-clear-btn');
+            if (searchInput) searchInput.value = '';
+            if (clearBtn) clearBtn.style.display = 'none';
+            this.applySearch('');
         },
 
         toggleOnlyWp(checked) {
