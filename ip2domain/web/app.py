@@ -119,7 +119,10 @@ app.include_router(city_ip_router)
 # Universal service inventory is opt-in and preserves the camera /api/v2 routes.
 from ip2domain.web.routers.inventory_scanner import router as inventory_router, shutdown_scans
 app.include_router(inventory_router)
-app.add_event_handler("shutdown", shutdown_scans)
+if hasattr(app, "add_event_handler"):
+    app.add_event_handler("shutdown", shutdown_scans)
+else:
+    app.on_event("shutdown")(shutdown_scans)
 
 @app.get("/", response_class=HTMLResponse)
 def serve_index():
