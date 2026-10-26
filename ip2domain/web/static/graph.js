@@ -237,18 +237,23 @@ function showNodeDetails(node) {
 
     // Vuln scan button & options
     html += `<div style="margin-top:1.5rem;padding-top:1rem;border-top:1px solid rgba(255,255,255,0.1);">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <span style="font-weight:600;font-size:0.85rem;color:#f8fafc;">🛡️ Анализ уязвимостей</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-bottom:10px;padding:8px 12px;border-radius:8px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);font-size:0.78rem;">
+            <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;color:#e2e8f0;user-select:none;" title="Опциональный безопасный подбор слабых паролей по дефолтным учетным записям">
+                <input type="checkbox" id="chk-vuln-brute" style="cursor:pointer;accent-color:#6366f1;width:15px;height:15px;" />
+                <span>🔑 Аудит паролей</span>
+            </label>
+            <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;color:#e2e8f0;user-select:none;" title="Запрос пассивных баз угроз Shodan и Censys">
+                <input type="checkbox" id="chk-vuln-passive" style="cursor:pointer;accent-color:#10b981;width:15px;height:15px;" />
+                <span>🌐 Пассивный рекон</span>
+            </label>
+        </div>
         <button id="btn-vuln-scan" class="btn" style="width:100%;justify-content:center;"
             onclick="triggerVulnScan('${_esc(node.label)}','${node.group}',window.selectedVulnPorts)">
             🛡️ Поиск уязвимостей (Nmap &amp; Nikto &amp; OSV)
         </button>
-        <div style="display:flex;justify-content:space-between;margin-top:8px;padding:4px 8px;border-radius:6px;background:rgba(255,255,255,0.03);font-size:0.75rem;color:var(--text-muted);">
-            <label style="display:flex;align-items:center;gap:4px;cursor:pointer;" title="Опциональный безопасный подбор слабых паролей по дефолтным учетным записям">
-                <input type="checkbox" id="chk-vuln-brute" /> 🔑 Аудит паролей
-            </label>
-            <label style="display:flex;align-items:center;gap:4px;cursor:pointer;" title="Запрос пассивных баз угроз Shodan и Censys">
-                <input type="checkbox" id="chk-vuln-passive" /> 🌐 Пассивный рекон
-            </label>
-        </div>
         <p class="vuln-scan-hint">${window.selectedVulnPorts.length
             ? `Будут проверены уже найденные порты: ${window.selectedVulnPorts.map((p) => `${p.port}/${p.protocol}`).join(', ')}`
             : 'Открытые порты ещё не известны — будет выполнен базовый поиск по популярным портам.'}</p>
