@@ -77,15 +77,21 @@ def classify_v2_device(
 
     if "sprecord" in b or "sprecord" in m or "sprecord" in p_str:
         return "sprecord"
-    if any(ic in b or ic in m or ic in t for ic in ("intercom", "видеодомофон", "door station", "akuvox", "bas-ip", "true ip")):
-        return "intercom"
-
     has_verified_stream = any(
         bool(s.get("verified")) and s.get("type") != "web_panel" and s.get("stream_type") != "web_panel"
         for s in (streams or [])
     )
-    if has_verified_stream:
+
+    is_explicit_intercom = any(ic in b or ic in m for ic in ("intercom", "door station", "akuvox", "bas-ip", "true ip", "vto", "видеодомофон"))
+    if is_explicit_intercom:
+        return "intercom"
+
+    # Known CCTV camera brand or verified live video takes priority over web title
+    if _match_camera_brand(b, m, "") or has_verified_stream:
         return "camera"
+
+    if any(ic in t for ic in ("intercom", "видеодомофон", "door station")):
+        return "intercom"
 
     # Explicit check: Generic Web Device without camera ports or verified streams is always generic_web
     is_pure_generic_web = (
