@@ -95,6 +95,16 @@ class WordPressStorageMixin:
             conn.execute(f"UPDATE wp_scan_jobs SET {', '.join(clauses)} WHERE id = ?", params)
             conn.commit()
 
+    def stop_all_wp_jobs(self) -> None:
+        self._init_wordpress_tables()
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with self._get_connection() as conn:
+            conn.execute(
+                "UPDATE wp_scan_jobs SET status = 'stopped', finished_at = ? WHERE status IN ('running', 'queued')",
+                (now_str,)
+            )
+            conn.commit()
+
     def get_wp_job(self, job_id: str) -> Optional[Dict[str, Any]]:
         self._init_wordpress_tables()
         with self._get_connection() as conn:

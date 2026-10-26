@@ -83,10 +83,13 @@
                     this.activeJobId = running.id || running.job_id;
                     this.renderActiveJob(running);
                     this.startPolling();
-                } else if (this.activeJobId) {
+                } else {
                     this.stopPolling();
-                    const lastJob = jobs.find(j => (j.id || j.job_id) === this.activeJobId);
-                    if (lastJob) this.renderActiveJob(lastJob);
+                    this.activeJobId = null;
+                    const banner = document.getElementById('wp-active-job-banner');
+                    if (banner) banner.style.display = 'none';
+                    const stopBtn = document.getElementById('wp-stop-btn');
+                    if (stopBtn) stopBtn.style.display = 'none';
                 }
             } catch (err) {
                 console.error('[WPHunter] Failed to load jobs:', err);
@@ -155,14 +158,29 @@
         },
 
         async stopScan() {
-            if (!this.activeJobId) return;
+            const stopBtn = document.getElementById('wp-stop-btn');
+            if (stopBtn) stopBtn.disabled = true;
+
+            const jId = this.activeJobId;
+            this.stopPolling();
+            this.activeJobId = null;
+
+            const banner = document.getElementById('wp-active-job-banner');
+            if (banner) banner.style.display = 'none';
+            if (stopBtn) stopBtn.style.display = 'none';
+
             try {
-                await fetch(`/api/wp/job/${this.activeJobId}/stop`, { method: 'POST' });
-                this.stopPolling();
-                this.loadJobs();
-                this.loadResults();
+                if (jId) {
+                    await fetch(`/api/wp/job/${jId}/stop`, { method: 'POST' });
+                }
+                await fetch('/api/wp/jobs/stop-all', { method: 'POST' });
+                await this.loadJobs();
+                await this.loadResults();
+                await this.loadStats();
             } catch (err) {
                 console.error('[WPHunter] Failed to stop job:', err);
+            } finally {
+                if (stopBtn) stopBtn.disabled = false;
             }
         },
 
@@ -175,7 +193,11 @@
                 }
                 try {
                     const res = await fetch(`/api/wp/job/${this.activeJobId}`);
-                    if (!res.ok) return;
+                    if (!res.ok) {
+                        this.stopPolling();
+                        this.loadJobs();
+                        return;
+                    }
                     const job = await res.json();
                     this.renderActiveJob(job);
                     this.loadResults(false);
@@ -183,6 +205,10 @@
 
                     if (job.status === 'completed' || job.status === 'stopped' || job.status === 'error') {
                         this.stopPolling();
+                        if (job.status === 'stopped') {
+                            const banner = document.getElementById('wp-active-job-banner');
+                            if (banner) banner.style.display = 'none';
+                        }
                     }
                 } catch (e) {
                     console.error('[WPHunter] Polling error:', e);
@@ -199,7 +225,14 @@
 
         renderActiveJob(job) {
             const container = document.getElementById('wp-active-job-banner');
+            const stopBtn = document.getElementById('wp-stop-btn');
             if (!container) return;
+
+            if (job.status === 'stopped') {
+                container.style.display = 'none';
+                if (stopBtn) stopBtn.style.display = 'none';
+                return;
+            }
 
             const isRunning = job.status === 'running' || job.status === 'queued';
             container.style.display = 'block';

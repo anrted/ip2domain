@@ -25,6 +25,12 @@ router = APIRouter(prefix="/api/wp", tags=["WordPress Hunter"])
 WP_JOBS: Dict[str, Dict[str, Any]] = {}
 STOP_FLAGS: Dict[str, bool] = {}
 
+# Clean up dangling jobs from previous server runs
+try:
+    storage.stop_all_wp_jobs()
+except Exception as _e:
+    logger.debug("Failed to cleanup dangling wp jobs on load: %s", _e)
+
 
 class WPScanRequest(BaseModel):
     targets: List[str] = Field(..., min_items=1, max_items=10000)
@@ -174,13 +180,32 @@ def get_wp_job_status(job_id: str):
 
 @router.post("/job/{job_id}/stop")
 def stop_wp_job(job_id: str):
+    STOP_FLAGS[job_id] = True
     if job_id in WP_JOBS:
-        STOP_FLAGS[job_id] = True
         WP_JOBS[job_id]["status"] = "stopped"
         WP_JOBS[job_id]["stage"] = "Остановлено пользователем"
+
+    # Always persist stop in database as well (handles cases after server restart)
+    job = storage.get_wp_job(job_id)
+    if job:
         storage.update_wp_job(job_id, status="stopped", finished=True)
         return {"status": "stopped", "job_id": job_id}
-    raise HTTPException(status_code=404, detail="Активная задача не найдена")
+
+    if job_id in WP_JOBS:
+        return {"status": "stopped", "job_id": job_id}
+
+    return {"status": "stopped", "job_id": job_id, "note": "Job was already completed or not found"}
+
+
+@router.post("/jobs/stop-all")
+def stop_all_wp_jobs():
+    for j_id in list(WP_JOBS.keys()):
+        STOP_FLAGS[j_id] = True
+        WP_JOBS[j_id]["status"] = "stopped"
+        WP_JOBS[j_id]["stage"] = "Остановлено пользователем"
+        storage.update_wp_job(j_id, status="stopped", finished=True)
+    storage.stop_all_wp_jobs()
+    return {"status": "all_stopped"}
 
 
 @router.get("/results")
