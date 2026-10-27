@@ -343,11 +343,40 @@
                     }
                 }
 
+                if (sec.config_exposed) {
+                    secBadges.push(`<span class="wp-badge wp-badge-red" style="background:#991b1b;color:#fff;font-weight:700;" title="🚨 КРИТИЧЕСКАЯ УТЕЧКА: обнаружен бэкап конфигурационного файла (${this.escapeHtml(sec.config_exposed_file || 'wp-config/env')}) с паролями БД!">Config Leak</span>`);
+                }
+                if (sec.git_exposed) {
+                    secBadges.push('<span class="wp-badge wp-badge-red" style="font-weight:700;" title="🚨 Открыт репозиторий /.git/HEAD (исходный код доступен для скачивания)">.git</span>');
+                }
+                if (sec.install_open) {
+                    secBadges.push('<span class="wp-badge wp-badge-red" style="font-weight:700;" title="🚨 Открыта страница установки wp-admin/install.php (риск захвата сайта)">Install</span>');
+                }
+                if (sec.debug_log_exposed) {
+                    secBadges.push('<span class="wp-badge wp-badge-red" title="Утечка wp-content/debug.log с ошибками PHP и стектрейсами">debug.log</span>');
+                }
                 if (sec.users_exposed && sec.users_exposed.length) {
                     secBadges.push(`<span class="wp-badge wp-badge-red" title="Логины: ${sec.users_exposed.join(', ')}">👤 ${this.escapeHtml(sec.users_exposed[0])}</span>`);
                 }
                 if (sec.xmlrpc_open) {
                     secBadges.push('<span class="wp-badge wp-badge-yellow" title="XML-RPC открыт для внешних запросов">XML-RPC</span>');
+                }
+                if (sec.wp_cron_open) {
+                    secBadges.push('<span class="wp-badge wp-badge-yellow" title="WP-Cron открыт для внешних HTTP запросов (риск DoS/перегрузки очереди)">WP-Cron</span>');
+                }
+                if (sec.oembed_proxy_open) {
+                    secBadges.push('<span class="wp-badge wp-badge-yellow" title="oEmbed Proxy доступен без авторизации (потенциальный риск SSRF)">oEmbed Proxy</span>');
+                }
+                if (sec.setup_config_open) {
+                    secBadges.push('<span class="wp-badge wp-badge-red" style="font-weight:700;" title="🚨 Открыт setup-config.php (сайт не сконфигурирован, риск захвата)">Setup Config</span>');
+                }
+                if (sec.phpinfo_exposed) {
+                    secBadges.push('<span class="wp-badge wp-badge-red" style="background:#b91c1c;color:#fff;font-weight:700;" title="🚨 Утечка phpinfo(): раскрыта конфигурация PHP и сервера">phpinfo</span>');
+                }
+                if (sec.upgrade_pending) {
+                    secBadges.push('<span class="wp-badge wp-badge-red" title="🚨 Открыт upgrade.php: требуется обновление БД без логина!">Upgrade Pending</span>');
+                } else if (sec.upgrade_open) {
+                    secBadges.push('<span class="wp-badge wp-badge-yellow" title="Открыт эндпоинт upgrade.php">upgrade.php</span>');
                 }
                 if (sec.registration_open) {
                     secBadges.push('<span class="wp-badge wp-badge-red" title="Регистрация пользователей открыта">Регистрация</span>');
@@ -541,9 +570,55 @@
             // Security details
             const sec = item.security || {};
             let secHtml = `
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:0.8rem;margin-top:6px;">
-                    <div><strong>XML-RPC:</strong> ${sec.xmlrpc_open ? '<span style="color:#eab308;">Открыт для запросов (405/200)</span>' : '<span style="color:#10b981;">Заблокирован (403/404)</span>'}</div>
-                    <div><strong>Регистрация аккаунтов:</strong> ${sec.registration_open ? '<span style="color:#ef4444;">Включена!</span>' : '<span style="color:#10b981;">Отключена</span>'}</div>
+                <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:10px;font-size:0.8rem;margin-top:8px;">
+                    <div style="background:rgba(255,255,255,0.02);padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,0.06);">
+                        <strong style="color:#94a3b8;">XML-RPC:</strong><br>
+                        ${sec.xmlrpc_open ? '<span style="color:#eab308;font-weight:600;">⚠️ Открыт (405/200)</span>' : '<span style="color:#10b981;">✓ Заблокирован (403/404)</span>'}
+                    </div>
+                    <div style="background:rgba(255,255,255,0.02);padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,0.06);">
+                        <strong style="color:#94a3b8;">WP-Cron (/wp-cron.php):</strong><br>
+                        ${sec.wp_cron_open ? '<span style="color:#eab308;font-weight:600;">⚠️ Открыт публично (200 OK)</span>' : '<span style="color:#10b981;">✓ Защищен / Закрыт</span>'}
+                    </div>
+                    <div style="background:rgba(255,255,255,0.02);padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,0.06);">
+                        <strong style="color:#94a3b8;">Регистрация юзеров:</strong><br>
+                        ${sec.registration_open ? '<span style="color:#ef4444;font-weight:600;">🚨 Открыта для всех</span>' : '<span style="color:#10b981;">✓ Отключена</span>'}
+                    </div>
+                    <div style="background:rgba(255,255,255,0.02);padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,0.06);">
+                        <strong style="color:#94a3b8;">Debug Log:</strong><br>
+                        ${sec.debug_log_exposed ? '<span style="color:#ef4444;font-weight:700;">🚨 Утечка debug.log!</span>' : '<span style="color:#10b981;">✓ Закрыт / Отсутствует</span>'}
+                    </div>
+                    <div style="background:rgba(255,255,255,0.02);padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,0.06);">
+                        <strong style="color:#94a3b8;">Конфиг (.env / .bak):</strong><br>
+                        ${sec.config_exposed ? `<span style="color:#ef4444;font-weight:700;">🚨 УТЕЧКА: ${this.escapeHtml(sec.config_exposed_file || 'файл')}!</span>` : '<span style="color:#10b981;">✓ Безопасно</span>'}
+                    </div>
+                    <div style="background:rgba(255,255,255,0.02);padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,0.06);">
+                        <strong style="color:#94a3b8;">Git репозиторий:</strong><br>
+                        ${sec.git_exposed ? '<span style="color:#ef4444;font-weight:700;">🚨 Доступен /.git/HEAD!</span>' : '<span style="color:#10b981;">✓ Закрыт</span>'}
+                    </div>
+                    <div style="background:rgba(255,255,255,0.02);padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,0.06);">
+                        <strong style="color:#94a3b8;">Установка (install.php):</strong><br>
+                        ${sec.install_open ? '<span style="color:#ef4444;font-weight:700;">🚨 Открыта переустановка!</span>' : '<span style="color:#10b981;">✓ Закрыта</span>'}
+                    </div>
+                    <div style="background:rgba(255,255,255,0.02);padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,0.06);">
+                        <strong style="color:#94a3b8;">oEmbed Proxy (/proxy):</strong><br>
+                        ${sec.oembed_proxy_open ? '<span style="color:#eab308;font-weight:600;">⚠️ Доступен без авторизации (риск SSRF)</span>' : '<span style="color:#10b981;">✓ Защищен (401/403)</span>'}
+                    </div>
+                    <div style="background:rgba(255,255,255,0.02);padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,0.06);">
+                        <strong style="color:#94a3b8;">WooCommerce API (/wc/v3):</strong><br>
+                        ${sec.woocommerce_active ? '<span style="color:#60a5fa;font-weight:600;">🛒 WooCommerce активен</span>' : '<span style="color:#64748b;">Не обнаружен</span>'}
+                    </div>
+                    <div style="background:rgba(255,255,255,0.02);padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,0.06);">
+                        <strong style="color:#94a3b8;">Обновление БД (/upgrade.php):</strong><br>
+                        ${sec.upgrade_pending ? '<span style="color:#ef4444;font-weight:700;">🚨 Требуется обновление БД без логина!</span>' : (sec.upgrade_open ? '<span style="color:#eab308;">Открыт (БД актуальна)</span>' : '<span style="color:#10b981;">✓ Защищен</span>')}
+                    </div>
+                    <div style="background:rgba(255,255,255,0.02);padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,0.06);">
+                        <strong style="color:#94a3b8;">Конфигуратор (/setup-config.php):</strong><br>
+                        ${sec.setup_config_open ? '<span style="color:#ef4444;font-weight:700;">🚨 Открыт! (Конфиг отсутствует)</span>' : '<span style="color:#10b981;">✓ Защищен</span>'}
+                    </div>
+                    <div style="background:rgba(255,255,255,0.02);padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,0.06);">
+                        <strong style="color:#94a3b8;">PHPInfo (/phpinfo.php):</strong><br>
+                        ${sec.phpinfo_exposed ? '<span style="color:#ef4444;font-weight:700;">🚨 Утечка phpinfo!</span>' : '<span style="color:#10b981;">✓ Не обнаружен</span>'}
+                    </div>
                 </div>
             `;
             if (sec.users_exposed && sec.users_exposed.length) {

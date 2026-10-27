@@ -734,88 +734,253 @@ class WPHunter:
         sec: Dict[str, Any] = {
             "xmlrpc_open": False,
             "xmlrpc_status": None,
+            "wp_cron_open": False,
+            "wp_cron_status": None,
             "users_api_status": None,
             "users_exposed": [],
             "registration_open": False,
             "batch_api_status": None,
             "batch_api_open": False,
+            "debug_log_exposed": False,
+            "config_exposed": False,
+            "config_exposed_file": None,
+            "git_exposed": False,
+            "install_open": False,
+            "oembed_proxy_open": False,
+            "oembed_proxy_status": None,
+            "woocommerce_active": False,
+            "woocommerce_api_open": False,
+            "woocommerce_api_status": None,
+            "upgrade_open": False,
+            "upgrade_pending": False,
+            "setup_config_open": False,
+            "phpinfo_exposed": False,
         }
 
-        # If version not found, check RSS Feed
-        if not result["version"]:
+        async def _probe_feed():
+            if result.get("version"):
+                return
             try:
                 feed_url = f"{base_url.rstrip('/')}/feed/"
                 async with session.get(feed_url, headers=headers, timeout=timeout, allow_redirects=True) as resp:
                     if resp.status == 200:
                         xml_data = (await resp.content.read(16384)).decode("utf-8", errors="ignore")
                         feed_m = _FEED_GENERATOR_REGEX.search(xml_data)
-                        if feed_m:
+                        if feed_m and not result.get("version"):
                             result["version"] = feed_m.group(1)
                             result["version_source"] = "rss_feed"
             except Exception:
                 pass
 
-        # If still not found, check /readme.html
-        if not result["version"]:
+        async def _probe_readme():
+            if result.get("version"):
+                return
             try:
                 readme_url = f"{base_url.rstrip('/')}/readme.html"
                 async with session.get(readme_url, headers=headers, timeout=timeout, allow_redirects=True) as resp:
                     if resp.status == 200:
                         readme_data = (await resp.content.read(8192)).decode("utf-8", errors="ignore")
                         readme_m = _README_VERSION_REGEX.search(readme_data)
-                        if readme_m:
+                        if readme_m and not result.get("version"):
                             result["version"] = readme_m.group(1)
                             result["version_source"] = "readme_html"
             except Exception:
                 pass
 
-        # Check XML-RPC
-        try:
-            xmlrpc_url = f"{base_url.rstrip('/')}/xmlrpc.php"
-            async with session.get(xmlrpc_url, headers=headers, timeout=timeout, allow_redirects=True) as resp:
-                sec["xmlrpc_status"] = resp.status
-                sec["xmlrpc_open"] = resp.status in (200, 405)
-        except Exception:
-            sec["xmlrpc_open"] = False
+        async def _probe_xmlrpc():
+            try:
+                xmlrpc_url = f"{base_url.rstrip('/')}/xmlrpc.php"
+                async with session.get(xmlrpc_url, headers=headers, timeout=timeout, allow_redirects=True) as resp:
+                    sec["xmlrpc_status"] = resp.status
+                    sec["xmlrpc_open"] = resp.status in (200, 405)
+            except Exception:
+                sec["xmlrpc_open"] = False
 
-        # Check REST API users enumeration
-        try:
-            users_url = f"{base_url.rstrip('/')}/wp-json/wp/v2/users"
-            async with session.get(users_url, headers=headers, timeout=timeout, allow_redirects=True) as resp:
-                sec["users_api_status"] = resp.status
-                if resp.status == 200:
-                    try:
-                        data = await resp.json(content_type=None)
-                        if isinstance(data, list):
-                            logins = [u.get("slug") for u in data if isinstance(u, dict) and u.get("slug")]
-                            sec["users_exposed"] = logins[:10]
-                    except Exception:
-                        pass
-        except Exception:
-            pass
+        async def _probe_wp_cron():
+            try:
+                cron_url = f"{base_url.rstrip('/')}/wp-cron.php"
+                async with session.get(cron_url, headers=headers, timeout=timeout, allow_redirects=True) as resp:
+                    sec["wp_cron_status"] = resp.status
+                    # HTTP 200 means external requests execute cron jobs (DoS/queue trigger risk)
+                    sec["wp_cron_open"] = (resp.status == 200)
+            except Exception:
+                sec["wp_cron_open"] = False
 
-        # Check REST API Batch Endpoint (CVE-2026-63030 route confusion indicator)
-        try:
-            batch_url = f"{base_url.rstrip('/')}/wp-json/batch/v1"
-            async with session.get(batch_url, headers=headers, timeout=timeout, allow_redirects=True) as resp:
-                sec["batch_api_status"] = resp.status
-                # 200, 400 (rest_batch_empty), 401, 403, 405 mean batch controller route is active/mounted
-                sec["batch_api_open"] = resp.status in (200, 400, 401, 403, 405)
-        except Exception:
-            sec["batch_api_status"] = None
-            sec["batch_api_open"] = False
+        async def _probe_users():
+            try:
+                users_url = f"{base_url.rstrip('/')}/wp-json/wp/v2/users"
+                async with session.get(users_url, headers=headers, timeout=timeout, allow_redirects=True) as resp:
+                    sec["users_api_status"] = resp.status
+                    if resp.status == 200:
+                        try:
+                            data = await resp.json(content_type=None)
+                            if isinstance(data, list):
+                                logins = [u.get("slug") for u in data if isinstance(u, dict) and u.get("slug")]
+                                sec["users_exposed"] = logins[:10]
+                        except Exception:
+                            pass
+            except Exception:
+                pass
 
-        # Check Open Registration
-        try:
-            reg_url = f"{base_url.rstrip('/')}/wp-login.php?action=register"
-            async with session.get(reg_url, headers=headers, timeout=timeout, allow_redirects=True) as resp:
-                if resp.status == 200:
-                    html = (await resp.content.read(16384)).decode("utf-8", errors="ignore")
-                    sec["registration_open"] = "registerform" in html
-                else:
-                    sec["registration_open"] = False
-        except Exception:
-            sec["registration_open"] = False
+        async def _probe_batch():
+            try:
+                batch_url = f"{base_url.rstrip('/')}/wp-json/batch/v1"
+                async with session.get(batch_url, headers=headers, timeout=timeout, allow_redirects=True) as resp:
+                    sec["batch_api_status"] = resp.status
+                    sec["batch_api_open"] = resp.status in (200, 400, 401, 403, 405)
+            except Exception:
+                sec["batch_api_status"] = None
+                sec["batch_api_open"] = False
+
+        async def _probe_registration():
+            try:
+                reg_url = f"{base_url.rstrip('/')}/wp-login.php?action=register"
+                async with session.get(reg_url, headers=headers, timeout=timeout, allow_redirects=True) as resp:
+                    if resp.status == 200:
+                        html = (await resp.content.read(16384)).decode("utf-8", errors="ignore")
+                        sec["registration_open"] = "registerform" in html
+                    else:
+                        sec["registration_open"] = False
+            except Exception:
+                sec["registration_open"] = False
+
+        async def _probe_debug_log():
+            try:
+                debug_url = f"{base_url.rstrip('/')}/wp-content/debug.log"
+                async with session.get(debug_url, headers=headers, timeout=timeout, allow_redirects=True) as resp:
+                    sec["debug_log_status"] = resp.status
+                    if resp.status == 200:
+                        data = (await resp.content.read(4096)).decode("utf-8", errors="ignore")
+                        # Verify it's actually a log file and not an HTML custom 404
+                        if "<html" not in data.lower() and "<!doctype" not in data.lower():
+                            if any(k in data for k in ["PHP Notice:", "PHP Fatal error:", "PHP Warning:", "PHP Parse error:", "Stack trace:"]) or data.strip().startswith("["):
+                                sec["debug_log_exposed"] = True
+            except Exception:
+                pass
+
+        async def _probe_config_backup():
+            for path in ["/wp-config.php.bak", "/wp-config.php.save", "/.env"]:
+                try:
+                    url = f"{base_url.rstrip('/')}{path}"
+                    async with session.get(url, headers=headers, timeout=timeout, allow_redirects=True) as resp:
+                        if resp.status == 200:
+                            data = (await resp.content.read(2048)).decode("utf-8", errors="ignore")
+                            if any(k in data for k in ["DB_NAME", "DB_PASSWORD", "DB_USER", "AUTH_KEY", "SECURE_AUTH_KEY"]) or "APP_KEY=" in data:
+                                sec["config_exposed"] = True
+                                sec["config_exposed_file"] = path
+                                break
+                except Exception:
+                    pass
+
+        async def _probe_git():
+            try:
+                url = f"{base_url.rstrip('/')}/.git/HEAD"
+                async with session.get(url, headers=headers, timeout=timeout, allow_redirects=True) as resp:
+                    if resp.status == 200:
+                        data = (await resp.content.read(256)).decode("utf-8", errors="ignore").strip()
+                        if data.startswith("ref: refs/") or (len(data) == 40 and all(c in "0123456789abcdefABCDEF" for c in data)):
+                            sec["git_exposed"] = True
+            except Exception:
+                pass
+
+        async def _probe_install():
+            try:
+                url = f"{base_url.rstrip('/')}/wp-admin/install.php"
+                async with session.get(url, headers=headers, timeout=timeout, allow_redirects=True) as resp:
+                    if resp.status == 200:
+                        data = (await resp.content.read(4096)).decode("utf-8", errors="ignore")
+                        if "step=1" in data or 'name="weblog_title"' in data or 'id="setup"' in data:
+                            sec["install_open"] = True
+            except Exception:
+                pass
+
+        async def _probe_oembed_proxy():
+            try:
+                proxy_url = f"{base_url.rstrip('/')}/wp-json/oembed/1.0/proxy"
+                async with session.get(proxy_url, headers=headers, timeout=timeout, allow_redirects=True) as resp:
+                    sec["oembed_proxy_status"] = resp.status
+                    # By default WP requires edit_posts (returns 401/403). If 200 or 400 (missing url parameter), it's unauthenticated
+                    sec["oembed_proxy_open"] = resp.status in (200, 400)
+            except Exception:
+                pass
+
+        async def _probe_woocommerce():
+            try:
+                wc_url = f"{base_url.rstrip('/')}/wp-json/wc/v3"
+                async with session.get(wc_url, headers=headers, timeout=timeout, allow_redirects=True) as resp:
+                    sec["woocommerce_api_status"] = resp.status
+                    if resp.status in (200, 401, 403):
+                        sec["woocommerce_active"] = True
+                        if resp.status == 200:
+                            sec["woocommerce_api_open"] = True
+                        # Add woocommerce to plugins list if not already detected from HTML
+                        current_plugs = set(result.get("plugins") or [])
+                        if "woocommerce" not in current_plugs:
+                            current_plugs.add("woocommerce")
+                            result["plugins"] = sorted(list(current_plugs))
+            except Exception:
+                pass
+
+        async def _probe_upgrade():
+            try:
+                url = f"{base_url.rstrip('/')}/wp-admin/upgrade.php"
+                async with session.get(url, headers=headers, timeout=timeout, allow_redirects=True) as resp:
+                    if resp.status == 200:
+                        data = (await resp.content.read(4096)).decode("utf-8", errors="ignore")
+                        lower_data = data.lower()
+                        if "upgrade.php?step=1" in data or "database update required" in lower_data or "обновление базы данных" in lower_data:
+                            sec["upgrade_open"] = True
+                            sec["upgrade_pending"] = True
+                        elif "no update required" in lower_data or "обновление не требуется" in lower_data or "step=1" in data:
+                            sec["upgrade_open"] = True
+            except Exception:
+                pass
+
+        async def _probe_setup_config():
+            try:
+                url = f"{base_url.rstrip('/')}/wp-admin/setup-config.php"
+                async with session.get(url, headers=headers, timeout=timeout, allow_redirects=True) as resp:
+                    if resp.status == 200:
+                        data = (await resp.content.read(4096)).decode("utf-8", errors="ignore")
+                        lower_data = data.lower()
+                        if "setup-config.php?step=1" in data or "create a configuration file" in lower_data or "создать файл настроек" in lower_data:
+                            sec["setup_config_open"] = True
+            except Exception:
+                pass
+
+        async def _probe_phpinfo():
+            for path in ["/phpinfo.php", "/info.php"]:
+                try:
+                    url = f"{base_url.rstrip('/')}{path}"
+                    async with session.get(url, headers=headers, timeout=timeout, allow_redirects=True) as resp:
+                        if resp.status == 200:
+                            data = (await resp.content.read(2048)).decode("utf-8", errors="ignore")
+                            if "php version" in data.lower() and ("zend" in data.lower() or "configuration file (php.ini)" in data.lower()):
+                                sec["phpinfo_exposed"] = True
+                                break
+                except Exception:
+                    pass
+
+        # Run auxiliary probes concurrently for maximum speed
+        await asyncio.gather(
+            _probe_feed(),
+            _probe_readme(),
+            _probe_xmlrpc(),
+            _probe_wp_cron(),
+            _probe_users(),
+            _probe_batch(),
+            _probe_registration(),
+            _probe_debug_log(),
+            _probe_config_backup(),
+            _probe_git(),
+            _probe_install(),
+            _probe_oembed_proxy(),
+            _probe_woocommerce(),
+            _probe_upgrade(),
+            _probe_setup_config(),
+            _probe_phpinfo(),
+            return_exceptions=True,
+        )
 
         # Evaluate CVEs
         cve_assessment = check_wp_cves(
@@ -860,7 +1025,6 @@ class WPHunter:
                         break
                     try:
                         if stop_check and stop_check():
-                            queue.task_done()
                             continue
                         res = await self.probe_target(session, item)
                         completed += 1
@@ -879,16 +1043,22 @@ class WPHunter:
             # Start worker pool
             workers = [asyncio.create_task(_worker()) for _ in range(self.concurrency)]
 
-            # Feed queue without holding all coroutines in memory
-            for t in targets:
-                if stop_check and stop_check():
-                    break
-                await queue.put(t)
-
-            # Signal workers to finish
-            for _ in range(self.concurrency):
-                await queue.put(None)
-
-            await asyncio.gather(*workers, return_exceptions=True)
+            try:
+                # Feed queue without holding all coroutines in memory (supports both sync and async iterables)
+                if hasattr(targets, "__aiter__"):
+                    async for t in targets:
+                        if stop_check and stop_check():
+                            break
+                        await queue.put(t)
+                else:
+                    for t in targets:
+                        if stop_check and stop_check():
+                            break
+                        await queue.put(t)
+            finally:
+                # Signal workers to finish
+                for _ in range(self.concurrency):
+                    await queue.put(None)
+                await asyncio.gather(*workers, return_exceptions=True)
 
         return results

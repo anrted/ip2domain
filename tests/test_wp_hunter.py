@@ -296,3 +296,112 @@ def test_two_phase_targets_and_storage():
                 pass
 
 
+def test_deep_probe_extended_endpoints():
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+    import aiohttp
+    from ip2domain.modules.wp_hunter import WPHunter
+
+    async def _run():
+        hunter = WPHunter(deep_scan=True)
+        result = {
+            "url": "http://site.com",
+            "host": "site.com",
+            "port": 80,
+            "is_wordpress": True,
+            "version": "6.5.2",
+        }
+
+        # Mock responses for different endpoints
+        def mock_get(url, **kwargs):
+            resp = MagicMock()
+            resp.__aenter__ = AsyncMock(return_value=resp)
+            resp.__aexit__ = AsyncMock(return_value=None)
+            
+            if "wp-cron.php" in url:
+                resp.status = 200
+                resp.content.read = AsyncMock(return_value=b"")
+            elif "xmlrpc.php" in url:
+                resp.status = 405
+                resp.content.read = AsyncMock(return_value=b"XML-RPC server accepts POST requests only.")
+            elif "wp-content/debug.log" in url:
+                resp.status = 200
+                resp.content.read = AsyncMock(return_value=b"[26-Oct-2026 12:00:00 UTC] PHP Notice: Undefined variable in wp-config.php")
+            elif ".git/HEAD" in url:
+                resp.status = 200
+                resp.content.read = AsyncMock(return_value=b"ref: refs/heads/master\n")
+            elif "wp-config.php.bak" in url:
+                resp.status = 200
+                resp.content.read = AsyncMock(return_value=b"define('DB_PASSWORD', 'secret123');")
+            elif "install.php" in url:
+                resp.status = 200
+                resp.content.read = AsyncMock(return_value=b'<form id="setup" method="post" action="install.php?step=1">')
+            elif "oembed/1.0/proxy" in url:
+                resp.status = 200
+                resp.content.read = AsyncMock(return_value=b'{"html":"<iframe></iframe>"}')
+            elif "/wp-json/wc/v3" in url:
+                resp.status = 401
+                resp.content.read = AsyncMock(return_value=b'{"code":"woocommerce_rest_cannot_view"}')
+            elif "upgrade.php" in url:
+                resp.status = 200
+                resp.content.read = AsyncMock(return_value=b"<h1>Database Update Required</h1><a href='upgrade.php?step=1'>Update</a>")
+            elif "setup-config.php" in url:
+                resp.status = 200
+                resp.content.read = AsyncMock(return_value=b"<p>Welcome to WordPress. Before getting started...</p><a href='setup-config.php?step=1'>")
+            elif "phpinfo.php" in url:
+                resp.status = 200
+                resp.content.read = AsyncMock(return_value=b"PHP Version 8.2.12 - Zend Engine")
+            else:
+                resp.status = 404
+                resp.content.read = AsyncMock(return_value=b"Not found")
+                resp.json = AsyncMock(side_effect=Exception("Not JSON"))
+            return resp
+
+        session = MagicMock()
+        session.get = mock_get
+
+        timeout = aiohttp.ClientTimeout(total=5)
+        await hunter._deep_probe(session, "http://site.com", {}, timeout, result)
+
+        sec = result["security"]
+        assert sec["wp_cron_open"] is True
+        assert sec["xmlrpc_open"] is True
+        assert sec["debug_log_exposed"] is True
+        assert sec["git_exposed"] is True
+        assert sec["config_exposed"] is True
+        assert sec["install_open"] is True
+        assert sec["oembed_proxy_open"] is True
+        assert sec["woocommerce_active"] is True
+        assert sec["upgrade_open"] is True
+        assert sec["upgrade_pending"] is True
+        assert sec["setup_config_open"] is True
+        assert sec["phpinfo_exposed"] is True
+        assert "woocommerce" in result["plugins"]
+
+    asyncio.run(_run())
+
+
+def test_scan_targets_with_async_generator():
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+    from ip2domain.modules.wp_hunter import WPHunter
+
+    async def _test():
+        hunter = WPHunter(concurrency=2)
+        
+        async def mock_stream():
+            for i in range(5):
+                yield {"host": f"site{i}.com", "port": 80, "scheme": "http"}
+
+        with patch.object(hunter, "probe_target", new=AsyncMock(return_value={"is_wordpress": True, "host": "dummy"})):
+            results = await hunter.scan_targets(
+                targets=mock_stream(),
+                total_count=5,
+            )
+            assert len(results) == 5
+
+    asyncio.run(_test())
+
+
+
+
